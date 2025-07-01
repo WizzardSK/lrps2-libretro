@@ -114,6 +114,9 @@ void MTGS::PostVsyncStart()
 	s_VsyncSignalListener.store(true, std::memory_order_release);
 	s_WritePos.store((writepos + 1) & RINGBUFFERMASK, std::memory_order_release);
 
+	// Remove extra frame input lag
+	WaitGS(false);
+
 	// Vsyncs should always start the GS thread, regardless of how little has actually be queued.
 	s_sem_event.NotifyOfWork();
 
