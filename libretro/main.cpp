@@ -2049,8 +2049,12 @@ void retro_run(void)
 std::optional<WindowInfo> Host::AcquireRenderWindow(void)
 {
 	WindowInfo wi;
-	wi.surface_width  = 640 * setting_upscale_multiplier;
-	wi.surface_height = 448 * setting_upscale_multiplier;
+	retro_system_av_info av_info;
+
+	retro_get_system_av_info(&av_info);
+
+	wi.surface_width  = av_info.geometry.max_width;
+	wi.surface_height = av_info.geometry.max_height;
 	return wi;
 }
 
