@@ -476,6 +476,21 @@ void VMManager::ReloadPatches()
 	LoadPatches(s_game_serial, s_game_crc);
 }
 
+bool VMManager::IsElfFileName(const std::string_view path)
+{
+	return StringUtil::EndsWithNoCase(path, ".elf");
+}
+
+std::string VMManager::GetDiscOverrideFromGameSettings(const std::string& elf_path)
+{
+	std::string iso_path;
+	ElfObject elfo;
+	if (!elfo.OpenFile(elf_path, false))
+		return iso_path;
+
+	return iso_path;
+}
+
 bool VMManager::AutoDetectSource(const std::string& filename)
 {
 	if (!filename.empty())
@@ -486,10 +501,31 @@ bool VMManager::AutoDetectSource(const std::string& filename)
 			return false;
 		}
 
-		// TODO: Maybe we should check if it's a valid iso here...
-		CDVDsys_SetFile(CDVD_SourceType::Iso, filename);
-		CDVDsys_ChangeSource(CDVD_SourceType::Iso);
-		s_disc_path = filename;
+		if (IsElfFileName(filename))
+		{
+			// alternative way of booting an elf, change the elf override, and (optionally) use the disc
+			// specified in the game settings.
+			std::string disc_path = GetDiscOverrideFromGameSettings(filename);
+			if (!disc_path.empty())
+			{
+				CDVDsys_SetFile(CDVD_SourceType::Iso, std::move(disc_path));
+				CDVDsys_ChangeSource(CDVD_SourceType::Iso);
+			}
+			else
+			{
+				CDVDsys_ChangeSource(CDVD_SourceType::NoDisc);
+			}
+
+			s_elf_override = filename;
+			return true;
+		}
+		else
+		{
+			// TODO: Maybe we should check if it's a valid iso here...
+			CDVDsys_SetFile(CDVD_SourceType::Iso, filename);
+			CDVDsys_ChangeSource(CDVD_SourceType::Iso);
+			s_disc_path = filename;
+		}
 	}
 	else
 	{

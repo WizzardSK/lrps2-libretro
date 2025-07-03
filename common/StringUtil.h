@@ -153,6 +153,11 @@ namespace StringUtil
 	{
 		return (!str.empty() && Strncasecmp(str.data(), prefix.data(), prefix.length()) == 0);
 	}
+	static inline bool EndsWithNoCase(const std::string_view str, const std::string_view suffix)
+	{
+		const std::size_t suffix_length = suffix.length();
+		return (str.length() >= suffix_length && Strncasecmp(str.data() + (str.length() - suffix_length), suffix.data(), suffix_length) == 0);
+	}
 
 	/// Strip whitespace from the start/end of the string.
 	std::string_view StripWhitespace(const std::string_view& str);

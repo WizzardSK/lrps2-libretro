@@ -84,6 +84,12 @@ namespace VMManager
 	/// Reloads cheats/patches. If verbose is set, the number of patches loaded will be shown in the OSD.
 	void ReloadPatches();
 
+	/// Returns true if the specified path is an ELF.
+	bool IsElfFileName(const std::string_view path);
+
+	/// Returns the ISO override for an ELF via gamesettings.
+	std::string GetDiscOverrideFromGameSettings(const std::string& elf_path);
+
 	/// Changes the disc in the virtual CD/DVD drive. Passing an empty will remove any current disc.
 	/// Returns false if the new disc can't be opened.
 	bool ChangeDisc(CDVD_SourceType source, std::string path);
