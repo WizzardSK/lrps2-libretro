@@ -1667,21 +1667,20 @@ static bool libretro_select_hw_render(void)
 #else
 		retro_hw_context_type context_type = RETRO_HW_CONTEXT_NONE;
 		environ_cb(RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER, &context_type);
+#ifdef _WIN32
+		/* Choose D3D12 instead of D3D11 until D3D11 works properly */
+		if (context_type == RETRO_HW_CONTEXT_D3D11 && libretro_set_hw_render(RETRO_HW_CONTEXT_D3D12))
+			return true;
+#endif
 		if (context_type != RETRO_HW_CONTEXT_NONE && libretro_set_hw_render(context_type))
 			return true;
 #endif
 	}
 #ifdef _WIN32
 	if (setting_renderer == "D3D11")
-	{
-		hw_render.version_major = 11;
 		return libretro_set_hw_render(RETRO_HW_CONTEXT_D3D11);
-	}
 	if (setting_renderer == "D3D12")
-	{
-		hw_render.version_major = 12;
 		return libretro_set_hw_render(RETRO_HW_CONTEXT_D3D12);
-	}
 #endif
 #ifdef ENABLE_VULKAN
 	if (               setting_renderer == "Vulkan" 
