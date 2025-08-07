@@ -1659,18 +1659,27 @@ static bool libretro_set_hw_render(retro_hw_context_type type)
 
 static bool libretro_select_hw_render(void)
 {
-	if (setting_renderer == "Auto")
+	if (setting_renderer == "Auto" || setting_renderer == "Software")
 	{
 #if defined(__APPLE__)
-		if (libretro_set_hw_render(RETRO_HW_CONTEXT_VULKAN))
+		if (setting_renderer != "Software" && libretro_set_hw_render(RETRO_HW_CONTEXT_VULKAN))
 			return true;
 #else
 		retro_hw_context_type context_type = RETRO_HW_CONTEXT_NONE;
 		environ_cb(RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER, &context_type);
+		/* FIXME: Software with vulkan does not work */
+		if (setting_renderer == "Software" && context_type == RETRO_HW_CONTEXT_VULKAN)
+		{
+			log_cb(RETRO_LOG_WARN, "Software does not work with Vulkan. Using fallback...\n");
+			goto fallback;
+		}
 #ifdef _WIN32
-		/* Choose D3D12 instead of D3D11 until D3D11 works properly */
+		/* FIXME: Force D3D12 instead of D3D11 until D3D11 works properly */
 		if (context_type == RETRO_HW_CONTEXT_D3D11 && libretro_set_hw_render(RETRO_HW_CONTEXT_D3D12))
+		{
+			log_cb(RETRO_LOG_WARN, "D3D11 is not working properly. Forcing D3D12...\n");
 			return true;
+		}
 #endif
 		if (context_type != RETRO_HW_CONTEXT_NONE && libretro_set_hw_render(context_type))
 			return true;
@@ -1687,21 +1696,20 @@ static bool libretro_select_hw_render(void)
 			|| setting_renderer == "paraLLEl-GS")
 		return libretro_set_hw_render(RETRO_HW_CONTEXT_VULKAN);
 #endif
+
+fallback:
+#ifdef _WIN32
+	if (libretro_set_hw_render(RETRO_HW_CONTEXT_D3D12))
+		return true;
+	if (libretro_set_hw_render(RETRO_HW_CONTEXT_D3D11))
+		return true;
+#endif
 	if (libretro_set_hw_render(RETRO_HW_CONTEXT_OPENGL_CORE))
 		return true;
 	if (libretro_set_hw_render(RETRO_HW_CONTEXT_OPENGL))
 		return true;
 	if (libretro_set_hw_render(RETRO_HW_CONTEXT_OPENGLES3))
 		return true;
-#ifdef _WIN32
-	if (libretro_set_hw_render(RETRO_HW_CONTEXT_D3D11))
-		return true;
-	if (libretro_set_hw_render(RETRO_HW_CONTEXT_D3D12))
-		return true;
-#endif
-	if (setting_renderer == "Software")
-		return libretro_set_hw_render(RETRO_HW_CONTEXT_OPENGL);
-
 	return false;
 }
 
