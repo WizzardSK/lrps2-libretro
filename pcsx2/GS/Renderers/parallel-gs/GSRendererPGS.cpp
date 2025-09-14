@@ -522,7 +522,7 @@ void GSRendererPGS::VSync(u32 field, bool registers_written)
 			uint32_t new_base_width          = vsync.image->get_width();
 			uint32_t new_base_height         = vsync.image->get_height();
 			retro_vulkan_image vkimage       = {};
-			vkimage.image_view = vsync.image->get_view().get_unorm_view();
+			vkimage.image_view = vsync.image->get_view().get_unorm_view().view;
 			vkimage.image_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 			vkimage.create_info = {
 				VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, nullptr, 0,
