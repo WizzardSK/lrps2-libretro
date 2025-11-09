@@ -743,21 +743,15 @@ static void rpsxMULT_const()
 
 static void rpsxWritebackHILO(int info)
 {
-	if (EEINST_LIVETEST(PSX_LO))
-	{
-		if (info & PROCESS_EE_LO)
-			xMOV(xRegister32(EEREC_LO), eax);
-		else
-			xMOV(ptr32[&psxRegs.GPR.n.lo], eax);
-	}
+	if (info & PROCESS_EE_LO)
+		xMOV(xRegister32(EEREC_LO), eax);
+	else
+		xMOV(ptr32[&psxRegs.GPR.n.lo], eax);
 
-	if (EEINST_LIVETEST(PSX_HI))
-	{
-		if (info & PROCESS_EE_HI)
-			xMOV(xRegister32(EEREC_HI), edx);
-		else
-			xMOV(ptr32[&psxRegs.GPR.n.hi], edx);
-	}
+	if (info & PROCESS_EE_HI)
+		xMOV(xRegister32(EEREC_HI), edx);
+	else
+		xMOV(ptr32[&psxRegs.GPR.n.hi], edx);
 }
 
 static void rpsxMULTsuperconst(int info, int sreg, int imm, int sign)

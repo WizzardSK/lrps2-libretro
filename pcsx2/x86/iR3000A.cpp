@@ -502,7 +502,7 @@ int psxTryRenameReg(int to, int from, int fromx86, int other, int xmminfo)
 		return -1;
 
 	// flush back when it's been modified
-	if (x86regs[fromx86].mode & MODE_WRITE && EEINST_LIVETEST(from))
+	if (x86regs[fromx86].mode & MODE_WRITE)
 		_writebackX86Reg(fromx86);
 
 	// remove all references to renamed-to register
@@ -715,10 +715,8 @@ void psxRecompileCodeConst3(R3000AFNPTR constcode, R3000AFNPTR_INFO constscode, 
 		_addNeededGPRtoX86reg(_Rt_);
 	if (LOHI)
 	{
-		if (EEINST_LIVETEST(PSX_LO))
-			_addNeededPSXtoX86reg(PSX_LO);
-		if (EEINST_LIVETEST(PSX_HI))
-			_addNeededPSXtoX86reg(PSX_HI);
+		_addNeededPSXtoX86reg(PSX_LO);
+		_addNeededPSXtoX86reg(PSX_HI);
 	}
 
 	u32 info = 0;

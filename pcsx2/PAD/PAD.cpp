@@ -470,25 +470,10 @@ void Pad::rumble(float rumble_scale, unsigned port)
 		currentVibrate[i] = nextVibrate[i];
 		do_rumble(currentVibrate[i] * rumble_scale, i, port);
 	}
-
-#if 0
-	InputManager::SetPadVibrationIntensity(port,
-		std::min(static_cast<float>(currentVibrate[0]) * g_key_status.m_vibration_scale[port][0] * (1.0f / 255.0f), 1.0f),
-		std::min(static_cast<float>(currentVibrate[1]) * g_key_status.m_vibration_scale[port][1] * (1.0f / 255.0f), 1.0f)
-	);
-#endif
 }
 
 void Pad::stop_vibrate_all()
 {
-#if 0
-	for (int i=0; i<8; i++)
-	{
-		SetVibrate(i&1, i>>1, 0, 0);
-		SetVibrate(i&1, i>>1, 1, 0);
-	}
-#endif
-	// FIXME equivalent ?
 	for (int port = 0; port < 2; port++)
 	{
 		for (int slot = 0; slot < 4; slot++)
@@ -668,32 +653,6 @@ u8 PADpoll(u8 value)
 			case CMD_READ_DATA_AND_VIBRATE:
 				{
 					query.response[2] = 0x5A;
-#if 0
-					int i;
-					Update(query.port, query.slot);
-					ButtonSum *sum = &pad->sum;
-
-					u8 b1 = 0xFF, b2 = 0xFF;
-					for (i = 0; i<4; i++)
-						b1 -= (sum->buttons[i]   > 0) << i;
-					for (i = 0; i<8; i++)
-						b2 -= (sum->buttons[i+4] > 0) << i;
-
-					// FIXME
-					if (config.padConfigs[query.port][query.slot].type == GuitarPad && !config.GH2) {
-						sum->buttons[15] = 255;
-						// Not sure about this.  Forces wammy to be from 0 to 0x7F.
-						// if (sum->sticks[2].vert > 0) sum->sticks[2].vert = 0;
-					}
-
-					for (i = 4; i<8; i++)
-						b1 -= (sum->buttons[i+8] > 0) << i;
-
-					// FIXME
-					//Left, Right and Down are always pressed on Pop'n Music controller.
-					if (config.padConfigs[query.port][query.slot].type == PopnPad)
-						b1=b1 & 0x1f;
-#endif
 
 					const u32 ext_port = sioConvertPortAndSlotToPad(query.port, query.slot);
 					const u32 buttons  = button_mask[ext_port];
@@ -812,9 +771,6 @@ u8 PADpoll(u8 value)
 			case CMD_VIBRATION_TOGGLE:
 				memcpy(query.response + 2, pad->vibrate, 7);
 				query.numBytes = 9;
-#if 0
-				query.set_result(pad->vibrate); // warning copy 7b not 8 (but it is really important?)
-#endif
 				pad->nextVibrate[0] = 0;
 				pad->nextVibrate[1] = 0;
 				memset(pad->vibrate, 0xFF, sizeof(pad->vibrate));

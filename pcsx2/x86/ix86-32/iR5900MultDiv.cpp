@@ -58,7 +58,6 @@ static void recWritebackHILO(int info, bool writed, bool upper)
 	// case 4: LO is already in a GPR - write to the GPR, or write to memory if upper
 	// case 4: LO is not used - writeback to memory
 
-	if (EEINST_LIVETEST(XMMGPR_LO))
 	{
 		const bool loused = EEINST_USEDTEST(XMMGPR_LO);
 		const bool lousedxmm = loused && (upper || EEINST_XMMUSEDTEST(XMMGPR_LO));
@@ -84,8 +83,6 @@ static void recWritebackHILO(int info, bool writed, bool upper)
 			}
 		}
 	}
-
-	if (EEINST_LIVETEST(XMMGPR_HI))
 	{
 		const bool hiused = EEINST_USEDTEST(XMMGPR_HI);
 		const bool hiusedxmm = hiused && (upper || EEINST_XMMUSEDTEST(XMMGPR_HI));
@@ -110,8 +107,9 @@ static void recWritebackHILO(int info, bool writed, bool upper)
 		}
 	}
 
+
 	// writeback lo to Rd if present
-	if (writed && _Rd_ && EEINST_LIVETEST(_Rd_))
+	if (writed && _Rd_)
 	{
 		// TODO: This can be made optimal by keeping it in an xmm.
 		// But currently the templates aren't hooked up for that - we'd need a "allow xmm" flag.
@@ -140,7 +138,6 @@ static void recWritebackConstHILO(u64 res, bool writed, int upper)
 	const s64 loval = static_cast<s64>(static_cast<s32>(static_cast<u32>(res)));
 	const s64 hival = static_cast<s64>(static_cast<s32>(static_cast<u32>(res >> 32)));
 
-	if (EEINST_LIVETEST(XMMGPR_LO))
 	{
 		const bool lolive = EEINST_USEDTEST(XMMGPR_LO);
 		const bool lolivexmm = lolive && (upper || EEINST_XMMUSEDTEST(XMMGPR_LO));
@@ -160,7 +157,6 @@ static void recWritebackConstHILO(u64 res, bool writed, int upper)
 		}
 	}
 
-	if (EEINST_LIVETEST(XMMGPR_HI))
 	{
 		const bool hilive = EEINST_USEDTEST(XMMGPR_HI);
 		const bool hilivexmm = hilive && (upper || EEINST_XMMUSEDTEST(XMMGPR_HI));
@@ -181,7 +177,7 @@ static void recWritebackConstHILO(u64 res, bool writed, int upper)
 	}
 
 	// writeback lo to Rd if present
-	if (writed && _Rd_ && EEINST_LIVETEST(_Rd_))
+	if (writed && _Rd_)
 	{
 		_eeOnWriteReg(_Rd_, 0);
 

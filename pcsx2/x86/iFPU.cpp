@@ -327,11 +327,11 @@ static int fpuCopyToTempForClamp(int fpureg, int xmmreg)
 		return tempreg;
 	}
 
-	// flush back the original value, before we mess with it below
-	if (FPUINST_LIVETEST(fpureg))
-		_flushXMMreg(xmmreg);
+	/* flush back the original value, before we mess with it below */
+	_flushXMMreg(xmmreg);
 
-	// turn it into a temp, so in case the liveness was incorrect, we don't reuse it after clamp
+	/* turn it into a temp, so in case the liveness was incorrect, 
+	 * we don't reuse it after clamp */
 	_reallocateXMMreg(xmmreg, XMMTYPE_TEMP, 0, 0, true);
 	return xmmreg;
 }

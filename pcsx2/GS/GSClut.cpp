@@ -619,9 +619,7 @@ __forceinline void GSClut::ReadCLUT_T32_I4(const u16* RESTRICT clut, u32* RESTRI
 	ExpandCLUT64_T32(s2, s0, s1, s2, s3, &d64[64]);
 	ExpandCLUT64_T32(s3, s0, s1, s2, s3, &d64[96]);
 }
-#endif
 
-#if 0
 void GSClut::ReadCLUT_T16_I8(const u16* RESTRICT clut, u32* RESTRICT dst)
 {
 	for(int i = 0; i < 256; i += 16)
@@ -629,9 +627,7 @@ void GSClut::ReadCLUT_T16_I8(const u16* RESTRICT clut, u32* RESTRICT dst)
 		ReadCLUT_T16_I4(&clut[i], &dst[i]);
 	}
 }
-#endif
 
-#if 0
 __forceinline void GSClut::ReadCLUT_T16_I4(const u16* RESTRICT clut, u32* RESTRICT dst)
 {
 	GSVector4i* s = (GSVector4i*)clut;
@@ -645,9 +641,7 @@ __forceinline void GSClut::ReadCLUT_T16_I4(const u16* RESTRICT clut, u32* RESTRI
 	d[2] = v1.upl16();
 	d[3] = v1.uph16();
 }
-#endif
 
-#if 0
 __forceinline void GSClut::ReadCLUT_T16_I4(const u16* RESTRICT clut, u32* RESTRICT dst32, u64* RESTRICT dst64)
 {
 	GSVector4i* s = (GSVector4i*)clut;

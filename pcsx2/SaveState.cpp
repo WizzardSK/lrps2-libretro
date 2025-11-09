@@ -99,12 +99,6 @@ bool SaveStateBase::FreezeBios()
 
 bool SaveStateBase::FreezeInternals()
 {
-#if 0
-	const u32 previousCRC = ElfCRC;
-	if (!vmFreeze())
-		return false;
-#endif
-
 	// Second Block - Various CPU Registers and States
 	// -----------------------------------------------
 	if (!FreezeTag( "cpuRegs" ))

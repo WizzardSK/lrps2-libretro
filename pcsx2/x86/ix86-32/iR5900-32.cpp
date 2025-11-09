@@ -1022,15 +1022,6 @@ void iFlushCall(int flushtype)
 		xMOV(ptr32[&cpuRegs.code], cpuRegs.code);
 		g_cpuFlushedCode = true;
 	}
-
-#if 0
-	if ((flushtype == FLUSH_CAUSE) && !g_maySignalException)
-	{
-		if (g_recompilingDelaySlot)
-			xOR(ptr32[&cpuRegs.CP0.n.Cause], 1 << 31); // BD
-		g_maySignalException = true;
-	}
-#endif
 }
 
 // Note: scaleblockcycles() scales s_nBlockCycles respective to the EECycleRate value for manipulating the cycles of current block recompiling.

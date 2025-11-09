@@ -80,7 +80,7 @@ int _eeTryRenameReg(int to, int from, int fromx86, int other, int xmminfo)
 		return -1;
 
 	// flush back when it's been modified
-	if (x86regs[fromx86].mode & MODE_WRITE && EEINST_LIVETEST(from))
+	if (x86regs[fromx86].mode & MODE_WRITE)
 		_writebackX86Reg(fromx86);
 
 	// remove all references to renamed-to register
@@ -288,39 +288,32 @@ int eeRecompileCodeXMM(int xmminfo)
 	{
 		_addNeededGPRtoXMMreg(_Rd_);
 		int readd = MODE_WRITE | ((xmminfo & XMMINFO_READD) ? MODE_READ : 0);
-
-		int regd = _checkXMMreg(XMMTYPE_GPRREG, _Rd_, readd);
+		int regd  = _checkXMMreg(XMMTYPE_GPRREG, _Rd_, readd);
 
 		if (regd < 0)
 		{
 			if (!(xmminfo & XMMINFO_READD) && (xmminfo & XMMINFO_READT) && EEINST_RENAMETEST(_Rt_))
 			{
 				_deleteEEreg128(_Rd_);
-				_reallocateXMMreg(EEREC_T, XMMTYPE_GPRREG, _Rd_, readd, EEINST_LIVETEST(_Rt_));
+				_reallocateXMMreg(EEREC_T, XMMTYPE_GPRREG, _Rd_, readd, true);
 				regd = EEREC_T;
 			}
 			else if (!(xmminfo & XMMINFO_READD) && (xmminfo & XMMINFO_READS) && EEINST_RENAMETEST(_Rs_))
 			{
 				_deleteEEreg128(_Rd_);
-				_reallocateXMMreg(EEREC_S, XMMTYPE_GPRREG, _Rd_, readd, EEINST_LIVETEST(_Rs_));
+				_reallocateXMMreg(EEREC_S, XMMTYPE_GPRREG, _Rd_, readd, true);
 				regd = EEREC_S;
 			}
 			else
-			{
 				regd = _allocGPRtoXMMreg(_Rd_, readd);
-			}
 		}
 
 		info |= PROCESS_EE_SET_D(regd);
 	}
 	if (xmminfo & (XMMINFO_READLO | XMMINFO_WRITELO))
-	{
 		info |= PROCESS_EE_SET_LO(_allocGPRtoXMMreg(XMMGPR_LO, ((xmminfo & XMMINFO_READLO) ? MODE_READ : 0) | ((xmminfo & XMMINFO_WRITELO) ? MODE_WRITE : 0)));
-	}
 	if (xmminfo & (XMMINFO_READHI | XMMINFO_WRITEHI))
-	{
 		info |= PROCESS_EE_SET_HI(_allocGPRtoXMMreg(XMMGPR_HI, ((xmminfo & XMMINFO_READHI) ? MODE_READ : 0) | ((xmminfo & XMMINFO_WRITEHI) ? MODE_WRITE : 0)));
-	}
 
 	if (xmminfo & XMMINFO_WRITED)
 		GPR_DEL_CONST(_Rd_);
@@ -389,9 +382,9 @@ void eeFPURecompileCode(R5900FNPTR_INFO xmmcode, R5900FNPTR fpucode, int xmminfo
 
 		if (mmregacc < 0)
 		{
-			if ((xmminfo & XMMINFO_READT) && mmregt >= 0 && FPUINST_RENAMETEST(_Ft_))
+			if ((xmminfo & XMMINFO_READT) && mmregt >= 0 && !EEINST_USEDTEST(_Ft_))
 			{
-				if (EE_WRITE_DEAD_VALUES && xmmregs[mmregt].mode & MODE_WRITE)
+				if (xmmregs[mmregt].mode & MODE_WRITE)
 					_writebackXMMreg(mmregt);
 
 				xmmregs[mmregt].reg = 0;
@@ -399,9 +392,9 @@ void eeFPURecompileCode(R5900FNPTR_INFO xmmcode, R5900FNPTR fpucode, int xmminfo
 				xmmregs[mmregt].type = XMMTYPE_FPACC;
 				mmregacc = mmregt;
 			}
-			else if ((xmminfo & XMMINFO_READS) && mmregs >= 0 && FPUINST_RENAMETEST(_Fs_))
+			else if ((xmminfo & XMMINFO_READS) && mmregs >= 0 && !EEINST_USEDTEST(_Fs_))
 			{
-				if (EE_WRITE_DEAD_VALUES && xmmregs[mmregs].mode & MODE_WRITE)
+				if (xmmregs[mmregs].mode & MODE_WRITE)
 					_writebackXMMreg(mmregs);
 
 				xmmregs[mmregs].reg = 0;
@@ -426,18 +419,18 @@ void eeFPURecompileCode(R5900FNPTR_INFO xmmcode, R5900FNPTR fpucode, int xmminfo
 
 		if (mmregd < 0)
 		{
-			if ((xmminfo & XMMINFO_READT) && mmregt >= 0 && FPUINST_RENAMETEST(_Ft_))
+			if ((xmminfo & XMMINFO_READT) && mmregt >= 0 && !EEINST_USEDTEST(_Ft_))
 			{
-				if (EE_WRITE_DEAD_VALUES && xmmregs[mmregt].mode & MODE_WRITE)
+				if (xmmregs[mmregt].mode & MODE_WRITE)
 					_writebackXMMreg(mmregt);
 
 				xmmregs[mmregt].reg = _Fd_;
 				xmmregs[mmregt].mode = readd;
 				mmregd = mmregt;
 			}
-			else if ((xmminfo & XMMINFO_READS) && mmregs >= 0 && FPUINST_RENAMETEST(_Fs_))
+			else if ((xmminfo & XMMINFO_READS) && mmregs >= 0 && !EEINST_USEDTEST(_Fs_))
 			{
-				if (EE_WRITE_DEAD_VALUES && xmmregs[mmregs].mode & MODE_WRITE)
+				if (xmmregs[mmregs].mode & MODE_WRITE)
 					_writebackXMMreg(mmregs);
 
 				xmmregs[mmregs].inuse = 1;
@@ -445,9 +438,9 @@ void eeFPURecompileCode(R5900FNPTR_INFO xmmcode, R5900FNPTR fpucode, int xmminfo
 				xmmregs[mmregs].mode = readd;
 				mmregd = mmregs;
 			}
-			else if ((xmminfo & XMMINFO_READACC) && mmregacc >= 0 && FPUINST_RENAMETEST(XMMFPU_ACC))
+			else if ((xmminfo & XMMINFO_READACC) && mmregacc >= 0 && !EEINST_USEDTEST(XMMFPU_ACC))
 			{
-				if (EE_WRITE_DEAD_VALUES && xmmregs[mmregacc].mode & MODE_WRITE)
+				if (xmmregs[mmregacc].mode & MODE_WRITE)
 					_writebackXMMreg(mmregacc);
 
 				xmmregs[mmregacc].reg = _Fd_;

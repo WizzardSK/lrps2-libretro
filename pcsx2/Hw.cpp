@@ -922,12 +922,6 @@ void hwWrite32( u32 mem, u32 value )
 						PGIFw((mem & 0x1FFFFFFF), value);
 						return;
 					}
-#if 0
-				case HELPSWITCH(SIO_ISR):
-				case HELPSWITCH(0x1000f410):
-				// Mystery Regs!  No one knows!?
-				// (unhandled so fall through to default)
-#endif
 
 			}
 		}
