@@ -407,7 +407,7 @@ static __forceinline void MixCoreVoices(VoiceMixSet& dest, const uint coreidx)
 {
 	V_Core& thiscore(Cores[coreidx]);
 
-	for (uint voiceidx = 0; voiceidx < V_Core::NumVoices; ++voiceidx)
+	for (uint voiceidx = 0; voiceidx < SPU2_NUM_VOICES; ++voiceidx)
 	{
 		V_Voice& vc(thiscore.Voices[voiceidx]);
 		StereoOut32 VVal(MixVoice(thiscore, vc, coreidx, voiceidx));

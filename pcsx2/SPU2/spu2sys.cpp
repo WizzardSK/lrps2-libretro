@@ -146,7 +146,7 @@ void V_Core::Init(int index)
 	IRQA = 0x800;
 	IRQEnable = false; // PS2 confirmed
 
-	for (uint v = 0; v < NumVoices; ++v)
+	for (uint v = 0; v < SPU2_NUM_VOICES; ++v)
 	{
 		VoiceGates[v].DryL = -1;
 		VoiceGates[v].DryR = -1;
@@ -235,7 +235,7 @@ __forceinline void TimeUpdate(u32 cClocks)
 		{
 			if (Cores[c].KeyOff)
 			{
-				for (u8 vc = 0; vc < V_Core::NumVoices; vc++)
+				for (u8 vc = 0; vc < SPU2_NUM_VOICES; vc++)
 				{
 					if (((Cores[c].KeyOff >> vc) & 1))
 						ADSR_Release(thiscore.Voices[vc].ADSR);
@@ -246,7 +246,7 @@ __forceinline void TimeUpdate(u32 cClocks)
 			if (Cores[c].KeyOn)
 			{
 				thiscore.Regs.ENDX &= ~(Cores[c].KeyOn);
-				for (int v = 0; v < 24; v++)
+				for (int v = 0; v < SPU2_NUM_VOICES; v++)
 				{
 					if (Cores[c].KeyOn & (1 << v))
 					{
