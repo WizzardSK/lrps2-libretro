@@ -186,6 +186,40 @@ void V_Core::Init(int index)
 /* TICKINTERVAL * SANITYINTERVAL = 3686400 */
 #define SAMPLECOUNT 3686400 
 
+static bool StartQueuedVoices(V_Core& vc, int c, u32 v)
+{
+	if ((Cycles - vc.PlayCycle) >= 2) /* Start queued voice? */
+	{
+		if (vc.StartA & 7)
+			vc.StartA = (vc.StartA + 0xFFFF8) + 0x8;
+
+		vc.ADSR.Phase   = PHASE_ATTACK;
+		vc.ADSR.Counter = 0;
+		vc.ADSR.Value   = 0;
+
+		vc.SCurrent     = 28;
+		vc.LoopMode     = 0;
+
+		// When SP >= 0 the next sample will be grabbed, we don't want this to happen
+		// instantly because in the case of pitch being 0 we want to delay getting
+		// the next block header. This is a hack to work around the fact that unlike
+		// the HW we don't update the block header on every cycle.
+		vc.SP           = -1;
+
+		vc.LoopFlags    = 0;
+		vc.NextA        = vc.StartA | 1;
+		vc.Prev1        = 0;
+		vc.Prev2        = 0;
+
+		vc.PV1 = vc.PV2 = 0;
+		vc.PV3 = vc.PV4 = 0;
+		vc.NextCrest    = -0x8000;
+		return true;
+	}
+	return false;
+}
+
+
 __forceinline void TimeUpdate(u32 cClocks)
 {
 	u32 dClocks = cClocks - lClocks;
@@ -771,39 +805,6 @@ static void StopVoices(V_Core& thiscore, int core, u32 value)
 
 		ADSR_Release(thiscore.Voices[vc].ADSR);
 	}
-}
-
-static bool StartQueuedVoices(V_Core& vc, int c, u32 v)
-{
-	if ((Cycles - vc.PlayCycle) >= 2) /* Start queued voice? */
-	{
-		if (vc.StartA & 7)
-			vc.StartA = (vc.StartA + 0xFFFF8) + 0x8;
-
-		vc.ADSR.Phase   = PHASE_ATTACK;
-		vc.ADSR.Counter = 0;
-		vc.ADSR.Value   = 0;
-
-		vc.SCurrent     = 28;
-		vc.LoopMode     = 0;
-
-		// When SP >= 0 the next sample will be grabbed, we don't want this to happen
-		// instantly because in the case of pitch being 0 we want to delay getting
-		// the next block header. This is a hack to work around the fact that unlike
-		// the HW we don't update the block header on every cycle.
-		vc.SP           = -1;
-
-		vc.LoopFlags    = 0;
-		vc.NextA        = vc.StartA | 1;
-		vc.Prev1        = 0;
-		vc.Prev2        = 0;
-
-		vc.PV1 = vc.PV2 = 0;
-		vc.PV3 = vc.PV4 = 0;
-		vc.NextCrest    = -0x8000;
-		return true;
-	}
-	return false;
 }
 
 template <int CoreIdx, int VoiceIdx, int param>
