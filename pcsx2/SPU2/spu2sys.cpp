@@ -238,14 +238,14 @@ __forceinline void TimeUpdate(u32 cClocks)
 				for (u8 vc = 0; vc < SPU2_NUM_VOICES; vc++)
 				{
 					if (((Cores[c].KeyOff >> vc) & 1))
-						ADSR_Release(thiscore.Voices[vc].ADSR);
+						ADSR_Release(Cores[c].Voices[vc].ADSR);
 				}
 				Cores[c].KeyOff = 0;
 			}
 
 			if (Cores[c].KeyOn)
 			{
-				thiscore.Regs.ENDX &= ~(Cores[c].KeyOn);
+				Cores[c].Regs.ENDX &= ~(Cores[c].KeyOn);
 				for (int v = 0; v < SPU2_NUM_VOICES; v++)
 				{
 					if (Cores[c].KeyOn & (1 << v))
