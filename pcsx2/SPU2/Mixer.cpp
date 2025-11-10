@@ -202,14 +202,14 @@ static void __forceinline UpdatePitch(V_Voice& vc, uint coreidx, uint voiceidx)
 	vc.SP    += pitch;
 }
 
-static __forceinline s32 GetVoiceValues(V_Core& thiscore, V_Voice& vc, uint voiceidx)
+static __forceinline s32 GetVoiceValues(V_Voice& vc, uint voiceidx)
 {
 	while (vc.SP >= 0)
 	{
 		vc.PV4 = vc.PV3;
 		vc.PV3 = vc.PV2;
 		vc.PV2 = vc.PV1;
-		vc.PV1 = GetNextDataBuffered(thiscore, vc, voiceidx);
+		vc.PV1 = GetNextDataBuffered(vc, voiceidx);
 		vc.SP -= 0x1000;
 	}
 
@@ -365,7 +365,7 @@ static __forceinline StereoOut32 MixVoice(V_Core& thiscore, V_Voice& vc, uint co
 		if (vc.Noise)
 			Value = (s16)thiscore.NoiseOut;
 		else
-			Value = GetVoiceValues(thiscore, vc, voiceidx);
+			Value = GetVoiceValues(vc, voiceidx);
 
 		/* Update and Apply ADSR  (applies to normal and noise sources) */
 
