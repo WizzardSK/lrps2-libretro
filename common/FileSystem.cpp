@@ -190,7 +190,7 @@ int64_t rfwrite(void const* buffer,
 #ifdef _WIN32
 static std::time_t ConvertFileTimeToUnixTime(const FILETIME& ft)
 {
-	// based off https://stackoverflow.com/a/6161842
+	/* based off https://stackoverflow.com/a/6161842 */
 	static constexpr s64 WINDOWS_TICK = 10000000;
 	static constexpr s64 SEC_TO_UNIX_EPOCH = 11644473600LL;
 
@@ -210,7 +210,7 @@ static inline void PathAppendString(std::string& dst, const T& src)
 	size_t index = 0;
 
 #ifdef _WIN32
-	// special case for UNC paths here
+	/* special case for UNC paths here */
 	if (dst.empty() && src.length() >= 3 && src[0] == '\\' && src[1] == '\\' && src[2] != '\\')
 	{
 		dst.append("\\\\");
@@ -223,7 +223,7 @@ static inline void PathAppendString(std::string& dst, const T& src)
 		const char ch = src[index];
 
 #ifdef _WIN32
-		// convert forward slashes to backslashes
+		/* convert forward slashes to backslashes */
 		if (ch == '\\' || ch == '/')
 #else
 		if (ch == '/')
@@ -258,7 +258,7 @@ std::string Path::ToNativePath(const std::string_view& path)
 	std::string ret;
 	PathAppendString(ret, path);
 
-	// remove trailing slashes
+	/* remove trailing slashes */
 	if (ret.length() > 1)
 	{
 		while (ret.back() == FS_OSPATH_SEPARATOR_CHARACTER)
@@ -273,7 +273,7 @@ void Path::ToNativePath(std::string* path)
 	*path = Path::ToNativePath(*path);
 }
 
-/// Joins a string together using the specified delimiter.
+/* Joins a string together using the specified delimiter. */
 template <typename T>
 static inline std::string JoinString(const T& start, const T& end, char delimiter)
 {
@@ -296,13 +296,13 @@ std::string Path::Canonicalize(const std::string_view& path)
 	{
 		if (component == ".")
 		{
-			// current directory, so it can be skipped, unless it's the only component
+			/* current directory, so it can be skipped, unless it's the only component */
 			if (components.size() == 1)
 				new_components.push_back(std::move(component));
 		}
 		else if (component == "..")
 		{
-			// parent directory, pop one off if we're not at the beginning, otherwise preserve.
+			/* parent directory, pop one off if we're not at the beginning, otherwise preserve. */
 			if (!new_components.empty())
 				new_components.pop_back();
 			else
@@ -310,7 +310,7 @@ std::string Path::Canonicalize(const std::string_view& path)
 		}
 		else
 		{
-			// anything else, preserve
+			/* anything else, preserve */
 			new_components.push_back(std::move(component));
 		}
 	}
@@ -379,7 +379,7 @@ std::vector<std::string_view> Path::SplitWindowsPath(const std::string_view& pat
 	std::string::size_type start = 0;
 	std::string::size_type pos = 0;
 
-	// preserve unc paths
+	/* preserve UNC paths */
 	if (path.size() > 2 && path[0] == '\\' && path[1] == '\\')
 		pos = 2;
 
@@ -391,7 +391,7 @@ std::vector<std::string_view> Path::SplitWindowsPath(const std::string_view& pat
 			continue;
 		}
 
-		// skip consecutive separators
+		/* skip consecutive separators */
 		if (pos != start)
 			parts.push_back(path.substr(start, pos - start));
 
@@ -422,9 +422,9 @@ std::vector<std::string_view> Path::SplitNativePath(const std::string_view& path
 			continue;
 		}
 
-		// skip consecutive separators
-		// for unix, we create an empty element at the beginning when it's an absolute path
-		// that way, when it's re-joined later, we preserve the starting slash.
+		/* skip consecutive separators
+		 * for unix, we create an empty element at the beginning when it's an absolute path
+		 * that way, when it's re-joined later, we preserve the starting slash. */
 		if (pos != start || pos == 0)
 			parts.push_back(path.substr(start, pos - start));
 
@@ -597,7 +597,7 @@ std::optional<std::string> FileSystem::ReadFileToString(const char* filename)
 	}
 
 	res.resize(static_cast<size_t>(size));
-	// NOTE - assumes mode 'rb', for example, this will fail over missing Windows carriage return bytes
+	/* NOTE - assumes mode 'rb', for example, this will fail over missing Windows carriage return bytes */
 	if (size > 0 && rfread(res.data(), 1u, static_cast<size_t>(size), fp) != static_cast<size_t>(size))
 	{
 		rfclose(fp);
@@ -636,7 +636,7 @@ static u32 RecursiveFindFiles(const char* origin_path, const char* parent_path, 
 	else
 		tempStr = StringUtil::StdStringFromFormat("%s\\*", origin_path);
 
-	// holder for utf-8 conversion
+	/* holder for utf-8 conversion */
 	WIN32_FIND_DATAW wfd;
 	std::string utf8_filename;
 	utf8_filename.reserve((sizeof(wfd.cFileName) / sizeof(wfd.cFileName[0])) * 2);
@@ -646,8 +646,8 @@ static u32 RecursiveFindFiles(const char* origin_path, const char* parent_path, 
 	if (hFind == INVALID_HANDLE_VALUE)
 		return 0;
 
-	// small speed optimization for '*' case
-	bool hasWildCards = false;
+	/* small speed optimization for '*' case */
+	bool hasWildCards     = false;
 	bool wildCardMatchAll = false;
 	u32 nFiles = 0;
 	if (std::strpbrk(pattern, "*?"))
@@ -656,7 +656,7 @@ static u32 RecursiveFindFiles(const char* origin_path, const char* parent_path, 
 		wildCardMatchAll = !(std::strcmp(pattern, "*"));
 	}
 
-	// iterate results
+	/* iterate results */
 	do
 	{
 		if (wfd.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN && !(flags & FILESYSTEM_FIND_HIDDEN_FILES))
@@ -678,7 +678,7 @@ static u32 RecursiveFindFiles(const char* origin_path, const char* parent_path, 
 		{
 			if (flags & FILESYSTEM_FIND_RECURSIVE)
 			{
-				// recurse into this directory
+				/* recurse into this directory */
 				if (parent_path)
 				{
 					const std::string recurseDir = StringUtil::StdStringFromFormat("%s\\%s", parent_path, path);
@@ -702,7 +702,7 @@ static u32 RecursiveFindFiles(const char* origin_path, const char* parent_path, 
 		if (wfd.dwFileAttributes & FILE_ATTRIBUTE_READONLY)
 			outData.Attributes |= FILESYSTEM_FILE_ATTRIBUTE_READ_ONLY;
 
-		// match the filename
+		/* match the filename */
 		if (hasWildCards)
 		{
 			if (!wildCardMatchAll && !StringUtil::WildcardMatch(utf8_filename.c_str(), pattern))
@@ -714,8 +714,8 @@ static u32 RecursiveFindFiles(const char* origin_path, const char* parent_path, 
 				continue;
 		}
 
-		// add file to list
-		// TODO string formatter, clean this mess..
+		/* add file to list */
+		/* TODO string formatter, clean this mess.. */
 		if (!(flags & FILESYSTEM_FIND_RELATIVE_PATHS))
 		{
 			if (parent_path)
@@ -765,10 +765,8 @@ static void TranslateStat64(struct stat* st, const struct _stat64& st64)
 bool FileSystem::StatFile(const char* path, struct stat* st)
 {
 	struct _stat64 st64;
-	// has a path
 	if (path[0] == '\0')
 		return false;
-	// convert to wide string
 	wchar_t *wpath = utf8_to_utf16_string_alloc(path);
 	if (_wstat64(wpath, &st64) != 0)
 	{
@@ -840,8 +838,8 @@ static u32 RecursiveFindFiles(const char* OriginPath, const char* ParentPath, co
 	if (pDir == nullptr)
 		return 0;
 
-	// small speed optimization for '*' case
-	bool hasWildCards = false;
+	/* small speed optimization for '*' case */
+	bool hasWildCards     = false;
 	bool wildCardMatchAll = false;
 	u32 nFiles = 0;
 	if (std::strpbrk(Pattern, "*?"))
@@ -850,7 +848,7 @@ static u32 RecursiveFindFiles(const char* OriginPath, const char* ParentPath, co
 		wildCardMatchAll = (std::strcmp(Pattern, "*") == 0);
 	}
 
-	// iterate results
+	/* iterate results */
 	struct dirent* pDirEnt;
 	while ((pDirEnt = readdir(pDir)))
 	{
@@ -889,7 +887,7 @@ static u32 RecursiveFindFiles(const char* OriginPath, const char* ParentPath, co
 		{
 			if (Flags & FILESYSTEM_FIND_RECURSIVE)
 			{
-				// recurse into this directory
+				/* recurse into this directory */
 				if (ParentPath)
 				{
 					std::string recursiveDir = StringUtil::StdStringFromFormat("%s/%s", ParentPath, Path);
@@ -913,7 +911,7 @@ static u32 RecursiveFindFiles(const char* OriginPath, const char* ParentPath, co
 		outData.Size = static_cast<u64>(sDir.st_size);
 		outData.ModificationTime = sDir.st_mtime;
 
-		// match the filename
+		/* match the filename */
 		if (hasWildCards)
 		{
 			if (!wildCardMatchAll && !StringUtil::WildcardMatch(pDirEnt->d_name, Pattern))
@@ -925,8 +923,8 @@ static u32 RecursiveFindFiles(const char* OriginPath, const char* ParentPath, co
 				continue;
 		}
 
-		// add file to list
-		// TODO string formatter, clean this mess..
+		/* add file to list */
+		/* TODO string formatter, clean this mess.. */
 		if (!(Flags & FILESYSTEM_FIND_RELATIVE_PATHS))
 			outData.FileName = std::move(full_path);
 		else
@@ -987,14 +985,9 @@ bool FileSystem::DeleteDirectory(const char* path)
 
 bool FileSystem::FindFiles(const char* Path, const char* Pattern, u32 Flags, FindResultsArray* pResults)
 {
-	// has a path
 	if (Path[0] == '\0')
 		return false;
-
-	// clear result array
 	if (!(Flags & FILESYSTEM_FIND_KEEP_ARRAY))
 		pResults->clear();
-
-	// enter the recursive function
 	return (RecursiveFindFiles(Path, nullptr, nullptr, Pattern, Flags, pResults) > 0);
 }

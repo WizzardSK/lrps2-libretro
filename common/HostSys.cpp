@@ -46,8 +46,8 @@
 #endif
 #include "StringUtil.h"
 
-// Apple uses the MAP_ANON define instead of MAP_ANONYMOUS, but they mean
-// the same thing.
+/* Apple uses the MAP_ANON define instead of MAP_ANONYMOUS, but they mean
+ * the same thing. */
 #if defined(__APPLE__) && !defined(MAP_ANONYMOUS)
 #define MAP_ANONYMOUS MAP_ANON
 #endif
@@ -72,34 +72,36 @@ static bool s_in_exception_handler;
 #ifdef _WIN32
 long __stdcall SysPageFaultExceptionFilter(EXCEPTION_POINTERS* eps)
 {
-	// Executing the handler concurrently from multiple threads wouldn't go down well.
+	/* Executing the handler concurrently from multiple threads wouldn't go down well. */
 	std::unique_lock lock(s_exception_handler_mutex);
 
-	// Prevent recursive exception filtering.
-	if (s_in_exception_handler)
-		return EXCEPTION_CONTINUE_SEARCH;
-
-	// Only interested in page faults.
-	if (eps->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION)
-		return EXCEPTION_CONTINUE_SEARCH;
-
+	/* Prevent recursive exception filtering. */
+	if (!s_in_exception_handler)
+	{
+		/* Only interested in page faults. */
+		if (eps->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION)
+		{
 #if defined(_M_AMD64)
-	void* const exception_pc = reinterpret_cast<void*>(eps->ContextRecord->Rip);
+			void* const exception_pc = reinterpret_cast<void*>(eps->ContextRecord->Rip);
 #elif defined(_M_ARM64)
-	void* const exception_pc = reinterpret_cast<void*>(eps->ContextRecord->Pc);
+			void* const exception_pc = reinterpret_cast<void*>(eps->ContextRecord->Pc);
 #else
-	void* const exception_pc = nullptr;
+			void* const exception_pc = nullptr;
 #endif
 
-	const PageFaultInfo pfi{(uptr)exception_pc, (uptr)eps->ExceptionRecord->ExceptionInformation[1]};
+			const PageFaultInfo pfi{(uptr)exception_pc, (uptr)eps->ExceptionRecord->ExceptionInformation[1]};
 
-	s_in_exception_handler = true;
+			s_in_exception_handler = true;
 
-	const bool handled = s_exception_handler_callback(pfi);
+			const bool handled     = s_exception_handler_callback(pfi);
 
-	s_in_exception_handler = false;
-	
-	return handled ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
+			s_in_exception_handler = false;
+
+			if handled
+				return EXCEPTION_CONTINUE_EXECUTION;
+		}
+	}
+	return EXCEPTION_CONTINUE_SEARCH;
 }
 #else
 #if defined(__APPLE__) || defined(__aarch64__)
@@ -123,21 +125,23 @@ static void CallExistingSignalHandler(int signal, siginfo_t* siginfo, void* ctx)
 		sa.sa_sigaction(signal, siginfo, ctx);
 	else if (sa.sa_handler == SIG_DFL)
 	{
-		// Re-raising the signal would just queue it, and since we'd restore the handler back to us,
-		// we'd end up right back here again. So just abort, because that's probably what it'd do anyway.
+		/* Re-raising the signal would just queue it, 
+		 * and since we'd restore the handler back to us,
+		 * we'd end up right back here again. So just abort, 
+		 * because that's probably what it'd do anyway. */
 		abort();
 	}
 	else if (sa.sa_handler != SIG_IGN)
 		sa.sa_handler(signal);
 }
 
-// Linux implementation of SIGSEGV handler.  Bind it using sigaction().
+/* Linux implementation of SIGSEGV handler. Bind it using sigaction() */
 static void SysPageFaultSignalFilter(int signal, siginfo_t* siginfo, void* ctx)
 {
-	// Executing the handler concurrently from multiple threads wouldn't go down well.
+	/* Executing the handler concurrently from multiple threads wouldn't go down well. */
 	std::unique_lock lock(s_exception_handler_mutex);
 
-	// Prevent recursive exception filtering.
+	/* Prevent recursive exception filtering. */
 	if (s_in_exception_handler)
 	{
 		lock.unlock();
@@ -145,10 +149,11 @@ static void SysPageFaultSignalFilter(int signal, siginfo_t* siginfo, void* ctx)
 		return;
 	}
 
-	// Note: Use of stdio functions isn't safe here.  Avoid console logs, assertions, file logs,
-	// or just about anything else useful. However, that's really only a concern if the signal
-	// occurred within those functions. The logging which we do only happens when the exception
-	// occurred within JIT code.
+	/* Note: Use of stdio functions isn't safe here.  Avoid console logs, 
+	 * assertions, file logs, or just about anything else useful. 
+	 * However, that's really only a concern if the signal occurred within 
+	 * those functions. The logging which we do only happens when the exception
+	 * occurred within JIT code. */
 
 #if defined(__APPLE__) && defined(__x86_64__)
 	void* const exception_pc = reinterpret_cast<void*>(static_cast<ucontext_t*>(ctx)->uc_mcontext->__ss.__rip);
@@ -170,15 +175,16 @@ static void SysPageFaultSignalFilter(int signal, siginfo_t* siginfo, void* ctx)
 
 	s_in_exception_handler = true;
 
-	const bool handled = s_exception_handler_callback(pfi);
+	const bool handled     = s_exception_handler_callback(pfi);
 
 	s_in_exception_handler = false;
 
-	// Resumes execution right where we left off (re-executes instruction that caused the SIGSEGV).
+	/* Resumes execution right where we left off 
+	 * (re-executes instruction that caused the SIGSEGV). */
 	if (handled)
 		return;
 
-	// Call old signal handler, which will likely dump core.
+	/* Call old signal handler, which will likely dump core. */
 	lock.unlock();
 	CallExistingSignalHandler(signal, siginfo, ctx);
 }
@@ -200,14 +206,16 @@ bool HostSys::InstallPageFaultHandler(PageFaultHandler handler)
 		struct sigaction sa;
 
 		sigemptyset(&sa.sa_mask);
-		sa.sa_flags = SA_SIGINFO;
+		sa.sa_flags     = SA_SIGINFO;
 		sa.sa_sigaction = SysPageFaultSignalFilter;
 #ifdef __linux__
-		// Don't block the signal from executing recursively, we want to fire the original handler.
-		sa.sa_flags |= SA_NODEFER;
+		/* Don't block the signal from executing recursively, 
+		 * we want to fire the original handler. */
+		sa.sa_flags    |= SA_NODEFER;
 #endif
 #if defined(__APPLE__) || defined(__aarch64__)
-		// MacOS uses SIGBUS for memory permission violations, as well as SIGSEGV on ARM64.
+		/* MacOS uses SIGBUS for memory permission violations, 
+		 * as well as SIGSEGV on ARM64. */
 		if (sigaction(SIGBUS, &sa, &s_old_sigbus_action) != 0)
 			return false;
 #endif
@@ -216,7 +224,8 @@ bool HostSys::InstallPageFaultHandler(PageFaultHandler handler)
 			return false;
 #endif
 #if defined(__APPLE__) && defined(__aarch64__)
-		// Stops LLDB getting in a EXC_BAD_ACCESS loop when passing page faults to PCSX2.
+		/* Stops LLDB getting in a EXC_BAD_ACCESS loop 
+		 * when passing page faults to PCSX2. */
 		task_set_exception_ports(mach_task_self(), EXC_MASK_BAD_ACCESS, MACH_PORT_NULL, EXCEPTION_DEFAULT, 0);
 #endif
 	}
@@ -228,6 +237,7 @@ bool HostSys::InstallPageFaultHandler(PageFaultHandler handler)
 
 void HostSys::RemovePageFaultHandler(PageFaultHandler handler)
 {
+	struct sigaction sa;
 	std::unique_lock lock(s_exception_handler_mutex);
 #ifdef _WIN32
 	s_exception_handler_callback = nullptr;
@@ -243,7 +253,6 @@ void HostSys::RemovePageFaultHandler(PageFaultHandler handler)
 
 	s_exception_handler_callback = nullptr;
 
-	struct sigaction sa;
 #if defined(__APPLE__) || defined(__aarch64__)
 	sigaction(SIGBUS, &s_old_sigbus_action, &sa);
 #endif
@@ -320,7 +329,7 @@ void HostSys::Munmap(void* base, size_t size)
 void HostSys::MemProtect(void* baseaddr, size_t size, const PageProtectionMode mode)
 {
 #ifdef _WIN32
-	DWORD OldProtect; // enjoy my uselessness, yo!
+	DWORD OldProtect;
 	VirtualProtect(baseaddr, size, win_prot(mode), &OldProtect);
 #else
 	const u32 prot = unix_prot(mode);
@@ -336,7 +345,7 @@ std::string HostSys::GetFileMappingName(const char* prefix)
 	const unsigned pid = static_cast<unsigned>(getpid());
 #endif
 #if defined(__FreeBSD__)
-	// FreeBSD's shm_open(3) requires name to be absolute
+	/* FreeBSD's shm_open(3) requires name to be absolute */
 	return fmt::format("/tmp/{}_{}", prefix, pid);
 #else
 	return fmt::format("{}_{}", prefix, pid);
@@ -356,10 +365,10 @@ void* HostSys::CreateSharedMemory(const char* name, size_t size)
 	if (fd < 0)
 		return nullptr;
 
-	// we're not going to be opening this mapping in other processes, so remove the file
+	/* We're not going to be opening this mapping in other processes, so remove the file */
 	shm_unlink(name);
 
-	// ensure it's the correct size
+	/* ensure it's the correct size */
 #if !defined(__APPLE__) && !defined(__FreeBSD__)
 	if (ftruncate64(fd, static_cast<off64_t>(size)) < 0)
 		return nullptr;
@@ -426,7 +435,7 @@ SharedMemoryMappingArea::SharedMemoryMappingArea(u8* base_ptr, size_t size, size
 SharedMemoryMappingArea::~SharedMemoryMappingArea()
 {
 #ifdef _WIN32
-	// hopefully this will be okay, and we don't need to coalesce all the placeholders...
+	/* hopefully this will be okay, and we don't need to coalesce all the placeholders... */
 	VirtualFreeEx(GetCurrentProcess(), m_base_ptr, 0, MEM_RELEASE);
 #else
 	munmap(m_base_ptr, m_size);
@@ -450,25 +459,25 @@ std::unique_ptr<SharedMemoryMappingArea> SharedMemoryMappingArea::Create(size_t 
 #ifdef _WIN32
 SharedMemoryMappingArea::PlaceholderMap::iterator SharedMemoryMappingArea::FindPlaceholder(size_t offset)
 {
-	if (m_placeholder_ranges.empty())
-		return m_placeholder_ranges.end();
+	if (!m_placeholder_ranges.empty())
+	{
+		/* This will give us an iterator equal or after page */
+		auto it = m_placeholder_ranges.lower_bound(offset);
+		if (it == m_placeholder_ranges.end()) /* check the last page */
+			it = (++m_placeholder_ranges.rbegin()).base();
 
-	// this will give us an iterator equal or after page
-	auto it = m_placeholder_ranges.lower_bound(offset);
-	if (it == m_placeholder_ranges.end()) // check the last page
-		it = (++m_placeholder_ranges.rbegin()).base();
+		/* It's the one we found? */
+		if (offset >= it->first && offset < it->second)
+			return it;
 
-	// it's the one we found?
-	if (offset >= it->first && offset < it->second)
-		return it;
-
-	// otherwise try the one before
-	if (it == m_placeholder_ranges.begin())
-		return m_placeholder_ranges.end();
-
-	--it;
-	if (offset >= it->first && offset < it->second)
-		return it;
+		/* otherwise try the one before */
+		if (it != m_placeholder_ranges.begin())
+		{
+			--it;
+			if (offset >= it->first && offset < it->second)
+				return it;
+		}
+	}
 	return m_placeholder_ranges.end();
 }
 #endif
@@ -477,36 +486,37 @@ u8* SharedMemoryMappingArea::Map(void* file_handle, size_t file_offset, void* ma
 {
 #ifdef _WIN32
 	const size_t map_offset = static_cast<u8*>(map_base) - m_base_ptr;
-	// should be a placeholder. unless there's some other mapping we didn't free.
+	/* should be a placeholder. unless there's some other mapping we didn't free. */
 	PlaceholderMap::iterator phit = FindPlaceholder(map_offset);
 
-	// do we need to split to the left? (i.e. is there a placeholder before this range)
+	/* do we need to split to the left? (i.e. is there a placeholder before this range) */
 	const size_t old_ph_end = phit->second;
 	if (map_offset != phit->first)
 	{
 		phit->second = map_offset;
 
-		// split it (i.e. left..start and start..end are now separated)
+		/* split it (i.e. left..start and start..end are now separated) */
 		VirtualFreeEx(GetCurrentProcess(), OffsetPointer(phit->first),
 				(map_offset - phit->first), MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER);
 	}
 	else
 	{
-		// start of the placeholder is getting used, we'll split it right below if there's anything left over
+		/* start of the placeholder is getting used, we'll split it right below 
+		 * if there's anything left over */
 		m_placeholder_ranges.erase(phit);
 	}
 
-	// do we need to split to the right? (i.e. is there a placeholder after this range)
+	/* do we need to split to the right? (i.e. is there a placeholder after this range) */
 	if ((map_offset + map_size) != old_ph_end)
 	{
-		// split out end..ph_end
+		/* split out end..ph_end */
 		m_placeholder_ranges.emplace(map_offset + map_size, old_ph_end);
 
 		VirtualFreeEx(GetCurrentProcess(), OffsetPointer(map_offset), map_size,
 				MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER);
 	}
 
-	// actually do the mapping, replacing the placeholder on the range
+	/* actually do the mapping, replacing the placeholder on the range */
 	if (!MapViewOfFile3(static_cast<HANDLE>(file_handle), GetCurrentProcess(),
 			map_base, file_offset, map_size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0))
 		return nullptr;
@@ -536,33 +546,33 @@ bool SharedMemoryMappingArea::Unmap(void* map_base, size_t map_size)
 {
 #ifdef _WIN32
 	const size_t map_offset = static_cast<u8*>(map_base) - m_base_ptr;
-	// unmap the specified range
+	/* unmap the specified range */
 	if (!UnmapViewOfFile2(GetCurrentProcess(), map_base, MEM_PRESERVE_PLACEHOLDER))
 		return false;
 
-	// can we coalesce to the left?
+	/* can we coalesce to the left? */
 	PlaceholderMap::iterator left_it = (map_offset > 0) ? FindPlaceholder(map_offset - 1) : m_placeholder_ranges.end();
 	if (left_it != m_placeholder_ranges.end())
 	{
-		// the left placeholder should end at our start
+		/* the left placeholder should end at our start */
 		left_it->second = map_offset + map_size;
 
-		// combine placeholders before and the range we're unmapping, i.e. to the left
+		/* combine placeholders before and the range we're unmapping, i.e. to the left */
 		VirtualFreeEx(GetCurrentProcess(), OffsetPointer(left_it->first),
 				 left_it->second - left_it->first, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS);
 	}
-	else // this is a new placeholder
+	else /* this is a new placeholder */
 		left_it = m_placeholder_ranges.emplace(map_offset, map_offset + map_size).first;
 
-	// can we coalesce to the right?
+	/* can we coalesce to the right? */
 	PlaceholderMap::iterator right_it = ((map_offset + map_size) < m_size) ? FindPlaceholder(map_offset + map_size) : m_placeholder_ranges.end();
 	if (right_it != m_placeholder_ranges.end())
 	{
-		// should start at our end
+		/* should start at our end */
 		left_it->second = right_it->second;
 		m_placeholder_ranges.erase(right_it);
 
-		// combine our placeholder and the next, i.e. to the right
+		/* combine our placeholder and the next, i.e. to the right */
 		VirtualFreeEx(GetCurrentProcess(), OffsetPointer(left_it->first),
 				left_it->second - left_it->first, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS);
 	}

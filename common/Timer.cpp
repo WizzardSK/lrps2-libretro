@@ -30,7 +30,8 @@ namespace Common
 
 	uint64_t Timer::GetCurrentValue()
 	{
-		// even if this races, it should still result in the same value..
+		/* Even if this races, it should still result 
+		 * in the same value.. */
 		if (!s_counter_initialized)
 		{
 			LARGE_INTEGER Freq;
@@ -71,4 +72,4 @@ namespace Common
 	{
 		m_tvStartValue = GetCurrentValue();
 	}
-} // namespace Common
+}

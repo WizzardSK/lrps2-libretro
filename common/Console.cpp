@@ -20,9 +20,6 @@
 extern retro_log_printf_t log_cb;
 static ConsoleColors log_color = Color_Default;
 
-// --------------------------------------------------------------------------------------
-//  ConsoleWriter_Libretro
-// --------------------------------------------------------------------------------------
 static void RetroLog_DoSetColor(ConsoleColors color)
 {
 	if (color != Color_Current)
@@ -34,15 +31,15 @@ static void RetroLog_DoWrite(const char* fmt)
 	retro_log_level level = RETRO_LOG_INFO;
 	switch (log_color)
 	{
-		case Color_StrongRed: // intended for errors
+		case Color_StrongRed: /* intended for errors */
 			level = RETRO_LOG_ERROR;
 			break;
-		case Color_StrongOrange: // intended for warnings
+		case Color_StrongOrange: /* intended for warnings */
 			level = RETRO_LOG_WARN;
 			break;
-		case Color_Cyan:   // faint visibility, intended for logging PS2/IOP output
-		case Color_Yellow: // faint visibility, intended for logging PS2/IOP output
-		case Color_White:  // faint visibility, intended for logging PS2/IOP output
+		case Color_Cyan:   /* faint visibility, intended for logging PS2/IOP output */
+		case Color_Yellow: /* faint visibility, intended for logging PS2/IOP output */
+		case Color_White:  /* faint visibility, intended for logging PS2/IOP output */
 			level = RETRO_LOG_DEBUG;
 			break;
 		default:
@@ -55,8 +52,8 @@ static void RetroLog_DoWrite(const char* fmt)
 		case Color_Orange:
 		case Color_Gray:
 		case Color_StrongBlack:
-		case Color_StrongGreen: // intended for infrequent state information
-		case Color_StrongBlue:  // intended for block headings
+		case Color_StrongGreen: /* intended for infrequent state information */
+		case Color_StrongBlue:  /* intended for block headings */
 		case Color_StrongMagenta:
 		case Color_StrongGray:
 		case Color_StrongCyan:
@@ -85,16 +82,6 @@ static const IConsoleWriter ConsoleWriter_Libretro =
 	RetroLog_DoSetColor,
 	RetroLog_Newline,
 };
-
-// =====================================================================================================
-//  IConsoleWriter  (implementations)
-// =====================================================================================================
-// (all non-virtual members that do common work and then pass the result through DoWrite
-//  or DoWriteLn)
-
-// --------------------------------------------------------------------------------------
-//  ASCII/UTF8 (char*)
-// --------------------------------------------------------------------------------------
 
 bool IConsoleWriter::FormatV(const char* fmt, va_list args) const
 {

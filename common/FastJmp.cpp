@@ -1,9 +1,9 @@
-// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
-// SPDX-License-Identifier: LGPL-3.0+
+/* SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+ * SPDX-License-Identifier: LGPL-3.0+ */
 
 #include "FastJmp.h"
 
-// Win32 uses Fastjmp.asm, because MSVC doesn't support inline asm.
+/* Win32 uses Fastjmp.asm, because MSVC doesn't support inline asm. */
 #if !defined(_WIN32) || defined(_M_ARM64)
 
 #if defined(__APPLE__)
@@ -89,4 +89,4 @@ asm(
 
 #endif
 
-#endif // __WIN32
+#endif /* __WIN32 */
