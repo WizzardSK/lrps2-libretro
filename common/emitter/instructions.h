@@ -304,13 +304,8 @@ namespace x86Emitter
 	extern const xImplSimd_MoveSSE xMOVAPS;
 	extern const xImplSimd_MoveSSE xMOVUPS;
 
-#ifdef ALWAYS_USE_MOVAPS
-	extern const xImplSimd_MoveSSE xMOVDQA;
-	extern const xImplSimd_MoveSSE xMOVDQU;
-#else
 	extern const xImplSimd_MoveDQ xMOVDQA;
 	extern const xImplSimd_MoveDQ xMOVDQU;
-#endif
 
 	extern const xImplSimd_MovHL xMOVH;
 	extern const xImplSimd_MovHL xMOVL;

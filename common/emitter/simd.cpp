@@ -431,14 +431,8 @@ namespace x86Emitter
 	const xImplSimd_MoveSSE xMOVAPS = {0x00, true};
 	const xImplSimd_MoveSSE xMOVUPS = {0x00, false};
 
-#ifdef ALWAYS_USE_MOVAPS
-	const xImplSimd_MoveSSE xMOVDQA = {0x00, true};
-	const xImplSimd_MoveSSE xMOVDQU = {0x00, false};
-#else
 	const xImplSimd_MoveDQ xMOVDQA = {0x66, true};
 	const xImplSimd_MoveDQ xMOVDQU = {0xf3, false};
-#endif
-
 
 	const xImplSimd_MovHL xMOVH = {0x16};
 	const xImplSimd_MovHL xMOVL = {0x12};
