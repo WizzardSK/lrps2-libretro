@@ -40,7 +40,6 @@
 
 #include "Align.h"
 #include "AlignedMalloc.h"
-#include "Console.h"
 #include "General.h"
 #ifdef _WIN32
 #include "RedtapeWindows.h"
@@ -333,15 +332,14 @@ std::string HostSys::GetFileMappingName(const char* prefix)
 {
 #if defined(_WIN32)
 	const unsigned pid = GetCurrentProcessId();
-	return fmt::format("{}_{}", prefix, pid);
 #else
 	const unsigned pid = static_cast<unsigned>(getpid());
+#endif
 #if defined(__FreeBSD__)
 	// FreeBSD's shm_open(3) requires name to be absolute
 	return fmt::format("/tmp/{}_{}", prefix, pid);
 #else
 	return fmt::format("{}_{}", prefix, pid);
-#endif
 #endif
 }
 
@@ -457,11 +455,8 @@ SharedMemoryMappingArea::PlaceholderMap::iterator SharedMemoryMappingArea::FindP
 
 	// this will give us an iterator equal or after page
 	auto it = m_placeholder_ranges.lower_bound(offset);
-	if (it == m_placeholder_ranges.end())
-	{
-		// check the last page
+	if (it == m_placeholder_ranges.end()) // check the last page
 		it = (++m_placeholder_ranges.rbegin()).base();
-	}
 
 	// it's the one we found?
 	if (offset >= it->first && offset < it->second)
@@ -474,8 +469,7 @@ SharedMemoryMappingArea::PlaceholderMap::iterator SharedMemoryMappingArea::FindP
 	--it;
 	if (offset >= it->first && offset < it->second)
 		return it;
-	else
-		return m_placeholder_ranges.end();
+	return m_placeholder_ranges.end();
 }
 #endif
 
@@ -515,10 +509,7 @@ u8* SharedMemoryMappingArea::Map(void* file_handle, size_t file_offset, void* ma
 	// actually do the mapping, replacing the placeholder on the range
 	if (!MapViewOfFile3(static_cast<HANDLE>(file_handle), GetCurrentProcess(),
 			map_base, file_offset, map_size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0))
-	{
-		Console.Error("(SharedMemoryMappingArea) MapViewOfFile3() failed: %u", GetLastError());
 		return nullptr;
-	}
 
 	const DWORD prot = win_prot(mode);
 	if (prot != PAGE_READWRITE)
@@ -547,10 +538,7 @@ bool SharedMemoryMappingArea::Unmap(void* map_base, size_t map_size)
 	const size_t map_offset = static_cast<u8*>(map_base) - m_base_ptr;
 	// unmap the specified range
 	if (!UnmapViewOfFile2(GetCurrentProcess(), map_base, MEM_PRESERVE_PLACEHOLDER))
-	{
-		Console.Error("(SharedMemoryMappingArea) UnmapViewOfFile2() failed: %u", GetLastError());
 		return false;
-	}
 
 	// can we coalesce to the left?
 	PlaceholderMap::iterator left_it = (map_offset > 0) ? FindPlaceholder(map_offset - 1) : m_placeholder_ranges.end();
