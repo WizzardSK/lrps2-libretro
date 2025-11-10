@@ -131,6 +131,12 @@ namespace x86Emitter
 		xImplSimd_DestRegSSE VPD;
 	};
 
+	struct xImplSimd_PBlend
+	{
+		xImplSimd_DestRegImmSSE W;
+		xImplSimd_DestRegSSE VB;
+	};
+
 	// --------------------------------------------------------------------------------------
 	//  xImplSimd_PMove
 	// --------------------------------------------------------------------------------------
