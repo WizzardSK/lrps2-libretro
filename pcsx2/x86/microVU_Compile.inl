@@ -74,17 +74,19 @@ void mVUsetupRange(microVU& mVU, s32 pc, bool isStartPC)
 
 	if (mVUrange.start <= cur_pc)
 	{
+		std::deque<microRange>::iterator it;
 		mVUrange.end = cur_pc;
-		s32& rStart = mVUrange.start;
-		s32& rEnd = mVUrange.end;
-		std::deque<microRange>::iterator it(ranges->begin());
-		it++;
-		for (;it != ranges->end();)
+		s32 rStart   = mVUrange.start;
+		s32 rEnd     = mVUrange.end;
+		for (it = ranges->begin() + 1; it != ranges->end();)
 		{
-			if (((it->start >= rStart) && (it->start <= rEnd)) || ((it->end >= rStart) && (it->end <= rEnd))) // Starts after this prog but starts before the end of current prog
+			/* Starts after this program but starts 
+			 * before the end of current program */
+			if (((it->start >= rStart) && (it->start <= rEnd)) 
+			||  ((it->end   >= rStart) && (it->end <= rEnd))) 
 			{
-				rStart = std::min(it->start, rStart); // Choose the earlier start
-				rEnd = std::max(it->end, rEnd);
+				mVUrange.start = rStart = std::min(it->start, rStart); /* Choose the earlier start */
+				mVUrange.end   = rEnd   = std::max(it->end, rEnd);
 				it = ranges->erase(it);
 			}
 			else
