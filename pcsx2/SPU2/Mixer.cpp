@@ -56,7 +56,7 @@ static void __forceinline XA_decode_block(s16* buffer, const s16* block, s32& pr
 	}
 }
 
-static void __forceinline IncrementNextA(V_Core& thiscore, V_Voice& vc)
+static void __forceinline IncrementNextA(V_Voice& vc)
 {
 	/* Important!  Both cores signal IRQ when an address is read, 
 	 * regardless of which core actually reads the address. */
@@ -85,11 +85,11 @@ PcmCacheEntry pcm_cache_data[pcm_BlockCount];
 #define XAFLAG_LOOP (1ul << 1)
 #define XAFLAG_LOOP_START (1ul << 2)
 
-static __forceinline s32 GetNextDataBuffered(V_Core& thiscore, V_Voice& vc, uint voiceidx)
+static __forceinline s32 GetNextDataBuffered(V_Core& V_Voice& vc, uint voiceidx)
 {
 	if ((vc.SCurrent & 3) == 0)
 	{
-		IncrementNextA(thiscore, vc);
+		IncrementNextA(vc);
 
 		if ((vc.NextA & 7) == 0) // vc.SCurrent == 24 equivalent
 		{
@@ -155,7 +155,7 @@ static __forceinline s32 GetNextDataBuffered(V_Core& thiscore, V_Voice& vc, uint
 
 static __forceinline void GetNextDataDummy(V_Core& thiscore, V_Voice& vc, uint voiceidx)
 {
-	IncrementNextA(thiscore, vc);
+	IncrementNextA(vc);
 
 	if ((vc.NextA & 7) == 0) // vc.SCurrent == 24 equivalent
 	{
