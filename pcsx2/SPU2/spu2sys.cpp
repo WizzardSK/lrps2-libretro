@@ -278,7 +278,6 @@ __forceinline void TimeUpdate(u32 cClocks)
 						vc.PV2          = 0;
 						vc.PV3          = 0;
 						vc.PV4          = 0;
-						vc.NextCrest    = -0x8000;
 						Cores[c].KeyOn &= ~(1 << v);
 					}
 				}
