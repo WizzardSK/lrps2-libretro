@@ -116,7 +116,6 @@ namespace x86Emitter
 	ImplementGroup1(xImpl_Group1, InstType)
 	ImplementGroup1(xImpl_G1Logic, InstType)
 	ImplementGroup1(xImpl_G1Arith, InstType)
-	ImplementGroup1(xImpl_G1Compare, G1Type_CMP)
 
 	const xImpl_G1Logic xAND = {G1Type_AND, {0x00, 0x54}, {0x66, 0x54}};
 	const xImpl_G1Logic xOR = {G1Type_OR, {0x00, 0x56}, {0x66, 0x56}};
@@ -124,9 +123,9 @@ namespace x86Emitter
 
 	const xImpl_G1Arith xADD = {G1Type_ADD, {0x00, 0x58}, {0x66, 0x58}, {0xf3, 0x58}, {0xf2, 0x58}};
 	const xImpl_G1Arith xSUB = {G1Type_SUB, {0x00, 0x5c}, {0x66, 0x5c}, {0xf3, 0x5c}, {0xf2, 0x5c}};
-	const xImpl_G1Compare xCMP = {{0x00, 0xc2}, {0x66, 0xc2}, {0xf3, 0xc2}, {0xf2, 0xc2}};
 
 	const xImpl_Group1 xADC = {G1Type_ADC};
+	const xImpl_Group1 xCMP = {G1Type_CMP};
 
 	// =====================================================================================================
 	//  Group 2 Instructions - SHR, SHL, etc.
