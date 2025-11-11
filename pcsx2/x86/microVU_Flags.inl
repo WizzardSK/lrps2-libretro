@@ -340,7 +340,23 @@ static void _mVUflagPass(mV, u32 startPC, u32 sCount, u32 found, std::vector<u32
 		}
 
 		if (branch >= 2)
-			shortBranch();
+		{
+			if ((branch == 3) || (branch == 4)) /*Branches*/
+			{
+				_mVUflagPass(mVU, aBranchAddr, sCount + found, found, v);
+				if (branch == 3) /* Noe-conditional Branch */
+					break;
+				branch = 0;
+			}
+			else if (branch == 5) /*JR/JARL*/
+			{
+				if (sCount + found < 4)
+					mVUregs.needExactMatch |= 7;
+				break;
+			}
+			else /*E-Bit End*/
+				break;
+		}
 		else if (branch == 1)
 			branch = 2;
 		if (mVUbranch)
@@ -360,26 +376,6 @@ static void _mVUflagPass(mV, u32 startPC, u32 sCount, u32 found, std::vector<u32
 	mVUregs.needExactMatch &= 7;
 	setCode();
 }
-
-
-#define shortBranch() \
-	{ \
-		if ((branch == 3) || (branch == 4)) /*Branches*/ \
-		{ \
-			_mVUflagPass(mVU, aBranchAddr, sCount + found, found, v); \
-			if (branch == 3) /* Noe-conditional Branch */ \
-				break; \
-			branch = 0; \
-		} \
-		else if (branch == 5) /*JR/JARL*/ \
-		{ \
-			if (sCount + found < 4) \
-				mVUregs.needExactMatch |= 7; \
-			break; \
-		} \
-		else /*E-Bit End*/ \
-			break; \
-	}
 
 static void mVUflagPass(mV, u32 startPC, u32 sCount = 0, u32 found = 0)
 {
