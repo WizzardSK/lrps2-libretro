@@ -148,6 +148,7 @@ namespace x86Emitter
 	// ------------------------------------------------------------------------
 	extern const xImpl_CMov 
 		xCMOVB,
+		xCMOVGE,
 
 		xCMOVE,
 		xCMOVNE,

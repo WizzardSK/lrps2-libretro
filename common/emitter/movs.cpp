@@ -173,6 +173,7 @@ namespace x86Emitter
 	const xImpl_MovExtend xMOVZX = {false};
 
 	const xImpl_CMov xCMOVB = {Jcc_Below};
+	const xImpl_CMov xCMOVGE = {Jcc_GreaterOrEqual};
 
 	const xImpl_CMov xCMOVE = {Jcc_Equal};
 	const xImpl_CMov xCMOVNE = {Jcc_NotEqual};
