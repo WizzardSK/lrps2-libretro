@@ -23,7 +23,7 @@
 // DIV/SQRT/RSQRT
 //------------------------------------------------------------------
 
-// Test if Vector is +/- Zero
+/* Test if Vector is +/- Zero */
 static __fi void testZero(const xmm& xmmReg, const xmm& xmmTemp, const x32& gprTemp)
 {
 	xXOR.PS(xmmTemp, xmmTemp);
@@ -56,23 +56,26 @@ mVUop(mVU_DIV)
 		testZero(Ft, t1, gprT1); // Test if Ft is zero
 		xForwardJZ8 cjmp; // Skip if not zero
 
-			testZero(Fs, t1, gprT1); // Test if Fs is zero
-			xForwardJZ8 ajmp;
-				xMOV(ptr32[&mVU.divFlag], divI); // Set invalid flag (0/0)
-				xForwardJump8 bjmp;
-			ajmp.SetTarget();
-				xMOV(ptr32[&mVU.divFlag], divD); // Zero divide (only when not 0/0)
-			bjmp.SetTarget();
+		testZero(Fs, t1, gprT1); // Test if Fs is zero
+		xForwardJZ8 ajmp;
+		xMOV(ptr32[&mVU.divFlag], divI); // Set invalid flag (0/0)
+		xForwardJump8 bjmp;
+		ajmp.SetTarget();
+		xMOV(ptr32[&mVU.divFlag], divD); // Zero divide (only when not 0/0)
+		bjmp.SetTarget();
 
-			xXOR.PS(Fs, Ft);
-			xAND.PS(Fs, ptr128[mVUglob.signbit]);
-			xOR.PS (Fs, ptr128[mVUglob.maxvals]); // If division by zero, then xmmFs = +/- fmax
+		xXOR.PS(Fs, Ft);
+		xAND.PS(Fs, ptr128[mVUglob.signbit]);
+		xOR.PS (Fs, ptr128[mVUglob.maxvals]); // If division by zero, then xmmFs = +/- fmax
 
-			xForwardJump8 djmp;
+		xForwardJump8 djmp;
+
 		cjmp.SetTarget();
-			xMOV(ptr32[&mVU.divFlag], 0); // Clear I/D flags
-			SSE_DIVSS(mVU, Fs, Ft);
-			mVUclamp1(mVU, Fs, t1, 8, true);
+
+		xMOV(ptr32[&mVU.divFlag], 0); // Clear I/D flags
+		SSE_DIVSS(mVU, Fs, Ft);
+		mVUclamp1(mVU, Fs, t1, 8, true);
+
 		djmp.SetTarget();
 
 		writeQreg(Fs, mVUinfo.writeQ);
@@ -96,10 +99,11 @@ mVUop(mVU_SQRT)
 	{
 		const xmm& Ft = mVU.regAlloc->allocReg(_Ft_, 0, (1 << (3 - _Ftf_)));
 
-		xMOV(ptr32[&mVU.divFlag], 0); // Clear I/D flags
-		testNeg(mVU, Ft, gprT1); // Check for negative sqrt
-
-		if (CHECK_VU_OVERFLOW(mVU.index)) // Clamp infinities (only need to do positive clamp since xmmFt is positive)
+		xMOV(ptr32[&mVU.divFlag], 0); /* Clear I/D flags */
+		testNeg(mVU, Ft, gprT1); /* Check for negative sqrt */
+		
+		/* Clamp infinities (only need to do positive clamp since xmmFt is positive) */
+		if (CHECK_VU_OVERFLOW(mVU.index)) 
 			xMIN.SS(Ft, ptr32[mVUglob.maxvals]);
 		xSQRT.SS(Ft, Ft);
 

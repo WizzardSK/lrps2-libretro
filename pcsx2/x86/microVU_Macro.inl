@@ -14,8 +14,8 @@
  */
 
 #pragma once
-extern void _vu0WaitMicro();
-extern void _vu0FinishMicro();
+extern void _vu0WaitMicro(void);
+extern void _vu0FinishMicro(void);
 
 static VURegs& vu0Regs = vuRegs[0];
 
@@ -128,7 +128,7 @@ bool mVUIsReservedCOP2(int hostreg)
 }
 
 #define REC_COP2_mVU0(f, opName, mode) \
-	void recV##f() \
+	void recV##f(void) \
 	{ \
 		int _mode = (mode); \
 		setupMacroOp(_mode, opName); \
@@ -148,7 +148,7 @@ bool mVUIsReservedCOP2(int hostreg)
 	}
 
 #define INTERPRETATE_COP2_FUNC(f) \
-	void recV##f() \
+	void recV##f(void) \
 	{ \
 		iFlushCall(FLUSH_FOR_POSSIBLE_MICRO_EXEC); \
 		xADD(ptr32[&cpuRegs.cycle], scaleblockcycles_clear()); \
@@ -298,8 +298,8 @@ REC_COP2_mVU0(RXOR,  "RXOR",  0x100);
 // Macro VU - Misc...
 //------------------------------------------------------------------
 
-void recVNOP() {}
-void recVWAITQ() {}
+void recVNOP(void) {}
+void recVWAITQ(void) {}
 INTERPRETATE_COP2_FUNC(CALLMS);
 INTERPRETATE_COP2_FUNC(CALLMSR);
 
@@ -312,15 +312,14 @@ static void _setupBranchTest(u32*(jmpType)(u32), bool isLikely)
 	const u32 branchTo = ((s32)_Imm_ * 4) + pc;
 	const bool swap = isLikely ? false : TrySwapDelaySlot(0, 0, 0, false);
 	_eeFlushAllDirty();
-	//xTEST(ptr32[&vif1Regs.stat._u32], 0x4);
 	xTEST(ptr32[&vuRegs[0].VI[REG_VPU_STAT].UL], 0x100);
 	recDoBranchImm(branchTo, jmpType(0), isLikely, swap);
 }
 
-void recBC2F()  { _setupBranchTest(JNZ32, false); }
-void recBC2T()  { _setupBranchTest(JZ32,  false); }
-void recBC2FL() { _setupBranchTest(JNZ32, true);  }
-void recBC2TL() { _setupBranchTest(JZ32,  true);  }
+void recBC2F(void)  { _setupBranchTest(JNZ32, false); }
+void recBC2T(void)  { _setupBranchTest(JZ32,  false); }
+void recBC2FL(void) { _setupBranchTest(JNZ32, true);  }
+void recBC2TL(void) { _setupBranchTest(JZ32,  true);  }
 
 //------------------------------------------------------------------
 // Macro VU - COP2 Transfer Instructions
@@ -404,7 +403,7 @@ static void TEST_FBRST_RESET(int flagreg, void(*resetFunct)(), int vuIndex)
 {
 	xTEST(xRegister32(flagreg), (vuIndex) ? 0x200 : 0x002);
 	xForwardJZ8 skip;
-		xFastCall((void*)resetFunct);
+	xFastCall((void*)resetFunct);
 	skip.SetTarget();
 }
 
@@ -461,7 +460,7 @@ static void recCFC2(void)
 	}
 }
 
-static void recCTC2()
+static void recCTC2(void)
 {
 	COP2_Interlock(1);
 
@@ -641,7 +640,7 @@ static void recCTC2()
 	}
 }
 
-static void recQMFC2()
+static void recQMFC2(void)
 {
 	COP2_Interlock(false);
 
@@ -679,7 +678,7 @@ static void recQMFC2()
 	}
 }
 
-static void recQMTC2()
+static void recQMTC2(void)
 {
 	COP2_Interlock(true);
 
@@ -734,13 +733,13 @@ static void recQMTC2()
 // Macro VU - Tables
 //------------------------------------------------------------------
 
-void recCOP2();
-void recCOP2_BC2();
-void recCOP2_SPEC1();
-void recCOP2_SPEC2();
+void recCOP2(void);
+void recCOP2_BC2(void);
+void recCOP2_SPEC1(void);
+void recCOP2_SPEC2(void);
 void rec_C2UNK(void) { }
 
-// Recompilation
+/* Recompilation */
 void (*recCOP2t[32])() = {
 	rec_C2UNK,     recQMFC2,      recCFC2,       rec_C2UNK,     rec_C2UNK,     recQMTC2,      recCTC2,       rec_C2UNK,
 	recCOP2_BC2,   rec_C2UNK,     rec_C2UNK,     rec_C2UNK,     rec_C2UNK,     rec_C2UNK,     rec_C2UNK,     rec_C2UNK,
@@ -788,7 +787,7 @@ void (*recCOP2SPECIAL2t[128])() = {
 namespace R5900 {
 namespace Dynarec {
 namespace OpcodeImpl {
-void recCOP2() { recCOP2t[_Rs_](); }
+void recCOP2(void) { recCOP2t[_Rs_](); }
 
 #if defined(LOADSTORE_RECOMPILE) && defined(CP2_RECOMPILE)
 
@@ -797,7 +796,7 @@ void recCOP2() { recCOP2t[_Rs_](); }
 * Format:  OP rt, offset(base)                           *
 *********************************************************/
 
-void recLQC2()
+void recLQC2(void)
 {
 	if (g_pCurInstInfo->info & EEINST_COP2_SYNC_VU0)
 		mVUSyncVU0();
@@ -834,7 +833,7 @@ void recLQC2()
 
 ////////////////////////////////////////////////////
 
-void recSQC2()
+void recSQC2(void)
 {
 	if (g_pCurInstInfo->info & EEINST_COP2_SYNC_VU0)
 		mVUSyncVU0();
@@ -876,8 +875,8 @@ REC_FUNC(SQC2);
 } // namespace OpcodeImpl
 } // namespace Dynarec
 } // namespace R5900
-void recCOP2_BC2() { recCOP2_BC2t[_Rt_](); }
-void recCOP2_SPEC1()
+void recCOP2_BC2(void) { recCOP2_BC2t[_Rt_](); }
+void recCOP2_SPEC1(void)
 {
 	if (g_pCurInstInfo->info & (EEINST_COP2_SYNC_VU0 | EEINST_COP2_FINISH_VU0))
 		mVUFinishVU0();
@@ -885,4 +884,4 @@ void recCOP2_SPEC1()
 	recCOP2SPECIAL1t[_Funct_]();
 
 }
-void recCOP2_SPEC2() { recCOP2SPECIAL2t[(cpuRegs.code & 3) | ((cpuRegs.code >> 4) & 0x7c)](); }
+void recCOP2_SPEC2(void) { recCOP2SPECIAL2t[(cpuRegs.code & 3) | ((cpuRegs.code >> 4) & 0x7c)](); }

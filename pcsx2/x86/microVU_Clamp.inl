@@ -64,7 +64,6 @@ void mVUclamp2(microVU& mVU, const xmm& reg, const xmm& regT1in, int xyzw, bool 
 		int i = (xyzw == 1 || xyzw == 2 || xyzw == 4 || xyzw == 8) ? 0 : 1;
 		xPMIN.SD(reg, ptr128[&sse4_maxvals[i][0]]);
 		xPMIN.UD(reg, ptr128[&sse4_minvals[i][0]]);
-		return;
 	}
 	else
 		mVUclamp1(mVU, reg, regT1in, xyzw, bClampE);

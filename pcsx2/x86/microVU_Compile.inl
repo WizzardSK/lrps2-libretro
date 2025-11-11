@@ -36,10 +36,12 @@ void mVUsetupRange(microVU& mVU, s32 pc, bool isStartPC)
 {
 	std::deque<microRange>*& ranges = mVUcurProg.ranges;
 
-	// The PC handling will prewrap the PC so we need to set the end PC to the end of the micro memory, but only if it wraps, no more.
+	/* The PC handling will prewrap the PC so we need to 
+	 * set the end PC to the end of the micro memory, 
+	 * but only if it wraps, no more. */
 	const s32 cur_pc = (!isStartPC && mVUrange.start > pc && pc == 0) ? mVU.microMemSize : pc;
 
-	if (isStartPC) // Check if startPC is already within a block we've recompiled
+	if (isStartPC) /* Check if startPC is already within a block we've recompiled */
 	{
 		std::deque<microRange>::const_iterator it(ranges->begin());
 		for (; it != ranges->end(); ++it)
@@ -56,11 +58,10 @@ void mVUsetupRange(microVU& mVU, s32 pc, bool isStartPC)
 			}
 		}
 	}
+	/* Existing range covers more area than current PC 
+	 * so no need to process it */
 	else if (mVUrange.end >= cur_pc)
-	{
-		// existing range covers more area than current PC so no need to process it
 		return;
-	}
 	
 	if (doWholeProgCompare)
 		mVUcheckIsSame(mVU);
@@ -69,39 +70,40 @@ void mVUsetupRange(microVU& mVU, s32 pc, bool isStartPC)
 	{
 		microRange mRange = {cur_pc, -1};
 		ranges->push_front(mRange);
-		return;
-	}
-
-	if (mVUrange.start <= cur_pc)
-	{
-		std::deque<microRange>::iterator it;
-		mVUrange.end = cur_pc;
-		s32 rStart   = mVUrange.start;
-		s32 rEnd     = mVUrange.end;
-		for (it = ranges->begin() + 1; it != ranges->end();)
-		{
-			/* Starts after this program but starts 
-			 * before the end of current program */
-			if (((it->start >= rStart) && (it->start <= rEnd)) 
-			||  ((it->end   >= rStart) && (it->end <= rEnd))) 
-			{
-				mVUrange.start = rStart = std::min(it->start, rStart); /* Choose the earlier start */
-				mVUrange.end   = rEnd   = std::max(it->end, rEnd);
-				it = ranges->erase(it);
-			}
-			else
-				it++;
-		}
 	}
 	else
 	{
-		mVUrange.end = mVU.microMemSize;
-		microRange mRange = {0, cur_pc };
-		ranges->push_front(mRange);
-	}
+		if (mVUrange.start <= cur_pc)
+		{
+			std::deque<microRange>::iterator it;
+			mVUrange.end = cur_pc;
+			s32 rStart   = mVUrange.start;
+			s32 rEnd     = mVUrange.end;
+			for (it = ranges->begin() + 1; it != ranges->end();)
+			{
+				/* Starts after this program but starts 
+				 * before the end of current program */
+				if (((it->start >= rStart) && (it->start <= rEnd)) 
+				||  ((it->end   >= rStart) && (it->end <= rEnd))) 
+				{
+					mVUrange.start = rStart = std::min(it->start, rStart); /* Choose the earlier start */
+					mVUrange.end   = rEnd   = std::max(it->end, rEnd);
+					it = ranges->erase(it);
+				}
+				else
+					it++;
+			}
+		}
+		else
+		{
+			mVUrange.end = mVU.microMemSize;
+			microRange mRange = {0, cur_pc };
+			ranges->push_front(mRange);
+		}
 
-	if(!doWholeProgCompare)
-		mVUcacheProg(mVU, *mVU.prog.cur);
+		if(!doWholeProgCompare)
+			mVUcacheProg(mVU, *mVU.prog.cur);
+	}
 }
 
 //------------------------------------------------------------------
@@ -220,7 +222,8 @@ __ri void branchWarning(mV)
 	if (mVUup.eBit && mVUbranch)
 		mVUlow.isNOP = true;
 
-	if (mVUinfo.isBdelay && !mVUlow.evilBranch) // Check if VI Reg Written to on Branch Delay Slot Instruction
+	/* Check if VI Reg Written to on Branch Delay Slot Instruction */
+	if (mVUinfo.isBdelay && !mVUlow.evilBranch)
 	{
 		if (mVUlow.VI_write.reg && mVUlow.VI_write.used && !mVUlow.readFlags)
 		{
@@ -251,10 +254,11 @@ __fi u8 calcCycles(u8 reg, u8 x) { return ((reg > x) ? (reg - x) : 0); }
 #define incP(mV) mVU.p ^= 1
 #define incQ(mV) mVU.q ^= 1
 
-// Optimizes the End Pipeline State Removing Unnecessary Info
-// If the cycles remaining is just '1', we don't have to transfer it to the next block
-// because mVU automatically decrements this number at the start of its loop,
-// so essentially '1' will be the same as '0'...
+/* Optimizes the End Pipeline State Removing Unnecessary Info
+ * If the cycles remaining is just '1', we don't have to transfer 
+ * it to the next block because mVU automatically decrements this 
+ * number at the start of its loop,
+ * so essentially '1' will be the same as '0'... */
 void mVUoptimizePipeState(mV)
 {
 	for (int i = 0; i < 32; i++)
@@ -268,7 +272,7 @@ void mVUoptimizePipeState(mV)
 		mVUregs.VI[i] = optimizeReg(mVUregs.VI[i]);
 	if (mVUregs.q) { mVUregs.q = optimizeReg(mVUregs.q); if (!mVUregs.q) { incQ(mVU); } }
 	if (mVUregs.p) { mVUregs.p = optimizeReg(mVUregs.p); if (!mVUregs.p) { incP(mVU); } }
-	mVUregs.r = 0; // There are no stalls on the R-reg, so its Safe to discard info
+	mVUregs.r = 0; /* There are no stalls on the R-reg, so its Safe to discard info */
 }
 
 void mVUincCycles(mV, int x)
@@ -316,7 +320,7 @@ void mVUincCycles(mV, int x)
 	mVUregs.r = calcCycles(mVUregs.r, x);
 }
 
-// Helps check if upper/lower ops read/write to same regs...
+/* Helps check if upper/lower ops read/write to same regs... */
 static void cmpVFregs(microVFreg& VFreg1, microVFreg& VFreg2, bool& xVar)
 {
 	if (VFreg1.reg == VFreg2.reg)
@@ -402,9 +406,9 @@ void mVUtestCycles(microVU& mVU, microFlagCycles& mFC)
 	}
 	xMOV(eax, ptr32[&mVU.cycles]);
 	if (EmuConfig.Gamefixes.VUSyncHack)
-		xSUB(eax, mVUcycles); // Running behind, make sure we have time to run the block
+		xSUB(eax, mVUcycles); /* Running behind, make sure we have time to run the block */
 	else
-		xSUB(eax, 1); // Running ahead, make sure cycles left are above 0
+		xSUB(eax, 1); /* Running ahead, make sure cycles left are above 0 */
 
 	xForwardJNS32 skip;
 
@@ -449,20 +453,16 @@ __fi void mVUinitFirstPass(microVU& mVU, uptr pState, u8* thisPtr)
 	mVU.p      = 0;   // All blocks start at p index #0
 	mVU.q      = 0;   // All blocks start at q index #0
 	if ((uptr)&mVUregs != pState) // Loads up Pipeline State Info
-	{
 		memcpy((u8*)&mVUregs, (u8*)pState, sizeof(microRegInfo));
-	}
 	if (((uptr)&mVU.prog.lpState != pState))
-	{
 		memcpy((u8*)&mVU.prog.lpState, (u8*)pState, sizeof(microRegInfo));
-	}
 	mVUblock.x86ptrStart = thisPtr;
 	mVUpBlock = mVUblocks[mVUstartPC / 2]->add(mVU, &mVUblock); // Add this block to block manager
 	mVUregs.needExactMatch = (mVUpBlock->pState.blockType) ? 7 : 0; // ToDo: Fix 1-Op block flag linking (MGS2:Demo/Sly Cooper)
 	mVUregs.blockType = 0;
 	mVUregs.viBackUp  = 0;
 	mVUregs.flagInfo  = 0;
-	mVUsFlagHack = CHECK_VU_FLAGHACK;
+	mVUsFlagHack      = CHECK_VU_FLAGHACK;
 	mVUinitConstValues();
 }
 
@@ -602,10 +602,10 @@ void* mVUcompile(microVU& mVU, u32 startPC, uptr pState)
 	u8* thisPtr = x86Ptr;
 	const u32 endCount = (((microRegInfo*)pState)->blockType) ? 1 : (mVU.microMemSize / 8);
 
-	// First Pass
+	/* First Pass */
 	iPC = startPC / 4;
-	mVUsetupRange(mVU, startPC, 1); // Setup Program Bounds/Range
-	mVU.regAlloc->reset(false);          // Reset regAlloc
+	mVUsetupRange(mVU, startPC, 1); /* Setup Program Bounds/Range */
+	mVU.regAlloc->reset(false); /* Reset regAlloc */
 	mVUinitFirstPass(mVU, pState, thisPtr);
 	mVUbranch = 0;
 	for (int branch = 0; mVUcount < endCount;)
@@ -864,14 +864,14 @@ void* mVUcompile(microVU& mVU, u32 startPC, uptr pState)
 		}
 	}
 
-	// E-bit End
+	/* E-bit End */
 	mVUsetupRange(mVU, xPC, false);
 	mVUendProgram(mVU, &mFC, 1);
 
 	return thisPtr;
 }
 
-// Returns the entry point of the block (compiles it if not found)
+/* Returns the entry point of the block (compiles it if not found) */
 __fi void* mVUentryGet(microVU& mVU, microBlockManager* block, u32 startPC, uptr pState)
 {
 	microBlock* pBlock = block->search(mVU, (microRegInfo*)pState);
@@ -880,7 +880,8 @@ __fi void* mVUentryGet(microVU& mVU, microBlockManager* block, u32 startPC, uptr
 	return mVUcompile(mVU, startPC, pState);
 }
 
-// Search for Existing Compiled Block (if found, return x86ptr; else, compile and return x86ptr)
+/* Search for Existing Compiled Block (if found, return x86ptr; 
+ * else, compile and return x86ptr) */
 __fi void* mVUblockFetch(microVU& mVU, u32 startPC, uptr pState)
 {
 	startPC &= mVU.microMemSize - 8;
@@ -921,8 +922,6 @@ _mVUt void* mVUcompileJIT(u32 startPC, uptr ptr)
 		jc.x86ptrStart = v;
 		return v;
 	}
-	else // When !doJumpCaching, pBlock param is really a microRegInfo pointer
-	{
-		return mVUsearchProg<vuIndex>(startPC, ptr); // Find and set correct program
-	}
+	/* When !doJumpCaching, pBlock param is really a microRegInfo pointer */
+	return mVUsearchProg<vuIndex>(startPC, ptr); /* Find and set correct program */
 }

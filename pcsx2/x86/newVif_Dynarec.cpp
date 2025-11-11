@@ -217,14 +217,13 @@ void VifUnpackSSE_Dynarec::ProcessMasks()
 		return;
 
 	const int cc = std::min(vCL, 3);
-	const u32 full_mask = (vB.mask >> (cc * 8)) & 0xff;
+	const u32 full_mask   = (vB.mask >> (cc * 8)) & 0xff;
 	const u32 rowcol_mask = ((full_mask >> 1) | full_mask) & 0x55; // Rows or Cols being written instead of data, or protected.
 
-	// Every channel is write protected for this cycle, no need to process anything.
+	/* Every channel is write protected for this cycle, no need to process anything. */
 	skipProcessing = full_mask == 0xff;
-
-	// All channels are masked, no reason to process anything here.
-	inputMasked = rowcol_mask == 0x55;
+	/* All channels are masked, no reason to process anything here. */
+	inputMasked    = rowcol_mask == 0x55;
 }
 
 void VifUnpackSSE_Dynarec::CompileRoutine()
@@ -363,7 +362,8 @@ _vifT __fi void dVifUnpack(const u8* data, bool isFill)
 	if (unlikely(b == nullptr))
 		b = dVifCompile<idx>(block, isFill);
 
-	{ // Execute the block
+	/* Execute the block */
+	{ 
 		const VURegs& VU = vuRegs[idx];
 		const uint vuMemLimit = idx ? 0x4000 : 0x1000;
 

@@ -179,17 +179,13 @@ void VifUnpackSSE_Base::xUPK_V2_8() const
 	{
 		xPMOVXX8(workReg);
 
-		if (IsInputMasked())
-			return;
-
-		xPSHUF.D(destReg, workReg, 0x44); //v1v0v1v0
+		if (!IsInputMasked())
+			xPSHUF.D(destReg, workReg, 0x44); //v1v0v1v0
 	}
 	else
 	{
-		if (IsInputMasked())
-			return;
-
-		xPSHUF.D(destReg, workReg, 0xEE); //v3v2v3v2
+		if (!IsInputMasked())
+			xPSHUF.D(destReg, workReg, 0xEE); //v3v2v3v2
 	}
 }
 

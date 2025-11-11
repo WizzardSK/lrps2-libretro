@@ -41,6 +41,6 @@ namespace OpcodeImpl {
 	void recDSRLV();
 	void recDSRAV();
 
-} // namespace OpcodeImpl
-} // namespace Dynarec
-} // namespace R5900
+} /* namespace OpcodeImpl */
+} /* namespace Dynarec */
+} /* namespace R5900 */

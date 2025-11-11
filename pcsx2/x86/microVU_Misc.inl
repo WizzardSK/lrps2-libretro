@@ -200,7 +200,7 @@ __fi void mVUbackupRegs(microVU& mVU, bool toMemory = false, bool onlyNeeded = f
 	}
 }
 
-// Restore Volatile Regs
+/* Restore Volatile Regs */
 __fi void mVUrestoreRegs(microVU& mVU, bool fromMemory = false, bool onlyNeeded = false)
 {
 	if (fromMemory)
@@ -281,12 +281,9 @@ static inline u32 branchAddr(const mV)
 	return ((((iPC + 2) + (_Imm11_ * 2)) & mVU.progMemMask) * 4);
 }
 
-static void mVUwaitMTVU()
-{
-	vu1Thread.WaitVU();
-}
+static void mVUwaitMTVU(void) { vu1Thread.WaitVU(); }
 
-// Transforms the Address in gprReg to valid VU0/VU1 Address
+/* Transforms the Address in gprReg to valid VU0/VU1 Address */
 __fi void mVUaddrFix(mV, const xAddressReg& gprReg)
 {
 	if (isVU1)
@@ -348,7 +345,7 @@ void MIN_MAX_PS(microVU& mVU, const xmm& to, const xmm& from, const xmm& t1in, c
 	const xmm& t1 = t1in.IsEmpty() ? mVU.regAlloc->allocReg() : t1in;
 	const xmm& t2 = t2in.IsEmpty() ? mVU.regAlloc->allocReg() : t2in;
 
-	// use integer comparison
+	/* Use integer comparison */
 	{
 		const xmm& c1 = min ? t2 : t1;
 		const xmm& c2 = min ? t1 : t2;

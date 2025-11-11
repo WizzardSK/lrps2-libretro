@@ -15,7 +15,7 @@
 
 #pragma once
 
-// Sets FDIV Flags at the proper time
+/* Sets FDIV Flags at the proper time */
 __fi void mVUdivSet(mV)
 {
 	if (mVUinfo.doDivFlag)
@@ -27,8 +27,8 @@ __fi void mVUdivSet(mV)
 	}
 }
 
-// Optimizes out unneeded status flag updates
-// This can safely be done when there is an FSSET opcode
+/* Optimizes out unneeded status flag updates
+ * This can safely be done when there is an FSSET opcode */
 __fi void mVUstatusFlagOp(mV)
 {
 	int curPC = iPC;
@@ -36,9 +36,7 @@ __fi void mVUstatusFlagOp(mV)
 	bool runLoop = true;
 
 	if (sFLAG.doFlag)
-	{
 		sFLAG.doNonSticky = true;
-	}
 	else
 	{
 		for (; i > 0; i--)
@@ -85,7 +83,8 @@ int findFlagInst(int* fFlag, int cycles)
 	return j;
 }
 
-// Setup Last 4 instances of Status/Mac/Clip flags (needed for accurate block linking)
+/* Setup Last 4 instances of Status/Mac/Clip flags 
+ * (needed for accurate block linking) */
 int sortFlag(int* fFlag, int* bFlag, int cycles)
 {
 	int lFlag = -5;
@@ -98,47 +97,36 @@ int sortFlag(int* fFlag, int* bFlag, int cycles)
 		lFlag = bFlag[i];
 		cycles++;
 	}
-	return x; // Returns the number of Valid Flag Instances
+	return x; /* Returns the number of Valid Flag Instances */
 }
 
 #define sFlagCond (sFLAG.doFlag || mVUlow.isFSSET || mVUinfo.doDivFlag)
 #define sHackCond (mVUsFlagHack && !sFLAG.doNonSticky)
 
-// Note: Flag handling is 'very' complex, it requires full knowledge of how microVU recs work, so don't touch!
+/* Note: Flag handling is 'very' complex, it requires full knowledge 
+ * of how microVU recs work, so don't touch! */
 __fi void mVUsetFlags(mV, microFlagCycles& mFC)
 {
+	int xS = 0, xM = 0, xC = 0;
 	int endPC = iPC;
-	u32 aCount = 0; // Amount of instructions needed to get valid mac flag instances for block linking
-	//bool writeProtect = false;
-
-	// Ensure last ~4+ instructions update mac/status flags (if next block's first 4 instructions will read them)
+	u32 aCount = 0; /* Amount of instructions needed to get valid mac flag instances for block linking */
+	/* Ensure last ~4+ instructions update mac/status flags 
+	 * (if next block's first 4 instructions will read them) */
 	for (int i = mVUcount; i > 0; i--, aCount++)
 	{
 		if (sFLAG.doFlag)
 		{
-
 			if (__Mac)
-			{
 				mFLAG.doFlag = true;
-				//writeProtect = true;
-			}
-
 			if (__Status)
-			{
 				sFLAG.doNonSticky = true;
-				//writeProtect = true;
-			}
-
 			if (aCount >= 3)
-			{
 				break;
-			}
 		}
 		incPC2(-2);
 	}
 
-	// Status/Mac Flags Setup Code
-	int xS = 0, xM = 0, xC = 0;
+	/* Status/Mac Flags Setup Code */
 
 	for (int i = 0; i < 4; i++)
 	{
@@ -176,13 +164,13 @@ __fi void mVUsetFlags(mV, microFlagCycles& mFC)
 	}
 
 	mFC.cycles = 0;
-	u32 xCount = mVUcount; // Backup count
+	u32 xCount = mVUcount; /* Backup count */
 	iPC = mVUstartPC;
 	for (mVUcount = 0; mVUcount < xCount; mVUcount++)
 	{
 		if (mVUlow.isFSSET && !noFlagOpts)
 		{
-			if (__Status) // Don't Optimize out on the last ~4+ instructions
+			if (__Status) /* Don't Optimize out on the last ~4+ instructions */
 			{
 				if ((xCount - mVUcount) > aCount)
 					mVUstatusFlagOp(mVU);
@@ -241,7 +229,7 @@ __fi void mVUsetFlags(mV, microFlagCycles& mFC)
 	}
 
 	mVUregs.flagInfo |= ((__Status) ? 0 : (xS << 2));
-	mVUregs.flagInfo |= /*((__Mac||1) ? 0 :*/ (xM << 4)/*)*/; //TODO: Optimise this? Might help with number of blocks.
+	mVUregs.flagInfo |= (xM << 4); /* TODO: Optimise this? Might help with number of blocks. */
 	mVUregs.flagInfo |= ((__Clip)   ? 0 : (xC << 6));
 	iPC = endPC;
 }
@@ -252,14 +240,14 @@ __fi void mVUsetFlags(mV, microFlagCycles& mFC)
 #define shuffleMac     ((bMac[3] << 6) | (bMac[2] << 4) | (bMac[1] << 2) | bMac[0])
 #define shuffleClip    ((bClip[3] << 6) | (bClip[2] << 4) | (bClip[1] << 2) | bClip[0])
 
-// Recompiles Code for Proper Flags on Block Linkings
+/* Recompiles Code for Proper Flags on Block Linkings */
 __fi void mVUsetupFlags(mV, microFlagCycles& mFC)
 {
 	if (doSFlagInsts && __Status)
 	{
 		int bStatus[4];
 		int sortRegs = sortFlag(mFC.xStatus, bStatus, mFC.cycles);
-		// Note: Emitter will optimize out mov(reg1, reg1) cases...
+		/* NOTE: Emitter will optimize out mov(reg1, reg1) cases... */
 		if (sortRegs == 1)
 		{
 			xMOV(gprF0, getFlagReg(bStatus[0]));
@@ -318,33 +306,13 @@ __fi void mVUsetupFlags(mV, microFlagCycles& mFC)
 	}
 }
 
-#define shortBranch() \
-	{ \
-		if ((branch == 3) || (branch == 4)) /*Branches*/ \
-		{ \
-			_mVUflagPass(mVU, aBranchAddr, sCount + found, found, v); \
-			if (branch == 3) /*Non-conditional Branch*/ \
-				break; \
-			branch = 0; \
-		} \
-		else if (branch == 5) /*JR/JARL*/ \
-		{ \
-			if (sCount + found < 4) \
-				mVUregs.needExactMatch |= 7; \
-			break; \
-		} \
-		else /*E-Bit End*/ \
-			break; \
-	}
-
-// Scan through instructions and check if flags are read (FSxxx, FMxxx, FCxxx opcodes)
-void _mVUflagPass(mV, u32 startPC, u32 sCount, u32 found, std::vector<u32>& v)
+/* Scan through instructions and check if flags are read (FSxxx, FMxxx, FCxxx opcodes) */
+static void _mVUflagPass(mV, u32 startPC, u32 sCount, u32 found, std::vector<u32>& v)
 {
-
 	for (u32 i = 0; i < v.size(); i++)
 	{
 		if (v[i] == startPC)
-			return; // Prevent infinite recursion
+			return; /* Prevent infinite recursion */
 	}
 	v.push_back(startPC);
 
@@ -361,17 +329,9 @@ void _mVUflagPass(mV, u32 startPC, u32 sCount, u32 found, std::vector<u32>& v)
 		found |= (mVUregs.needExactMatch & 8) >> 3;
 		mVUregs.needExactMatch &= 7;
 		if (curI & _Ebit_)
-		{
 			branch = 1;
-		}
-		if (curI & _Tbit_)
-		{
+		if ((curI & _Tbit_) || (curI & _Dbit_) && doDBitHandling)
 			branch = 6;
-		}
-		if ((curI & _Dbit_) && doDBitHandling)
-		{
-			branch = 6;
-		}
 		if (!(curI & _Ibit_))
 		{
 			incPC(-1);
@@ -380,13 +340,9 @@ void _mVUflagPass(mV, u32 startPC, u32 sCount, u32 found, std::vector<u32>& v)
 		}
 
 		if (branch >= 2)
-		{
 			shortBranch();
-		}
 		else if (branch == 1)
-		{
 			branch = 2;
-		}
 		if (mVUbranch)
 		{
 			branch = ((mVUbranch > 8) ? (5) : ((mVUbranch < 3) ? 3 : 4));
@@ -405,22 +361,41 @@ void _mVUflagPass(mV, u32 startPC, u32 sCount, u32 found, std::vector<u32>& v)
 	setCode();
 }
 
-void mVUflagPass(mV, u32 startPC, u32 sCount = 0, u32 found = 0)
+
+#define shortBranch() \
+	{ \
+		if ((branch == 3) || (branch == 4)) /*Branches*/ \
+		{ \
+			_mVUflagPass(mVU, aBranchAddr, sCount + found, found, v); \
+			if (branch == 3) /* Noe-conditional Branch */ \
+				break; \
+			branch = 0; \
+		} \
+		else if (branch == 5) /*JR/JARL*/ \
+		{ \
+			if (sCount + found < 4) \
+				mVUregs.needExactMatch |= 7; \
+			break; \
+		} \
+		else /*E-Bit End*/ \
+			break; \
+	}
+
+static void mVUflagPass(mV, u32 startPC, u32 sCount = 0, u32 found = 0)
 {
 	std::vector<u32> v;
 	_mVUflagPass(mVU, startPC, sCount, found, v);
 }
 
-// Checks if the first ~4 instructions of a block will read flags
+/* Checks if the first ~4 instructions of a block will read flags */
 void mVUsetFlagInfo(mV)
 {
 	if (noFlagOpts)
 	{
 		mVUregs.needExactMatch = 0x7;
 		mVUregs.flagInfo = 0x0;
-		return;
 	}
-	if (mVUbranch <= 2) // B/BAL
+	else if (mVUbranch <= 2) /* B/BAL */
 	{
 		incPC(-1);
 		mVUflagPass(mVU, branchAddr(mVU));
@@ -428,30 +403,26 @@ void mVUsetFlagInfo(mV)
 
 		mVUregs.needExactMatch &= 0x7;
 	}
-	else if (mVUbranch <= 8) // Conditional Branch
+	else if (mVUbranch <= 8) /* Conditional Branch */
 	{
-		incPC(-1); // Branch Taken
+		incPC(-1); /* Branch Taken */
 		mVUflagPass(mVU, branchAddr(mVU));
 		int backupFlagInfo = mVUregs.needExactMatch;
 		mVUregs.needExactMatch = 0;
 
-		incPC(4); // Branch Not Taken
+		incPC(4); /* Branch Not Taken */
 		mVUflagPass(mVU, xPC);
 		incPC(-3);
 
 		mVUregs.needExactMatch |= backupFlagInfo;
 		mVUregs.needExactMatch &= 0x7;
 	}
-	else // JR/JALR
+	else /* JR/JALR */
 	{
 		if (!doConstProp || !mVUlow.constJump.isValid)
-		{
 			mVUregs.needExactMatch |= 0x7;
-		}
 		else
-		{
 			mVUflagPass(mVU, (mVUlow.constJump.regValue * 8) & (mVU.microMemSize - 8));
-		}
 		mVUregs.needExactMatch &= 0x7;
 	}
 }
