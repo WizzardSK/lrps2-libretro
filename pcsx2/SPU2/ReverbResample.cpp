@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "../GS/GSVector.h"
 #include "Global.h"
 
