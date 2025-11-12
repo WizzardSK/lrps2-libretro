@@ -415,49 +415,52 @@ static __forceinline void MixCoreVoices(VoiceMixSet& dest, const uint coreidx)
 	}
 }
 
-StereoOut32 V_Core::Mix(const VoiceMixSet& inVoices, const StereoOut32& Input, const StereoOut32& Ext)
+static __forceinline StereoOut32 MixCore(const uint coreidx,
+		const VoiceMixSet& inVoices, const StereoOut32& Input, const StereoOut32& Ext)
 {
-	StereoOut32 TD;
+	StereoOut32 TD, TW, RV;
 	VoiceMixSet Voices;
+	V_Core& thiscore(Cores[coreidx]);
+
 	if (MasterVol.Left.Enable)
 		V_VolumeSlide_Update(MasterVol.Left);
 	if (MasterVol.Right.Enable)
 		V_VolumeSlide_Update(MasterVol.Right);
-	UpdateNoise(*this);
+	UpdateNoise(thiscore);
 
-	// Saturate final result to standard 16 bit range.
+	/* Saturate final result to standard 16 bit range. */
 	Voices.Dry.Left  = std::clamp(inVoices.Dry.Left, -0x8000, 0x7fff);
 	Voices.Dry.Right = std::clamp(inVoices.Dry.Right, -0x8000, 0x7fff);
 	Voices.Wet.Left  = std::clamp(inVoices.Wet.Left, -0x8000, 0x7fff);
 	Voices.Wet.Right = std::clamp(inVoices.Wet.Right, -0x8000, 0x7fff);
 
-	// Write Mixed results To Output Area
-	if (Index == 0)
+	/* Write Mixed results To Output Area */
+	if (thiscore.Index == 0)
 	{
-		spu2M_WriteFast(0x1000 + OutPos, Voices.Dry.Left);
-		spu2M_WriteFast(0x1200 + OutPos, Voices.Dry.Right);
-		spu2M_WriteFast(0x1400 + OutPos, Voices.Wet.Left);
-		spu2M_WriteFast(0x1600 + OutPos, Voices.Wet.Right);
+		spu2M_WriteFast(0x1000 + thiscore.OutPos, Voices.Dry.Left);
+		spu2M_WriteFast(0x1200 + thiscore.OutPos, Voices.Dry.Right);
+		spu2M_WriteFast(0x1400 + thiscore.OutPos, Voices.Wet.Left);
+		spu2M_WriteFast(0x1600 + thiscore.OutPos, Voices.Wet.Right);
 	}
 	else
 	{
-		spu2M_WriteFast(0x1800 + OutPos, Voices.Dry.Left);
-		spu2M_WriteFast(0x1A00 + OutPos, Voices.Dry.Right);
-		spu2M_WriteFast(0x1C00 + OutPos, Voices.Wet.Left);
-		spu2M_WriteFast(0x1E00 + OutPos, Voices.Wet.Right);
+		spu2M_WriteFast(0x1800 + thiscore.OutPos, Voices.Dry.Left);
+		spu2M_WriteFast(0x1A00 + thiscore.OutPos, Voices.Dry.Right);
+		spu2M_WriteFast(0x1C00 + thiscore.OutPos, Voices.Wet.Left);
+		spu2M_WriteFast(0x1E00 + thiscore.OutPos, Voices.Wet.Right);
 	}
 
-	// Mix in the Input data
-	TD.Left   = Input.Left & DryGate.InpL;
-	TD.Right  = Input.Right & DryGate.InpR;
+	/* Mix in the Input data */
+	TD.Left   = Input.Left  & thiscore.DryGate.InpL;
+	TD.Right  = Input.Right & thiscore.DryGate.InpR;
 
-	// Mix in the Voice data
-	TD.Left  += Voices.Dry.Left & DryGate.SndL;
-	TD.Right += Voices.Dry.Right & DryGate.SndR;
+	/* Mix in the Voice data */
+	TD.Left  += Voices.Dry.Left  & thiscore.DryGate.SndL;
+	TD.Right += Voices.Dry.Right & thiscore.DryGate.SndR;
 
-	// Mix in the External (nothing/core0) data
-	TD.Left  += Ext.Left & DryGate.ExtL;
-	TD.Right += Ext.Right & DryGate.ExtR;
+	/* Mix in the External (nothing/core0) data */
+	TD.Left  += Ext.Left  & thiscore.DryGate.ExtL;
+	TD.Right += Ext.Right & thiscore.DryGate.ExtR;
 
 	// ----------------------------------------------------------------------------
 	//    Reverberation Effects Processing
@@ -477,23 +480,22 @@ StereoOut32 V_Core::Mix(const VoiceMixSet& inVoices, const StereoOut32& Input, c
 	//
 	// On the other hand, updating the buffer is cheap and easy, so might as well. ;)
 
-	StereoOut32 TW;
 
 	/* Mix Input, Voice, and External data: */
-	TW.Left  = Input.Left & WetGate.InpL;
-	TW.Right = Input.Right & WetGate.InpR;
+	TW.Left  = Input.Left  & thiscore.WetGate.InpL;
+	TW.Right = Input.Right & thiscore.WetGate.InpR;
 
-	TW.Left  += Voices.Wet.Left & WetGate.SndL;
-	TW.Right += Voices.Wet.Right & WetGate.SndR;
-	TW.Left  += Ext.Left & WetGate.ExtL;
-	TW.Right += Ext.Right & WetGate.ExtR;
+	TW.Left  += Voices.Wet.Left  & thiscore.WetGate.SndL;
+	TW.Right += Voices.Wet.Right & thiscore.WetGate.SndR;
+	TW.Left  += Ext.Left  & thiscore.WetGate.ExtL;
+	TW.Right += Ext.Right & thiscore.WetGate.ExtR;
 
-	StereoOut32 RV  = DoReverb(TW);
+	RV        = thiscore.DoReverb(TW);
 
 	/* Mix Dry + Wet
 	 * (master volume is applied later to the result of both outputs added together). */
-	TD.Left  += (RV.Left  * FxVol.Left)  >> 15;
-	TD.Right += (RV.Right * FxVol.Right) >> 15;
+	TD.Left  += (RV.Left  * thiscore.FxVol.Left)  >> 15;
+	TD.Right += (RV.Right * thiscore.FxVol.Right) >> 15;
 	return TD;
 }
 
@@ -542,7 +544,7 @@ void Mix(short *out_left, short *out_right)
 	MixCoreVoices(VoiceData[0], 0);
 	MixCoreVoices(VoiceData[1], 1);
 
-	Ext = Cores[0].Mix(VoiceData[0], InputData[0], empty);
+	Ext = MixCore(0, VoiceData[0], InputData[0], empty);
 
 	if ((PlayMode & 4) || (Cores[0].Mute != 0))
 		Ext = empty;
@@ -560,7 +562,7 @@ void Mix(short *out_left, short *out_right)
 
 	Ext.Left  = (Ext.Left  * Cores[1].ExtVol.Left)  >> 15;
 	Ext.Right = (Ext.Right * Cores[1].ExtVol.Right) >> 15;
-	Out       = Cores[1].Mix(VoiceData[1], InputData[1], Ext);
+	Out       = MixCore(1, VoiceData[1], InputData[1], Ext);
 
 	/* Experimental CDDA support
 	 * The CDDA overrides all other mixer output.  It's a direct feed */
