@@ -29,14 +29,12 @@ namespace SPU2Savestate
 
 struct SPU2Savestate::DataBlock
 {
-	u32 spu2id;          /* SPU2 state identifier lets ZeroGS/PeopsSPU2 know this isn't their state) */
-	u8 unkregs[0x10000]; /* SPU2 raw register memory */
-	u8 mem[0x200000];    /* SPU2 raw sample memory */
+	u32 spu2id;          // SPU2 state identifier lets ZeroGS/PeopsSPU2 know this isn't their state)
+	u8 unkregs[0x10000]; // SPU2 raw register memory
+	u8 mem[0x200000];    // SPU2 raw sample memory
 
-	u32 version; /* SPU2 version identifier */
+	u32 version; // SPU2 version identifier
 	V_Core Cores[2];
-	V_VoiceData VoiceData;
-	V_Voice Voices[48];
 	V_SPDIF Spdif;
 	u16 OutPos;
 	u16 InputPos;
@@ -54,8 +52,6 @@ void SPU2Savestate::FreezeIt(DataBlock& spud)
 	memcpy(spud.mem, _spu2mem, sizeof(spud.mem));
 
 	memcpy(spud.Cores, Cores, sizeof(Cores));
-	memcpy(&spud.VoiceData, &VoiceData, sizeof(VoiceData));
-	memcpy(spud.Voices, Voices, sizeof(Voices));
 	memcpy(&spud.Spdif, &Spdif, sizeof(Spdif));
 
 	// Convert pointers to offsets so we can safely restore them when loading.
@@ -101,15 +97,16 @@ s32 SPU2Savestate::ThawIt(DataBlock& spud)
 	}
 	else
 	{
+		//TODO/FIXME - implement this?
+		//SndBuffer::ClearContents();
+
 		memcpy(spu2regs, spud.unkregs, sizeof(spud.unkregs));
 		memcpy(_spu2mem, spud.mem, sizeof(spud.mem));
 
-		memcpy(&VoiceData, &spud.VoiceData, sizeof(VoiceData));
-		memcpy(Voices, spud.Voices, sizeof(Voices));
 		memcpy(Cores, spud.Cores, sizeof(Cores));
 		memcpy(&Spdif, &spud.Spdif, sizeof(Spdif));
 
-		/* Reverse the pointer offset from above. */
+		// Reverse the pointer offset from above.
 #define FIX_POINTER(x) \
 	if ((x) == reinterpret_cast<decltype(x)>(-1)) \
 		x = nullptr; \
@@ -133,13 +130,16 @@ s32 SPU2Savestate::ThawIt(DataBlock& spud)
 
 		memset(pcm_cache_data, 0, pcm_BlockCount * sizeof(PcmCacheEntry));
 
-		/* Go through the V_Voice structs and recalculate SBuffer pointer from
-		 * the NextA setting. */
+		// Go through the V_Voice structs and recalculate SBuffer pointer from
+		// the NextA setting.
 
-		for (int v = 0; v < 48; v++)
+		for (int c = 0; c < 2; c++)
 		{
-			const int cacheIdx = Voices[v].NextA / pcm_WordsPerBlock;
-			Voices[v].SBuffer = pcm_cache_data[cacheIdx].Sampledata;
+			for (int v = 0; v < 24; v++)
+			{
+				const int cacheIdx = Cores[c].Voices[v].NextA / pcm_WordsPerBlock;
+				Cores[c].Voices[v].SBuffer = pcm_cache_data[cacheIdx].Sampledata;
+			}
 		}
 	}
 	return 0;

@@ -20,8 +20,11 @@
 // Returns the hiword of a 32 bit integer.
 #define U16P_HI(x) (((u16*)&(x)) + 1)
 
-#define PCORE(c, p) U16P(Cores[c].p)
-#define PVCP(c, v, p) U16P(Voices[v + (c * 24)].p)
+#define PCORE(c, p) \
+	U16P(Cores[c].p)
+
+#define PVCP(c, v, p) \
+	PCORE(c, Voices[v].p)
 
 #define PVC(c, v)                          \
 		PVCP(c, v, Volume.Left.Reg_VOL),   \

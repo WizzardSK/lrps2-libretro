@@ -35,8 +35,6 @@ extern void retro_audio_queue(const int16_t *data, int32_t samples);
 s16 spu2regs[0x010000 / sizeof(s16)];
 s16 _spu2mem[0x200000 / sizeof(s16)];
 
-V_VoiceData VoiceData;
-V_Voice Voices[48];
 V_Core Cores[2];
 V_SPDIF Spdif;
 
@@ -148,12 +146,12 @@ void V_Core::Init(int index)
 	IRQA = 0x800;
 	IRQEnable = false; // PS2 confirmed
 
-	for (uint v = 0; v < 48; ++v)
+	for (uint v = 0; v < SPU2_NUM_VOICES; ++v)
 	{
-		VoiceData.DryL[v] = -1;
-		VoiceData.DryR[v] = -1;
-		VoiceData.WetL[v] = -1;
-		VoiceData.WetR[v] = -1;
+		VoiceGates[v].DryL = -1;
+		VoiceGates[v].DryR = -1;
+		VoiceGates[v].WetL = -1;
+		VoiceGates[v].WetR = -1;
 
 		Voices[v].Volume.Left.Reg_VOL = 0;
 		Voices[v].Volume.Left.Counter = 0;
@@ -161,6 +159,7 @@ void V_Core::Init(int index)
 		Voices[v].Volume.Right.Reg_VOL = 0;
 		Voices[v].Volume.Right.Counter = 0;
 		Voices[v].Volume.Right.Value   = 0;
+		Voices[v].SCurrent = 28;
 
 		Voices[v].ADSR.Counter = 0;
 		Voices[v].ADSR.Value = 0;
@@ -169,10 +168,6 @@ void V_Core::Init(int index)
 		Voices[v].NextA = 0x2801;
 		Voices[v].StartA = 0x2800;
 		Voices[v].LoopStartA = 0x2800;
-
-		memset(Voices[v].DecodeFifo, 0, sizeof(Voices[v].DecodeFifo));
-		Voices[v].DecPosRead = 0;
-		Voices[v].DecPosWrite = 0;
 	}
 
 	DMAICounter = 0;
@@ -240,11 +235,10 @@ __forceinline void TimeUpdate(u32 cClocks)
 		{
 			if (Cores[c].KeyOff)
 			{
-				for (u8 bit = 0; bit < 48; bit++)
+				for (u8 vc = 0; vc < SPU2_NUM_VOICES; vc++)
 				{
-					int vc = bit + (c * 24);
-					if (((Cores[c].KeyOff >> bit) & 1))
-						ADSR_Release(Voices[vc].ADSR);
+					if (((Cores[c].KeyOff >> vc) & 1))
+						ADSR_Release(Cores[c].Voices[vc].ADSR);
 				}
 				Cores[c].KeyOff = 0;
 			}
@@ -252,32 +246,39 @@ __forceinline void TimeUpdate(u32 cClocks)
 			if (Cores[c].KeyOn)
 			{
 				Cores[c].Regs.ENDX &= ~(Cores[c].KeyOn);
-				for (int bit = 0; bit < 48; bit++)
+				for (int v = 0; v < SPU2_NUM_VOICES; v++)
 				{
-					int vc = bit + (c * 24);
-					if (Cores[c].KeyOn & (1 << bit))
+					if (Cores[c].KeyOn & (1 << v))
 					{
-						V_Voice& thisvc(Voices[vc]);
-						if (thisvc.StartA & 7)
-							thisvc.StartA = (thisvc.StartA + 0xFFFF8) + 0x8;
+						V_Voice& vc(Cores[c].Voices[v]);
+						if (vc.StartA & 7)
+							vc.StartA = (vc.StartA + 0xFFFF8) + 0x8;
 
-						thisvc.ADSR.Phase   = PHASE_ATTACK;
-						thisvc.ADSR.Counter = 0;
-						thisvc.ADSR.Value   = 0;
+						vc.ADSR.Phase   = PHASE_ATTACK;
+						vc.ADSR.Counter = 0;
+						vc.ADSR.Value   = 0;
 
-						thisvc.LoopMode     = 0;
+						vc.SCurrent     = 28;
+						vc.LoopMode     = 0;
 
-						thisvc.SP           = 0;
+						/* When SP >= 0 the next sample will be grabbed, 
+						 * we don't want this to happen instantly because 
+						 * in the case of pitch being 0 we want to delay getting
+						 * the next block header. This is a hack to work around the 
+						 * fact that unlike the HW we don't update the block header 
+						 * on every cycle. */
+						vc.SP           = -1;
 
-						thisvc.LoopFlags    = 0;
-						thisvc.NextA        = thisvc.StartA | 1;
-						thisvc.Prev1        = 0;
-						thisvc.Prev2        = 0;
+						vc.LoopFlags    = 0;
+						vc.NextA        = vc.StartA | 1;
+						vc.Prev1        = 0;
+						vc.Prev2        = 0;
 
-						thisvc.SBuffer      = nullptr;
-						thisvc.DecPosRead   = 0;
-						thisvc.DecPosWrite  = 0;
-						Cores[c].KeyOn     &= ~(1 << bit);
+						vc.PV1          = 0;
+						vc.PV2          = 0;
+						vc.PV3          = 0;
+						vc.PV4          = 0;
+						Cores[c].KeyOn &= ~(1 << v);
 					}
 				}
 				Cores[c].KeyOn = 0;
@@ -787,10 +788,10 @@ u16 V_Core::ReadRegPS1(u32 mem)
 template <int CoreIdx, int VoiceIdx, int param>
 static void RegWrite_VoiceParams(u16 value)
 {
-	const int core     = CoreIdx;
-	const int voice    = VoiceIdx + (core * 24);
+	const int core = CoreIdx;
+	const int voice = VoiceIdx;
 
-	V_Voice& thisvoice = Voices[voice];
+	V_Voice& thisvoice = Cores[core].Voices[voice];
 
 	switch (param)
 	{
@@ -836,9 +837,10 @@ static void RegWrite_VoiceParams(u16 value)
 template <int CoreIdx, int VoiceIdx, int address>
 static void RegWrite_VoiceAddr(u16 value)
 {
-	const int core     = CoreIdx;
-	const int voice    = VoiceIdx + (core * 24);
-	V_Voice& thisvoice = Voices[voice];
+	const int core = CoreIdx;
+	const int voice = VoiceIdx;
+
+	V_Voice& thisvoice = Cores[core].Voices[voice];
 
 	switch (address)
 	{
@@ -870,10 +872,12 @@ static void RegWrite_VoiceAddr(u16 value)
 			 * Soul Reaver 2
 			 * Wallace And Gromit: Curse Of The Were-Rabbit. */
 			thisvoice.NextA = ((u32)(value & 0x0F) << 16) | (thisvoice.NextA & 0xFFF8) | 1;
+			thisvoice.SCurrent = 28;
 			break;
 
 		case 5:
 			thisvoice.NextA = (thisvoice.NextA & 0x0F0000) | (value & 0xFFF8) | 1;
+			thisvoice.SCurrent = 28;
 			break;
 	}
 }
@@ -881,9 +885,8 @@ static void RegWrite_VoiceAddr(u16 value)
 template <int CoreIdx, int cAddr>
 static void RegWrite_Core(u16 value)
 {
-	const int omem   = cAddr;
-	const int core   = CoreIdx;
-	const int vstart = 24 * core;
+	const int omem = cAddr;
+	const int core = CoreIdx;
 	V_Core& thiscore = Cores[core];
 
 	switch (omem)
@@ -941,25 +944,25 @@ static void RegWrite_Core(u16 value)
 
 		case REG_S_PMON:
 			for (int vc = 1; vc < 16; ++vc)
-				Voices[vstart + vc].Modulated = (value >> vc) & 1;
+				thiscore.Voices[vc].Modulated = (value >> vc) & 1;
 			((u16*)&thiscore.Regs.PMON)[0] = value;
 			break;
 
 		case (REG_S_PMON + 2):
 			for (int vc = 0; vc < 8; ++vc)
-				Voices[vstart + vc + 16].Modulated = (value >> vc) & 1;
+				thiscore.Voices[vc + 16].Modulated = (value >> vc) & 1;
 			((u16*)&thiscore.Regs.PMON)[1] = value;
 			break;
 
 		case REG_S_NON:
 			for (int vc = 0; vc < 16; ++vc)
-				Voices[vstart + vc].Noise = (value >> vc) & 1;
+				thiscore.Voices[vc].Noise = (value >> vc) & 1;
 			((u16*)&thiscore.Regs.NON)[0] = value;
 			break;
 
 		case (REG_S_NON + 2):
 			for (int vc = 0; vc < 8; ++vc)
-				Voices[vstart + vc + 16].Noise = (value >> vc) & 1;
+				thiscore.Voices[vc + 16].Noise = (value >> vc) & 1;
 			((u16*)&thiscore.Regs.NON)[1] = value;
 			break;
 
@@ -969,9 +972,8 @@ static void RegWrite_Core(u16 value)
 				((u16*)&thiscore.Regs.VMIXL)[0] = value;
 				if (result == thiscore.Regs.VMIXL)
 					break;
-				const uint start_voice = core ? 24 : 0;
 				for (uint vc = 0, vx = 1; vc < 16; ++vc, vx <<= 1)
-					VoiceData.DryL[start_voice + vc] = (value & vx) ? -1 : 0;
+					thiscore.VoiceGates[vc].DryL = (value & vx) ? -1 : 0;
 			}
 			break;
 
@@ -981,9 +983,8 @@ static void RegWrite_Core(u16 value)
 				((u16*)&thiscore.Regs.VMIXL)[1] = value;
 				if (result == thiscore.Regs.VMIXL)
 					break;
-				const uint start_voice = core ? 24 : 0;
 				for (uint vc = 16, vx = 1; vc < 24; ++vc, vx <<= 1)
-					VoiceData.DryL[start_voice + vc] = (value & vx) ? -1 : 0;
+					thiscore.VoiceGates[vc].DryL = (value & vx) ? -1 : 0;
 			}
 			break;
 
@@ -993,9 +994,8 @@ static void RegWrite_Core(u16 value)
 				((u16*)&thiscore.Regs.VMIXEL)[0] = value;
 				if (result == thiscore.Regs.VMIXEL)
 					break;
-				const uint start_voice = core ? 24 : 0;
 				for (uint vc = 0, vx = 1; vc < 16; ++vc, vx <<= 1)
-					VoiceData.WetL[start_voice + vc] = (value & vx) ? -1 : 0;
+					thiscore.VoiceGates[vc].WetL = (value & vx) ? -1 : 0;
 			}
 			break;
 
@@ -1005,9 +1005,8 @@ static void RegWrite_Core(u16 value)
 				((u16*)&thiscore.Regs.VMIXEL)[1] = value;
 				if (result == thiscore.Regs.VMIXEL)
 					break;
-				const uint start_voice = core ? 24 : 0;
 				for (uint vc = 16, vx = 1; vc < 24; ++vc, vx <<= 1)
-					VoiceData.WetL[start_voice + vc] = (value & vx) ? -1 : 0;
+					thiscore.VoiceGates[vc].WetL = (value & vx) ? -1 : 0;
 			}
 			break;
 
@@ -1017,9 +1016,8 @@ static void RegWrite_Core(u16 value)
 				((u16*)&thiscore.Regs.VMIXR)[0] = value;
 				if (result == thiscore.Regs.VMIXR)
 					break;
-				const uint start_voice = core ? 24 : 0;
 				for (uint vc = 0, vx = 1; vc < 16; ++vc, vx <<= 1)
-					VoiceData.DryR[start_voice + vc] = (value & vx) ? -1 : 0;
+					thiscore.VoiceGates[vc].DryR = (value & vx) ? -1 : 0;
 			}
 			break;
 
@@ -1029,9 +1027,8 @@ static void RegWrite_Core(u16 value)
 				((u16*)&thiscore.Regs.VMIXR)[1] = value;
 				if (result == thiscore.Regs.VMIXR)
 					break;
-				const uint start_voice = core ? 24 : 0;
 				for (uint vc = 16, vx = 1; vc < 24; ++vc, vx <<= 1)
-					VoiceData.DryR[start_voice + vc] = (value & vx) ? -1 : 0;
+					thiscore.VoiceGates[vc].DryR = (value & vx) ? -1 : 0;
 			}
 			break;
 
@@ -1041,9 +1038,8 @@ static void RegWrite_Core(u16 value)
 				((u16*)&thiscore.Regs.VMIXER)[0] = value;
 				if (result == thiscore.Regs.VMIXER)
 					break;
-				const uint start_voice = core ? 24 : 0;
 				for (uint vc = 0, vx = 1; vc < 16; ++vc, vx <<= 1)
-					VoiceData.WetR[start_voice + vc] = (value & vx) ? -1 : 0;
+					thiscore.VoiceGates[vc].WetR = (value & vx) ? -1 : 0;
 			}
 			break;
 
@@ -1053,9 +1049,8 @@ static void RegWrite_Core(u16 value)
 				((u16*)&thiscore.Regs.VMIXER)[1] = value;
 				if (result == thiscore.Regs.VMIXER)
 					break;
-				const uint start_voice = core ? 24 : 0;
 				for (uint vc = 16, vx = 1; vc < 24; ++vc, vx <<= 1)
-					VoiceData.WetR[start_voice + vc] = (value & vx) ? -1 : 0;
+					thiscore.VoiceGates[vc].WetR = (value & vx) ? -1 : 0;
 			}
 			break;
 
@@ -1098,22 +1093,23 @@ static void RegWrite_Core(u16 value)
 				Cores[1].FxEnable = 0;
 				Cores[1].EffectsStartA = 0x7FFF8; // park core1 effect area in inaccessible mem
 				Cores[1].EffectsEndA = 0x7FFFF;
-				for (uint v = 24; v < 48; ++v)
+				for (uint v = 0; v < 24; ++v)
 				{
-					Voices[v].Volume.Left.Reg_VOL  = 0;
-					Voices[v].Volume.Left.Counter  = 0;
-					Voices[v].Volume.Left.Value    = 0;
-					Voices[v].Volume.Right.Reg_VOL = 0;
-					Voices[v].Volume.Right.Counter = 0;
-					Voices[v].Volume.Right.Value   = 0;
+					Cores[1].Voices[v].Volume.Left.Reg_VOL  = 0;
+					Cores[1].Voices[v].Volume.Left.Counter  = 0;
+					Cores[1].Voices[v].Volume.Left.Value    = 0;
+					Cores[1].Voices[v].Volume.Right.Reg_VOL = 0;
+					Cores[1].Voices[v].Volume.Right.Counter = 0;
+					Cores[1].Voices[v].Volume.Right.Value   = 0;
+					Cores[1].Voices[v].SCurrent = 28;
 
-					Voices[v].ADSR.Value = 0;
-					Voices[v].ADSR.Phase = 0;
-					Voices[v].Pitch = 0x0;
-					Voices[v].NextA = 0x6FFFF;
-					Voices[v].StartA = 0x6FFFF;
-					Voices[v].LoopStartA = 0x6FFFF;
-					Voices[v].Modulated = 0;
+					Cores[1].Voices[v].ADSR.Value = 0;
+					Cores[1].Voices[v].ADSR.Phase = 0;
+					Cores[1].Voices[v].Pitch = 0x0;
+					Cores[1].Voices[v].NextA = 0x6FFFF;
+					Cores[1].Voices[v].StartA = 0x6FFFF;
+					Cores[1].Voices[v].LoopStartA = 0x6FFFF;
+					Cores[1].Voices[v].Modulated = 0;
 				}
 				return;
 			}
