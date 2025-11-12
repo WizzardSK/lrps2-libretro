@@ -86,7 +86,7 @@ static void __forceinline IncrementNextA(V_Voice& vc)
 	vc.NextA &= 0xFFFFF;
 }
 
-static __forceinline void GetNextDataBuffered(V_Voice& vc, uint voiceidx)
+static __forceinline void GetNextDataBuffered(V_Voice& vc)
 {
 	if (vc.SBuffer == nullptr)
 	{
@@ -123,11 +123,11 @@ static __forceinline void GetNextDataBuffered(V_Voice& vc, uint voiceidx)
 		vc.DecodeFifo[(vc.DecPosWrite + i) % 32] = vc.SBuffer[sampleIdx + i];
 }
 
-static __forceinline void UpdateBlockHeader(V_Voice& vc, uint voiceidx)
+static __forceinline void UpdateBlockHeader(V_Voice& vc)
 {
 	for (int i = 0; i < 2; i++)
 		if (Cores[i].IRQEnable && Cores[i].IRQA == (vc.NextA & 0xFFFF8))
-			SetIrqCall(i);
+			has_to_call_irq[i] = true;
 
 	s16* memptr  = GetMemPtr(vc.NextA & 0xFFFF8);
 	vc.LoopFlags = *memptr >> 8; // grab loop flags from the upper byte.
@@ -139,7 +139,7 @@ static __forceinline void UpdateBlockHeader(V_Voice& vc, uint voiceidx)
 static __forceinline void DecodeSamples(V_Core& thiscore, V_Voice& vc, uint coreidx, uint voiceidx)
 {
 	/* Update the block header on every audio frame */
-	UpdateBlockHeader(vc, voiceidx);
+	UpdateBlockHeader(vc);
 
 	/* When a voice is started at 0 pitch, NAX quickly advances to SSA + 5
 	 * So that would mean the decode buffer holds around 12 samples */
@@ -147,11 +147,11 @@ static __forceinline void DecodeSamples(V_Core& thiscore, V_Voice& vc, uint core
 		return;
 
 	if (vc.ADSR.Phase > V_ADSR::PHASE_STOPPED)
-		GetNextDataBuffered(voiceidx);
+		GetNextDataBuffered(vc);
 
 	vc.DecPosWrite += 4;
 
-	IncrementNextA(vc, voiceidx);
+	IncrementNextA(vc);
 	if ((vc.NextA & 7) == 0)
 	{
 		if (vc.LoopFlags & XAFLAG_LOOP_END)
@@ -162,7 +162,7 @@ static __forceinline void DecodeSamples(V_Core& thiscore, V_Voice& vc, uint core
 				vc.Stop();
 		}
 
-		IncrementNextA(vc, voiceidx);
+		IncrementNextA(vc);
 		vc.SBuffer = nullptr;
 	}
 }
@@ -179,14 +179,14 @@ static void __forceinline UpdatePitch(V_Voice& vc, uint coreidx, uint voiceidx)
 	vc.SP    += pitch;
 }
 
-static __forceinline void ConsumeSamples(V_Voice& vc, uint voiceidx)
+static __forceinline void ConsumeSamples(V_Voice& vc)
 {
 	int consumed   = vc.SP >> 12;
 	vc.SP         &= 0xfff;
 	vc.DecPosRead += consumed;
 }
 
-static __forceinline s32 GetVoiceValues(V_Voice& vc, uint voiceidx)
+static __forceinline s32 GetVoiceValues(V_Voice& vc)
 {
 	int phase = (vc.SP & 0x0ff0) >> 4;
 	s32 out   = 0;
@@ -327,7 +327,7 @@ static __forceinline StereoOut32 MixVoice(V_Core& thiscore, V_Voice& vc, uint co
 		if (vc.Noise)
 			Value = (s16)thiscore.NoiseOut;
 		else
-			Value = GetVoiceValues(vc, voiceidx);
+			Value = GetVoiceValues(vc);
 
 		/* Update and Apply ADSR  (applies to normal and noise sources) */
 
@@ -350,7 +350,7 @@ static __forceinline StereoOut32 MixVoice(V_Core& thiscore, V_Voice& vc, uint co
 	 * have to run through all the motions of updating the voice regardless of it's
 	 * audible status.  Otherwise IRQs might not trigger and emulation might fail. */
 	UpdatePitch(vc, coreidx, voiceidx);
-	ConsumeSamples(vc, voiceidx);
+	ConsumeSamples(vc);
 
 	/* Write-back of raw voice data (post ADSR applied) */
 	if (voiceidx == 1)
