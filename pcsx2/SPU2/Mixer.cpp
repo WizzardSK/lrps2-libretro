@@ -372,10 +372,10 @@ static __forceinline void MixCoreVoices(V_Core& thiscore, VoiceMixSet& dest, con
 		V_Voice& vc(Voices[idx]);
 		StereoOut32 VVal(MixVoice(thiscore, vc, coreidx, idx));
 		/* Note: Results from MixVoice are ranged at 16 bits. */
-		dest.Dry.Left  += VVal.Left  & VoiceData.DryL[idx].DryL;
-		dest.Dry.Right += VVal.Right & VoiceData.DryR[idx].DryR;
-		dest.Wet.Left  += VVal.Left  & VoiceData.WetL[idx].WetL;
-		dest.Wet.Right += VVal.Right & VoiceData.WetR[idx].WetR;
+		dest.Dry.Left  += VVal.Left  & VoiceData.DryL[idx];
+		dest.Dry.Right += VVal.Right & VoiceData.DryR[idx];
+		dest.Wet.Left  += VVal.Left  & VoiceData.WetL[idx];
+		dest.Wet.Right += VVal.Right & VoiceData.WetR[idx];
 	}
 }
 
