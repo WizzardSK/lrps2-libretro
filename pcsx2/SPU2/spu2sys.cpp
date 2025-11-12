@@ -159,7 +159,6 @@ void V_Core::Init(int index)
 		Voices[v].Volume.Right.Reg_VOL = 0;
 		Voices[v].Volume.Right.Counter = 0;
 		Voices[v].Volume.Right.Value   = 0;
-		Voices[v].SCurrent = 28;
 
 		Voices[v].ADSR.Counter = 0;
 		Voices[v].ADSR.Value = 0;
@@ -168,6 +167,10 @@ void V_Core::Init(int index)
 		Voices[v].NextA = 0x2801;
 		Voices[v].StartA = 0x2800;
 		Voices[v].LoopStartA = 0x2800;
+
+		memset(Voices[v].DecodeFifo, 0, sizeof(Voices[v].DecodeFifo));
+		Voices[v].DecPosRead = 0;
+		Voices[v].DecPosWrite = 0;
 	}
 
 	DMAICounter = 0;
@@ -258,26 +261,18 @@ __forceinline void TimeUpdate(u32 cClocks)
 						vc.ADSR.Counter = 0;
 						vc.ADSR.Value   = 0;
 
-						vc.SCurrent     = 28;
 						vc.LoopMode     = 0;
 
-						/* When SP >= 0 the next sample will be grabbed, 
-						 * we don't want this to happen instantly because 
-						 * in the case of pitch being 0 we want to delay getting
-						 * the next block header. This is a hack to work around the 
-						 * fact that unlike the HW we don't update the block header 
-						 * on every cycle. */
-						vc.SP           = -1;
+						vc.SP           = 0;
 
 						vc.LoopFlags    = 0;
 						vc.NextA        = vc.StartA | 1;
 						vc.Prev1        = 0;
 						vc.Prev2        = 0;
 
-						vc.PV1          = 0;
-						vc.PV2          = 0;
-						vc.PV3          = 0;
-						vc.PV4          = 0;
+						SBuffer         = nullptr;
+						DecPosRead      = 0;
+						DecPosWrite     = 0;
 						Cores[c].KeyOn &= ~(1 << v);
 					}
 				}
@@ -872,12 +867,10 @@ static void RegWrite_VoiceAddr(u16 value)
 			 * Soul Reaver 2
 			 * Wallace And Gromit: Curse Of The Were-Rabbit. */
 			thisvoice.NextA = ((u32)(value & 0x0F) << 16) | (thisvoice.NextA & 0xFFF8) | 1;
-			thisvoice.SCurrent = 28;
 			break;
 
 		case 5:
 			thisvoice.NextA = (thisvoice.NextA & 0x0F0000) | (value & 0xFFF8) | 1;
-			thisvoice.SCurrent = 28;
 			break;
 	}
 }
@@ -1101,7 +1094,6 @@ static void RegWrite_Core(u16 value)
 					Cores[1].Voices[v].Volume.Right.Reg_VOL = 0;
 					Cores[1].Voices[v].Volume.Right.Counter = 0;
 					Cores[1].Voices[v].Volume.Right.Value   = 0;
-					Cores[1].Voices[v].SCurrent = 28;
 
 					Cores[1].Voices[v].ADSR.Value = 0;
 					Cores[1].Voices[v].ADSR.Phase = 0;
