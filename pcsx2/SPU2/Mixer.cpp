@@ -173,10 +173,10 @@ static __forceinline void DecodeSamples(V_Core& thiscore, V_Voice& vc, uint voic
 static void __forceinline UpdatePitch(V_Voice& vc, uint coreidx, uint voiceidx)
 {
 	s32 pitch;
-	if ((vc.Modulated == 0) || (voiceidx == 0))
+	if ((vc.Modulated == 0) || (voiceidx == 0) || (voiceidx == 24))
 		pitch     = vc.Pitch;
 	else
-		pitch     = std::clamp((vc.Pitch * (32768 + Cores[coreidx].Voices[voiceidx - 1].OutX)) >> 15, 0, 0x3fff);
+		pitch     = std::clamp((vc.Pitch * (32768 + Voices[voiceidx - 1].OutX)) >> 15, 0, 0x3fff);
 
 	pitch     = std::min(pitch, 0x3FFF);
 	vc.SP    += pitch;
@@ -368,15 +368,14 @@ static __forceinline void MixCoreVoices(V_Core& thiscore, VoiceMixSet& dest, con
 {
 	for (uint voiceidx = 0; voiceidx < SPU2_NUM_VOICES; ++voiceidx)
 	{
-		V_Voice& vc(thiscore.Voices[voiceidx]);
-		StereoOut32 VVal(MixVoice(thiscore, vc, coreidx, voiceidx));
-
+		int idx = voiceidx + (coreidx * 24);
+		V_Voice& vc(Voices[idx]);
+		StereoOut32 VVal(MixVoice(thiscore, vc, coreidx, idx));
 		/* Note: Results from MixVoice are ranged at 16 bits. */
-
-		dest.Dry.Left  += VVal.Left  & thiscore.VoiceGates[voiceidx].DryL;
-		dest.Dry.Right += VVal.Right & thiscore.VoiceGates[voiceidx].DryR;
-		dest.Wet.Left  += VVal.Left  & thiscore.VoiceGates[voiceidx].WetL;
-		dest.Wet.Right += VVal.Right & thiscore.VoiceGates[voiceidx].WetR;
+		dest.Dry.Left  += VVal.Left  & VoiceGates[idx].DryL;
+		dest.Dry.Right += VVal.Right & VoiceGates[idx].DryR;
+		dest.Wet.Left  += VVal.Left  & VoiceGates[idx].WetL;
+		dest.Wet.Right += VVal.Right & VoiceGates[idx].WetR;
 	}
 }
 

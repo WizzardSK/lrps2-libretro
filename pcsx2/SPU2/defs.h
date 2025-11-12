@@ -75,6 +75,8 @@ struct VoiceMixSet
 
 
 extern V_Core Cores[2];
+extern V_Voice Voices[48];
+extern V_VoiceGates VoiceGates[48];
 extern V_SPDIF Spdif;
 
 // Output Buffer Writing Position (the same for all data);
@@ -290,10 +292,6 @@ struct V_Core
 {
 	u32 Index; // Core index identifier.
 
-	// Voice Gates -- These are SSE-related values, and must always be
-	// first to ensure 16 byte alignment
-
-	V_VoiceGates VoiceGates[SPU2_NUM_VOICES];
 	V_CoreGates DryGate;
 	V_CoreGates WetGate;
 
@@ -302,7 +300,6 @@ struct V_Core
 	V_VolumeLR InpVol; // Volume for Sound Data Input
 	V_VolumeLR FxVol; // Volume for Output from Effects
 
-	V_Voice Voices[SPU2_NUM_VOICES];
 
 	u32 IRQA; // Interrupt Address
 	u32 TSA; // DMA Transfer Start Address
