@@ -19,20 +19,6 @@
 #include "spu2.h"
 #include "interpolate_table.h"
 
-/* LOOP/END sets the ENDX bit and sets NAX to LSA, and the voice is muted if LOOP is not set
- * LOOP seems to only have any effect on the block with LOOP/END set, where it prevents muting the voice
- * (the documented requirement that every block in a loop has the LOOP bit set is nonsense according to tests)
- * LOOP/START sets LSA to NAX unless LSA was written manually since sound generation started
- * (see LoopMode, the method by which this is achieved on the real SPU2 is unknown) */
-#define XAFLAG_LOOP_END (1ul << 0)
-#define XAFLAG_LOOP (1ul << 1)
-#define XAFLAG_LOOP_START (1ul << 2)
-
-/* Decoded PCM data, used to cache the decoded data so that it needn't be decoded
- * multiple times.  Cache chunks are decoded when the mixer requests the blocks, and
- * invalided when DMA transfers and memory writes are performed. */
-PcmCacheEntry pcm_cache_data[pcm_BlockCount];
-
 static void __forceinline XA_decode_block(s16* buffer, const s16* block, s32& prev1, s32& prev2)
 {
 	static const s32 tbl_XA_Factor[16][2] =
@@ -41,21 +27,20 @@ static void __forceinline XA_decode_block(s16* buffer, const s16* block, s32& pr
 		{60, 0},
 		{115, -52},
 		{98, -55},
-		{122, -60}
-	};
-	const s32 header     = *block;
-	const s32 shift      = (header & 0xF) + 16;
-	const int id         = header >> 4 & 0xF;
-	const s32 pred1      = tbl_XA_Factor[id][0];
-	const s32 pred2      = tbl_XA_Factor[id][1];
+		{122, -60}};
+	const s32 header = *block;
+	const s32 shift = (header & 0xF) + 16;
+	const int id = header >> 4 & 0xF;
+	const s32 pred1 = tbl_XA_Factor[id][0];
+	const s32 pred2 = tbl_XA_Factor[id][1];
 
 	const s8* blockbytes = (s8*)&block[1];
-	const s8* blockend   = &blockbytes[13];
+	const s8* blockend = &blockbytes[13];
 
 	for (; blockbytes <= blockend; ++blockbytes)
 	{
 		s32 data = ((*blockbytes) << 28) & 0xF0000000;
-		s32 pcm  = (data >> shift) + (((pred1 * prev1) + (pred2 * prev2) + 32) >> 6);
+		s32 pcm = (data >> shift) + (((pred1 * prev1) + (pred2 * prev2) + 32) >> 6);
 
 		pcm = std::clamp<s32>(pcm, -0x8000, 0x7fff);
 		*(buffer++) = pcm;
@@ -86,13 +71,27 @@ static void __forceinline IncrementNextA(V_Voice& vc)
 	vc.NextA &= 0xFFFFF;
 }
 
+// decoded pcm data, used to cache the decoded data so that it needn't be decoded
+// multiple times.  Cache chunks are decoded when the mixer requests the blocks, and
+// invalided when DMA transfers and memory writes are performed.
+PcmCacheEntry pcm_cache_data[pcm_BlockCount];
+
+// LOOP/END sets the ENDX bit and sets NAX to LSA, and the voice is muted if LOOP is not set
+// LOOP seems to only have any effect on the block with LOOP/END set, where it prevents muting the voice
+// (the documented requirement that every block in a loop has the LOOP bit set is nonsense according to tests)
+// LOOP/START sets LSA to NAX unless LSA was written manually since sound generation started
+// (see LoopMode, the method by which this is achieved on the real SPU2 is unknown)
+#define XAFLAG_LOOP_END (1ul << 0)
+#define XAFLAG_LOOP (1ul << 1)
+#define XAFLAG_LOOP_START (1ul << 2)
+
 static __forceinline s32 GetNextDataBuffered(V_Core& thiscore, V_Voice& vc, uint voiceidx)
 {
 	if ((vc.SCurrent & 3) == 0)
 	{
 		IncrementNextA(vc);
 
-		if ((vc.NextA & 7) == 0) /* vc.SCurrent == 24 equivalent */
+		if ((vc.NextA & 7) == 0) // vc.SCurrent == 24 equivalent
 		{
 			if (vc.LoopFlags & XAFLAG_LOOP_END)
 			{
@@ -105,7 +104,7 @@ static __forceinline s32 GetNextDataBuffered(V_Core& thiscore, V_Voice& vc, uint
 				}
 			}
 			else
-				vc.NextA++; /* no, don't IncrementNextA here.  We haven't read the header yet. */
+				vc.NextA++; // no, don't IncrementNextA here.  We haven't read the header yet.
 		}
 	}
 
@@ -113,15 +112,14 @@ static __forceinline s32 GetNextDataBuffered(V_Core& thiscore, V_Voice& vc, uint
 	{
 		vc.SCurrent = 0;
 
-		/* We'll need the loop flags and 
-		 * buffer pointers regardless of cache status: */
+		// We'll need the loop flags and buffer pointers regardless of cache status:
 
 		for (int i = 0; i < 2; i++)
 			if (Cores[i].IRQEnable && Cores[i].IRQA == (vc.NextA & 0xFFFF8))
 				has_to_call_irq[i] = true;
 
 		s16* memptr = GetMemPtr(vc.NextA & 0xFFFF8);
-		vc.LoopFlags = *memptr >> 8; /* grab loop flags from the upper byte. */
+		vc.LoopFlags = *memptr >> 8; // grab loop flags from the upper byte.
 
 		if ((vc.LoopFlags & XAFLAG_LOOP_START) && !vc.LoopMode)
 			vc.LoopStartA = vc.NextA & 0xFFFF8;
@@ -132,15 +130,15 @@ static __forceinline s32 GetNextDataBuffered(V_Core& thiscore, V_Voice& vc, uint
 
 		if (cacheLine.Validated && vc.Prev1 == cacheLine.Prev1 && vc.Prev2 == cacheLine.Prev2)
 		{
-			/* Cached block!  Read from the cache directly.
-			 * Make sure to propagate the prev1/prev2 ADPCM: */
+			// Cached block!  Read from the cache directly.
+			// Make sure to propagate the prev1/prev2 ADPCM:
 
 			vc.Prev1 = vc.SBuffer[27];
 			vc.Prev2 = vc.SBuffer[26];
 		}
 		else
 		{
-			/* Only flag the cache if it's a non-dynamic memory range. */
+			// Only flag the cache if it's a non-dynamic memory range.
 			if (vc.NextA >= SPU2_DYN_MEMLINE)
 			{
 				cacheLine.Validated = true;
@@ -159,7 +157,7 @@ static __forceinline void GetNextDataDummy(V_Core& thiscore, V_Voice& vc, uint v
 {
 	IncrementNextA(vc);
 
-	if ((vc.NextA & 7) == 0) /* vc.SCurrent == 24 equivalent */
+	if ((vc.NextA & 7) == 0) // vc.SCurrent == 24 equivalent
 	{
 		if (vc.LoopFlags & XAFLAG_LOOP_END)
 		{
@@ -167,7 +165,7 @@ static __forceinline void GetNextDataDummy(V_Core& thiscore, V_Voice& vc, uint v
 			vc.NextA = vc.LoopStartA | 1;
 		}
 		else
-			vc.NextA++; /* no, don't IncrementNextA here.  We haven't read the header yet. */
+			vc.NextA++; // no, don't IncrementNextA here.  We haven't read the header yet.
 	}
 
 	if (vc.SCurrent == 28)
@@ -176,7 +174,7 @@ static __forceinline void GetNextDataDummy(V_Core& thiscore, V_Voice& vc, uint v
 			if (Cores[i].IRQEnable && Cores[i].IRQA == (vc.NextA & 0xFFFF8))
 				has_to_call_irq[i] = true;
 
-		vc.LoopFlags = *GetMemPtr(vc.NextA & 0xFFFF8) >> 8; /* grab loop flags from the upper byte. */
+		vc.LoopFlags = *GetMemPtr(vc.NextA & 0xFFFF8) >> 8; // grab loop flags from the upper byte.
 
 		if ((vc.LoopFlags & XAFLAG_LOOP_START) && !vc.LoopMode)
 			vc.LoopStartA = vc.NextA & 0xFFFF8;
@@ -191,6 +189,10 @@ static __forceinline void GetNextDataDummy(V_Core& thiscore, V_Voice& vc, uint v
 static void __forceinline UpdatePitch(V_Voice& vc, uint coreidx, uint voiceidx)
 {
 	s32 pitch;
+	// [Air] : re-ordered comparisons: Modulated is much more likely to be zero than voice,
+	//   and so the way it was before it's have to check both voice and modulated values
+	//   most of the time.  Now it'll just check Modulated and short-circuit past the voice
+	//   check (not that it amounts to much, but eh every little bit helps).
 	if ((vc.Modulated == 0) || (voiceidx == 0))
 		pitch     = vc.Pitch;
 	else
@@ -225,8 +227,8 @@ static __forceinline s32 GetVoiceValues(V_Core& thiscore, V_Voice& vc, uint voic
 	 + ((interpTable[i][3] * pv1) >> 15));
 }
 
-/* This is Dr. Hell's noise algorithm as implemented in pcsxr
- * Supposedly this is 100% accurate */
+// This is Dr. Hell's noise algorithm as implemented in pcsxr
+// Supposedly this is 100% accurate
 static __forceinline void UpdateNoise(V_Core& thiscore)
 {
 	static const uint8_t noise_add[64] = {
@@ -264,6 +266,10 @@ static __forceinline void UpdateNoise(V_Core& thiscore)
 	}
 }
 
+/////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                     //
+
 /* writes a signed value to the SPU2 RAM
  * Performs no cache invalidation -- use only for dynamic memory ranges
  * of the SPU2 (between 0x0000 and SPU2_DYN_MEMLINE) */
@@ -295,14 +301,14 @@ static void V_VolumeSlide_Update(V_VolumeSlide &vs)
 			counter_inc >>= 2;
 	}
 
-	/* Allow counter_inc to be zero only in when all bits
-	 * of the rate field are set */
+	// Allow counter_inc to be zero only in when all bits
+	// of the rate field are set
 	if (vs.Step != 3 && vs.Shift != 0x1f)
 		counter_inc = std::max<u32>(1, counter_inc);
 	vs.Counter += counter_inc;
 
-	/* If negative phase "increase" to -0x8000 or "decrease" towards 0
-	 * Unless in Exp + Decr modes */
+	// If negative phase "increase" to -0x8000 or "decrease" towards 0
+	// Unless in Exp + Decr modes
 	if (!(vs.Exp && vs.Decr) && vs.Phase)
 		level_inc = -level_inc;
 
@@ -336,18 +342,18 @@ static __forceinline StereoOut32 MixVoice(V_Core& thiscore, V_Voice& vc, uint co
 	StereoOut32 voiceOut;
 	s32 Value      = 0;
 
-	/* Most games don't use much volume slide effects.  So only call the UpdateVolume
-	 * methods when needed by checking the flag outside the method here...
-	 * (Note: Ys 6 : Ark of Nephistm uses these effects) */
+	// Most games don't use much volume slide effects.  So only call the UpdateVolume
+	// methods when needed by checking the flag outside the method here...
+	// (Note: Ys 6 : Ark of Nephistm uses these effects)
 	
 	if (vc.Volume.Left.Enable)
 		V_VolumeSlide_Update(vc.Volume.Left);
 	if (vc.Volume.Right.Enable)
 		V_VolumeSlide_Update(vc.Volume.Right);
 
-	/* SPU2 Note: The spu2 continues to process voices for eternity, always, so we
-	 * have to run through all the motions of updating the voice regardless of it's
-	 * audible status.  Otherwise IRQs might not trigger and emulation might fail. */
+	// SPU2 Note: The spu2 continues to process voices for eternity, always, so we
+	// have to run through all the motions of updating the voice regardless of it's
+	// audible status.  Otherwise IRQs might not trigger and emulation might fail.
 
 	UpdatePitch(vc, coreidx, voiceidx);
 
@@ -379,10 +385,10 @@ static __forceinline StereoOut32 MixVoice(V_Core& thiscore, V_Voice& vc, uint co
 	else
 	{
 		while (vc.SP >= 0)
-			GetNextDataDummy(thiscore, vc, voiceidx); /* Dummy is enough */
+			GetNextDataDummy(thiscore, vc, voiceidx); // Dummy is enough
 	}
 
-	/* Write-back of raw voice data (post ADSR applied) */
+	// Write-back of raw voice data (post ADSR applied)
 	if (voiceidx == 1)
 		spu2M_WriteFast(((0 == coreidx) ? 0x400 : 0xc00) + OutPos, Value);
 	else if (voiceidx == 3)
@@ -400,7 +406,7 @@ static __forceinline void MixCoreVoices(VoiceMixSet& dest, const uint coreidx)
 		V_Voice& vc(thiscore.Voices[voiceidx]);
 		StereoOut32 VVal(MixVoice(thiscore, vc, coreidx, voiceidx));
 
-		/* Note: Results from MixVoice are ranged at 16 bits. */
+		// Note: Results from MixVoice are ranged at 16 bits.
 
 		dest.Dry.Left  += VVal.Left  & thiscore.VoiceGates[voiceidx].DryL;
 		dest.Dry.Right += VVal.Right & thiscore.VoiceGates[voiceidx].DryR;
@@ -409,52 +415,49 @@ static __forceinline void MixCoreVoices(VoiceMixSet& dest, const uint coreidx)
 	}
 }
 
-static __forceinline StereoOut32 MixCore(const uint coreidx,
-		const VoiceMixSet& inVoices, const StereoOut32& Input, const StereoOut32& Ext)
+StereoOut32 V_Core::Mix(const VoiceMixSet& inVoices, const StereoOut32& Input, const StereoOut32& Ext)
 {
-	StereoOut32 TD, TW, RV;
+	StereoOut32 TD;
 	VoiceMixSet Voices;
-	V_Core& thiscore(Cores[coreidx]);
-
 	if (MasterVol.Left.Enable)
 		V_VolumeSlide_Update(MasterVol.Left);
 	if (MasterVol.Right.Enable)
 		V_VolumeSlide_Update(MasterVol.Right);
-	UpdateNoise(thiscore);
+	UpdateNoise(*this);
 
-	/* Saturate final result to standard 16 bit range. */
+	// Saturate final result to standard 16 bit range.
 	Voices.Dry.Left  = std::clamp(inVoices.Dry.Left, -0x8000, 0x7fff);
 	Voices.Dry.Right = std::clamp(inVoices.Dry.Right, -0x8000, 0x7fff);
 	Voices.Wet.Left  = std::clamp(inVoices.Wet.Left, -0x8000, 0x7fff);
 	Voices.Wet.Right = std::clamp(inVoices.Wet.Right, -0x8000, 0x7fff);
 
-	/* Write Mixed results To Output Area */
-	if (thiscore.Index == 0)
+	// Write Mixed results To Output Area
+	if (Index == 0)
 	{
-		spu2M_WriteFast(0x1000 + thiscore.OutPos, Voices.Dry.Left);
-		spu2M_WriteFast(0x1200 + thiscore.OutPos, Voices.Dry.Right);
-		spu2M_WriteFast(0x1400 + thiscore.OutPos, Voices.Wet.Left);
-		spu2M_WriteFast(0x1600 + thiscore.OutPos, Voices.Wet.Right);
+		spu2M_WriteFast(0x1000 + OutPos, Voices.Dry.Left);
+		spu2M_WriteFast(0x1200 + OutPos, Voices.Dry.Right);
+		spu2M_WriteFast(0x1400 + OutPos, Voices.Wet.Left);
+		spu2M_WriteFast(0x1600 + OutPos, Voices.Wet.Right);
 	}
 	else
 	{
-		spu2M_WriteFast(0x1800 + thiscore.OutPos, Voices.Dry.Left);
-		spu2M_WriteFast(0x1A00 + thiscore.OutPos, Voices.Dry.Right);
-		spu2M_WriteFast(0x1C00 + thiscore.OutPos, Voices.Wet.Left);
-		spu2M_WriteFast(0x1E00 + thiscore.OutPos, Voices.Wet.Right);
+		spu2M_WriteFast(0x1800 + OutPos, Voices.Dry.Left);
+		spu2M_WriteFast(0x1A00 + OutPos, Voices.Dry.Right);
+		spu2M_WriteFast(0x1C00 + OutPos, Voices.Wet.Left);
+		spu2M_WriteFast(0x1E00 + OutPos, Voices.Wet.Right);
 	}
 
-	/* Mix in the Input data */
-	TD.Left   = Input.Left  & thiscore.DryGate.InpL;
-	TD.Right  = Input.Right & thiscore.DryGate.InpR;
+	// Mix in the Input data
+	TD.Left   = Input.Left & DryGate.InpL;
+	TD.Right  = Input.Right & DryGate.InpR;
 
-	/* Mix in the Voice data */
-	TD.Left  += Voices.Dry.Left  & thiscore.DryGate.SndL;
-	TD.Right += Voices.Dry.Right & thiscore.DryGate.SndR;
+	// Mix in the Voice data
+	TD.Left  += Voices.Dry.Left & DryGate.SndL;
+	TD.Right += Voices.Dry.Right & DryGate.SndR;
 
-	/* Mix in the External (nothing/core0) data */
-	TD.Left  += Ext.Left  & thiscore.DryGate.ExtL;
-	TD.Right += Ext.Right & thiscore.DryGate.ExtR;
+	// Mix in the External (nothing/core0) data
+	TD.Left  += Ext.Left & DryGate.ExtL;
+	TD.Right += Ext.Right & DryGate.ExtR;
 
 	// ----------------------------------------------------------------------------
 	//    Reverberation Effects Processing
@@ -474,22 +477,23 @@ static __forceinline StereoOut32 MixCore(const uint coreidx,
 	//
 	// On the other hand, updating the buffer is cheap and easy, so might as well. ;)
 
+	StereoOut32 TW;
 
 	/* Mix Input, Voice, and External data: */
-	TW.Left  = Input.Left  & thiscore.WetGate.InpL;
-	TW.Right = Input.Right & thiscore.WetGate.InpR;
+	TW.Left  = Input.Left & WetGate.InpL;
+	TW.Right = Input.Right & WetGate.InpR;
 
-	TW.Left  += Voices.Wet.Left  & thiscore.WetGate.SndL;
-	TW.Right += Voices.Wet.Right & thiscore.WetGate.SndR;
-	TW.Left  += Ext.Left  & thiscore.WetGate.ExtL;
-	TW.Right += Ext.Right & thiscore.WetGate.ExtR;
+	TW.Left  += Voices.Wet.Left & WetGate.SndL;
+	TW.Right += Voices.Wet.Right & WetGate.SndR;
+	TW.Left  += Ext.Left & WetGate.ExtL;
+	TW.Right += Ext.Right & WetGate.ExtR;
 
-	RV        = thiscore.DoReverb(TW);
+	StereoOut32 RV  = DoReverb(TW);
 
 	/* Mix Dry + Wet
 	 * (master volume is applied later to the result of both outputs added together). */
-	TD.Left  += (RV.Left  * thiscore.FxVol.Left)  >> 15;
-	TD.Right += (RV.Right * thiscore.FxVol.Right) >> 15;
+	TD.Left  += (RV.Left  * FxVol.Left)  >> 15;
+	TD.Right += (RV.Right * FxVol.Right) >> 15;
 	return TD;
 }
 
@@ -503,7 +507,6 @@ void Mix(short *out_left, short *out_right)
 	StereoOut32 Out;
 	StereoOut32 empty;
 	StereoOut32 Ext;
-	VoiceMixSet VoiceData[2]; /* Mixed voice data for each core. */
 	/* Note: Playmode 4 is SPDIF, which overrides other inputs. */
 	StereoOut32 InputData[2];
 	/* SPDIF is on Core 0:
@@ -527,6 +530,7 @@ void Mix(short *out_left, short *out_right)
 		InputData[0].Right = (data.Right * Cores[0].InpVol.Right) >> 15;
 	}
 
+	VoiceMixSet VoiceData[2]; /* Mixed voice data for each core. */
 	VoiceData[0].Dry.Left    = 0;
 	VoiceData[0].Dry.Right   = 0;
 	VoiceData[0].Wet.Left    = 0;
@@ -538,7 +542,7 @@ void Mix(short *out_left, short *out_right)
 	MixCoreVoices(VoiceData[0], 0);
 	MixCoreVoices(VoiceData[1], 1);
 
-	Ext = MixCore(0, VoiceData[0], InputData[0], empty);
+	Ext = Cores[0].Mix(VoiceData[0], InputData[0], empty);
 
 	if ((PlayMode & 4) || (Cores[0].Mute != 0))
 		Ext = empty;
@@ -556,7 +560,7 @@ void Mix(short *out_left, short *out_right)
 
 	Ext.Left  = (Ext.Left  * Cores[1].ExtVol.Left)  >> 15;
 	Ext.Right = (Ext.Right * Cores[1].ExtVol.Right) >> 15;
-	Out       = MixCore(1, VoiceData[1], InputData[1], Ext);
+	Out       = Cores[1].Mix(VoiceData[1], InputData[1], Ext);
 
 	/* Experimental CDDA support
 	 * The CDDA overrides all other mixer output.  It's a direct feed */
