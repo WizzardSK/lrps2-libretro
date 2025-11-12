@@ -65,36 +65,14 @@ struct VoiceMixSet
 	StereoOut32 Dry, Wet;
 };
 
-
-extern V_Core Cores[2];
-extern V_Voice Voices[48];
-extern V_VoiceData VoiceData;
-extern V_SPDIF Spdif;
-
-// Output Buffer Writing Position (the same for all data);
-extern u16 OutPos;
-// Input Buffer Reading Position (the same for all data);
-extern u16 InputPos;
-// SPU Mixing Cycles ("Ticks mixed" counter)
-extern u32 Cycles;
-// DC Filter state
-extern StereoOut32 DCFilterIn, DCFilterOut;
-
-extern s16 spu2regs[0x010000 / sizeof(s16)];
-extern s16 _spu2mem[0x200000 / sizeof(s16)];
-extern int PlayMode;
-
 #define GetMemPtr(addr) (_spu2mem + (addr))
 #define spu2M_Read(addr) (*GetMemPtr((addr) & 0xfffff))
 
 // --------------------------------------------------------------------------------------
-//  SPU2 Register Table LUT
-// --------------------------------------------------------------------------------------
-extern const std::array<u16*, 0x401> regtable;
-
-// --------------------------------------------------------------------------------------
 //  SPU2 Memory Indexers
 // --------------------------------------------------------------------------------------
+extern s16 spu2regs[0x010000 / sizeof(s16)];
+extern s16 _spu2mem[0x200000 / sizeof(s16)];
 
 #define spu2Rs16(mmem) (*(s16*)((s8*)spu2regs + ((mmem)&0x1fff)))
 #define spu2Ru16(mmem) (*(u16*)((s8*)spu2regs + ((mmem)&0x1fff)))
@@ -423,8 +401,6 @@ MULTI_ISA_DEF(
 extern StereoOut32 (*ReverbUpsample)(V_Core& core);
 extern s32 (*ReverbDownsample)(V_Core& core, bool right);
 
-extern bool has_to_call_irq[2];
-extern bool has_to_call_irq_dma[2];
 
 namespace SPU2Savestate
 {
@@ -432,7 +408,7 @@ namespace SPU2Savestate
 
 	extern void FreezeIt(DataBlock& spud);
 	extern s32 ThawIt(DataBlock& spud);
-	extern s32 SizeIt();
+	extern s32 SizeIt(void);
 } // namespace SPU2Savestate
 
 // --------------------------------------------------------------------------------------
@@ -467,3 +443,27 @@ struct PcmCacheEntry
 };
 
 extern PcmCacheEntry pcm_cache_data[pcm_BlockCount];
+
+extern V_Core Cores[2];
+extern V_Voice Voices[48];
+extern V_VoiceData VoiceData;
+extern V_SPDIF Spdif;
+
+/* Output Buffer Writing Position (the same for all data); */
+extern u16 OutPos;
+/* Input Buffer Reading Position (the same for all data); */
+extern u16 InputPos;
+/* SPU Mixing Cycles ("Ticks mixed" counter) */
+extern u32 Cycles;
+/* DC Filter state */
+extern StereoOut32 DCFilterIn, DCFilterOut;
+
+extern int PlayMode;
+
+// --------------------------------------------------------------------------------------
+//  SPU2 Register Table LUT
+// --------------------------------------------------------------------------------------
+extern const std::array<u16*, 0x401> regtable;
+
+extern bool has_to_call_irq[2];
+extern bool has_to_call_irq_dma[2];
