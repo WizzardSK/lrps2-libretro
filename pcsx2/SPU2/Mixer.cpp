@@ -19,8 +19,6 @@
 #include "spu2.h"
 #include "interpolate_table.h"
 
-#define CLAMP(val, minval, maxval) (std::min(maxval, std::max(minval, val)))
-
 static void __forceinline XA_decode_block(s16* buffer, const s16* block, s32& prev1, s32& prev2)
 {
 	static const s32 tbl_XA_Factor[16][2] =
@@ -203,7 +201,7 @@ static void __forceinline UpdatePitch(V_Voice& vc, uint coreidx, uint voiceidx)
 		pitch      = CLAMP(newval, 0, 0x3fff);
 	}
 
-	pitch     = std::min(pitch, 0x3FFF);
+	pitch     = MIN(pitch, 0x3FFF);
 	vc.SP    += pitch;
 }
 
@@ -295,8 +293,8 @@ static void V_VolumeSlide_Update(V_VolumeSlide &vs)
 	if (vs.Decr)
 		step_size = ~step_size;
 
-	u32 counter_inc = 0x8000 >> std::max(0, vs.Shift - 11);
-	s32 level_inc = step_size << std::max(0, 11 - vs.Shift);
+	u32 counter_inc = 0x8000 >> MAX(0, vs.Shift - 11);
+	s32 level_inc = step_size << MAX(0, 11 - vs.Shift);
 
 	if (vs.Exp)
 	{
@@ -309,11 +307,12 @@ static void V_VolumeSlide_Update(V_VolumeSlide &vs)
 	// Allow counter_inc to be zero only in when all bits
 	// of the rate field are set
 	if (vs.Step != 3 && vs.Shift != 0x1f)
-		counter_inc = std::max<u32>(1, counter_inc);
+		counter_inc = MAX(1, counter_inc);
 	vs.Counter += counter_inc;
 
-	// If negative phase "increase" to -0x8000 or "decrease" towards 0
-	// Unless in Exp + Decr modes
+	/* If negative phase "increase" to -0x8000 
+	 * or "decrease" towards 0
+	 * Unless in Exp + Decr modes */
 	if (!(vs.Exp && vs.Decr) && vs.Phase)
 		level_inc = -level_inc;
 
@@ -322,7 +321,7 @@ static void V_VolumeSlide_Update(V_VolumeSlide &vs)
 		vs.Counter = 0;
 
 		if (!vs.Decr)
-			vs.Value = std::clamp<s32>(vs.Value + level_inc, INT16_MIN, INT16_MAX);
+			vs.Value = CLAMP(vs.Value + level_inc, INT16_MIN, INT16_MAX);
 		else
 		{
 			if (vs.Phase)
@@ -334,10 +333,10 @@ static void V_VolumeSlide_Update(V_VolumeSlide &vs)
 					low  = 0;
 					high = INT16_MAX;
 				}
-				vs.Value = std::clamp<s32>(vs.Value + level_inc, low, high);
+				vs.Value = CLAMP(vs.Value + level_inc, low, high);
 			}
 			else
-				vs.Value = std::clamp<s32>(vs.Value + level_inc, 0, INT16_MAX);
+				vs.Value = CLAMP(vs.Value + level_inc, 0, INT16_MAX);
 		}
 	}
 }

@@ -18,8 +18,6 @@
 #include "Global.h"
 #include "../GS/GSVector.h"
 
-#define CLAMP(val, minval, maxval) (std::min(maxval, std::max(minval, val)))
-
 __forceinline s32 V_Core::RevbGetIndexer(s32 offset)
 {
 	u32 start = EffectsStartA & 0x3f'ffff;

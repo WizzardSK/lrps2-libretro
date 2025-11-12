@@ -23,6 +23,18 @@
 
 #include <array>
 
+#ifndef MAX
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#endif
+
+#ifndef MIN
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#endif
+
+#ifndef CLAMP
+#define CLAMP(val, minval, maxval) (MIN(maxval, MAX(minval, val)))
+#endif
+
 struct V_SPDIF
 {
 	u16 Out;

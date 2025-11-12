@@ -3,26 +3,10 @@
 #include "../GS/GSVector.h"
 #include "Global.h"
 
-#ifndef MAX
-/**
- * @return \c a or \c b, whichever is larger.
- */
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
-#endif
-
-#ifndef MIN
-/**
- * @return \c a or \c b, whichever is smaller.
- */
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-#endif
-
-#define CLAMP(val, minval, maxval) (MIN(maxval, MAX(minval, val)))
-
 MULTI_ISA_UNSHARED_START
 
 static constexpr u32 NUM_TAPS = 39;
-// 39 tap filter, the 0's could be optimized out
+/* 39 tap filter, the 0's could be optimized out */
 static constexpr std::array<s16, 48> filter_down_coefs alignas(32) = {
 	-1,
 	0,
