@@ -54,7 +54,7 @@ void SPU2Savestate::FreezeIt(DataBlock& spud)
 	memcpy(spud.mem, _spu2mem, sizeof(spud.mem));
 
 	memcpy(spud.Cores, Cores, sizeof(Cores));
-	memcpy(spud.VoiceData, VoiceData, sizeof(VoiceData));
+	memcpy(&spud.VoiceData, &VoiceData, sizeof(VoiceData));
 	memcpy(spud.Voices, Voices, sizeof(Voices));
 	memcpy(&spud.Spdif, &Spdif, sizeof(Spdif));
 
