@@ -270,9 +270,9 @@ __forceinline void TimeUpdate(u32 cClocks)
 						vc.Prev1        = 0;
 						vc.Prev2        = 0;
 
-						SBuffer         = nullptr;
-						DecPosRead      = 0;
-						DecPosWrite     = 0;
+						vc.SBuffer      = nullptr;
+						vc.DecPosRead   = 0;
+						vc.DecPosWrite  = 0;
 						Cores[c].KeyOn &= ~(1 << v);
 					}
 				}
