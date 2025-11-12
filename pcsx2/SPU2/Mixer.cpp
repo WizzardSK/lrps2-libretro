@@ -136,7 +136,7 @@ static __forceinline void UpdateBlockHeader(V_Voice& vc)
 		vc.LoopStartA = vc.NextA & 0xFFFF8;
 }
 
-static __forceinline void DecodeSamples(V_Core& thiscore, V_Voice& vc, uint coreidx, uint voiceidx)
+static __forceinline void DecodeSamples(V_Core& thiscore, V_Voice& vc, uint voiceidx)
 {
 	/* Update the block header on every audio frame */
 	UpdateBlockHeader(vc);
@@ -320,7 +320,7 @@ static __forceinline StereoOut32 MixVoice(V_Core& thiscore, V_Voice& vc, uint co
 	if (vc.Volume.Right.Enable)
 		V_VolumeSlide_Update(vc.Volume.Right);
 
-	DecodeSamples(thiscore, vc, coreidx, voiceidx);
+	DecodeSamples(thiscore, vc, voiceidx);
 
 	voiceOut.Left  = 0;
 	voiceOut.Right = 0;
@@ -364,10 +364,8 @@ static __forceinline StereoOut32 MixVoice(V_Core& thiscore, V_Voice& vc, uint co
 	return voiceOut;
 }
 
-static __forceinline void MixCoreVoices(VoiceMixSet& dest, const uint coreidx)
+static __forceinline void MixCoreVoices(V_Core& thiscore, VoiceMixSet& dest, const uint coreidx)
 {
-	V_Core& thiscore(Cores[coreidx]);
-
 	for (uint voiceidx = 0; voiceidx < SPU2_NUM_VOICES; ++voiceidx)
 	{
 		V_Voice& vc(thiscore.Voices[voiceidx]);
@@ -382,17 +380,16 @@ static __forceinline void MixCoreVoices(VoiceMixSet& dest, const uint coreidx)
 	}
 }
 
-static __forceinline StereoOut32 MixCore(const uint coreidx,
+static __forceinline StereoOut32 MixCore(V_Core& thiscore, const uint coreidx,
 		const VoiceMixSet& inVoices, const StereoOut32& Input, const StereoOut32& Ext)
 {
 	StereoOut32 TD, TW, RV;
 	VoiceMixSet Voices;
-	V_Core& thiscore(Cores[coreidx]);
 
-	if (MasterVol.Left.Enable)
-		V_VolumeSlide_Update(MasterVol.Left);
-	if (MasterVol.Right.Enable)
-		V_VolumeSlide_Update(MasterVol.Right);
+	if (thiscore.MasterVol.Left.Enable)
+		V_VolumeSlide_Update(thiscore.MasterVol.Left);
+	if (thiscore.MasterVol.Right.Enable)
+		V_VolumeSlide_Update(thiscore.MasterVol.Right);
 	UpdateNoise(thiscore);
 
 	/* Saturate final result to standard 16 bit range. */
@@ -508,10 +505,10 @@ void Mix(short *out_left, short *out_right)
 	VoiceData[1].Dry.Right   = 0;
 	VoiceData[1].Wet.Left    = 0;
 	VoiceData[1].Wet.Right   = 0;
-	MixCoreVoices(VoiceData[0], 0);
-	MixCoreVoices(VoiceData[1], 1);
+	MixCoreVoices(Cores[0], VoiceData[0], 0);
+	MixCoreVoices(Cores[1], VoiceData[1], 1);
 
-	Ext = MixCore(0, VoiceData[0], InputData[0], empty);
+	Ext = MixCore(Cores[0], 0, VoiceData[0], InputData[0], empty);
 
 	if ((PlayMode & 4) || (Cores[0].Mute != 0))
 		Ext = empty;
@@ -529,7 +526,7 @@ void Mix(short *out_left, short *out_right)
 
 	Ext.Left  = (Ext.Left  * Cores[1].ExtVol.Left)  >> 15;
 	Ext.Right = (Ext.Right * Cores[1].ExtVol.Right) >> 15;
-	Out       = MixCore(1, VoiceData[1], InputData[1], Ext);
+	Out       = MixCore(Cores[1], 1, VoiceData[1], InputData[1], Ext);
 
 	/* Experimental CDDA support
 	 * The CDDA overrides all other mixer output.  It's a direct feed */
