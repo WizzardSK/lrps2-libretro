@@ -19,6 +19,8 @@
 #include "spu2.h"
 #include "interpolate_table.h"
 
+#define CLAMP(val, minval, maxval) (std::min(maxval, std::max(minval, val)))
+
 static void __forceinline XA_decode_block(s16* buffer, const s16* block, s32& prev1, s32& prev2)
 {
 	static const s32 tbl_XA_Factor[16][2] =
@@ -39,16 +41,16 @@ static void __forceinline XA_decode_block(s16* buffer, const s16* block, s32& pr
 
 	for (; blockbytes <= blockend; ++blockbytes)
 	{
-		s32 data = ((*blockbytes) << 28) & 0xF0000000;
-		s32 pcm = (data >> shift) + (((pred1 * prev1) + (pred2 * prev2) + 32) >> 6);
+		s32 data    = ((*blockbytes) << 28) & 0xF0000000;
+		s32 pcm     = (data >> shift) + (((pred1 * prev1) + (pred2 * prev2) + 32) >> 6);
 
-		pcm = std::clamp<s32>(pcm, -0x8000, 0x7fff);
+		pcm         = CLAMP(pcm, -0x8000, 0x7fff);
 		*(buffer++) = pcm;
 
 		data = ((*blockbytes) << 24) & 0xF0000000;
 		s32 pcm2 = (data >> shift) + (((pred1 * pcm) + (pred2 * prev1) + 32) >> 6);
 
-		pcm2 = std::clamp<s32>(pcm2, -0x8000, 0x7fff);
+		pcm2        = CLAMP(pcm2, -0x8000, 0x7fff);
 		*(buffer++) = pcm2;
 
 		prev2 = pcm;
@@ -426,10 +428,10 @@ StereoOut32 V_Core::Mix(const VoiceMixSet& inVoices, const StereoOut32& Input, c
 	UpdateNoise(*this);
 
 	// Saturate final result to standard 16 bit range.
-	Voices.Dry.Left  = std::clamp(inVoices.Dry.Left, -0x8000, 0x7fff);
-	Voices.Dry.Right = std::clamp(inVoices.Dry.Right, -0x8000, 0x7fff);
-	Voices.Wet.Left  = std::clamp(inVoices.Wet.Left, -0x8000, 0x7fff);
-	Voices.Wet.Right = std::clamp(inVoices.Wet.Right, -0x8000, 0x7fff);
+	Voices.Dry.Left  = CLAMP(inVoices.Dry.Left, -0x8000, 0x7fff);
+	Voices.Dry.Right = CLAMP(inVoices.Dry.Right, -0x8000, 0x7fff);
+	Voices.Wet.Left  = CLAMP(inVoices.Wet.Left, -0x8000, 0x7fff);
+	Voices.Wet.Right = CLAMP(inVoices.Wet.Right, -0x8000, 0x7fff);
 
 	// Write Mixed results To Output Area
 	if (Index == 0)
@@ -548,8 +550,8 @@ void Mix(short *out_left, short *out_right)
 		Ext = empty;
 	else
 	{
-		Ext.Left  = std::clamp(Ext.Left, -0x8000, 0x7fff);
-		Ext.Right = std::clamp(Ext.Right, -0x8000, 0x7fff);
+		Ext.Left  = CLAMP(Ext.Left, -0x8000, 0x7fff);
+		Ext.Right = CLAMP(Ext.Right, -0x8000, 0x7fff);
 		Ext.Left  = (Ext.Left  * Cores[0].MasterVol.Left.Value)  >> 15;
 		Ext.Right = (Ext.Right * Cores[0].MasterVol.Right.Value) >> 15;
 	}
@@ -568,8 +570,8 @@ void Mix(short *out_left, short *out_right)
 		Out       = Cores[1].ReadInput_HiFi();
 	else
 	{
-		Out.Left  = std::clamp(Out.Left,  -0x8000, 0x7fff);
-		Out.Right = std::clamp(Out.Right, -0x8000, 0x7fff);
+		Out.Left  = CLAMP(Out.Left,  -0x8000, 0x7fff);
+		Out.Right = CLAMP(Out.Right, -0x8000, 0x7fff);
 		Out.Left  = (Out.Left  * Cores[1].MasterVol.Left.Value)  >> 15;
 		Out.Right = (Out.Right * Cores[1].MasterVol.Right.Value) >> 15;
 	}
@@ -583,8 +585,8 @@ void Mix(short *out_left, short *out_right)
 	DCFilterIn.Right  = Out.Right;
 
 	/* Final clamp, take care not to exceed 16 bits from here on */
-	*out_left         = (int16_t)(std::clamp(DCFilterOut.Left,  -0x8000, 0x7fff));
-	*out_right        = (int16_t)(std::clamp(DCFilterOut.Right, -0x8000, 0x7fff));
+	*out_left         = (int16_t)(CLAMP(DCFilterOut.Left,  -0x8000, 0x7fff));
+	*out_right        = (int16_t)(CLAMP(DCFilterOut.Right, -0x8000, 0x7fff));
 
 	/* Update AutoDMA output positioning */
 	OutPos++;

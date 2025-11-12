@@ -18,6 +18,8 @@
 #include "Global.h"
 #include "../GS/GSVector.h"
 
+#define CLAMP(val, minval, maxval) (std::min(maxval, std::max(minval, val)))
+
 __forceinline s32 V_Core::RevbGetIndexer(s32 offset)
 {
 	u32 start = EffectsStartA & 0x3f'ffff;
@@ -35,8 +37,8 @@ StereoOut32 V_Core::DoReverb(StereoOut32 Input)
 		return ret;
 	}
 
-	Input.Left  = std::clamp(Input.Left, -0x8000, 0x7fff);
-	Input.Right = std::clamp(Input.Right, -0x8000, 0x7fff);
+	Input.Left  = CLAMP(Input.Left, -0x8000, 0x7fff);
+	Input.Right = CLAMP(Input.Right, -0x8000, 0x7fff);
 
 	RevbDownBuf[0][RevbSampleBufPos] = Input.Left;
 	RevbDownBuf[1][RevbSampleBufPos] = Input.Right;
@@ -112,13 +114,13 @@ StereoOut32 V_Core::DoReverb(StereoOut32 Input)
 	// According to no$psx the effects always run but don't always write back, see check in V_Core::Mix
 	if (FxEnable)
 	{
-		_spu2mem[same_dst] = std::clamp(same, -0x8000, 0x7fff);
-		_spu2mem[diff_dst] = std::clamp(diff, -0x8000, 0x7fff);
-		_spu2mem[apf1_dst] = std::clamp(apf1, -0x8000, 0x7fff);
-		_spu2mem[apf2_dst] = std::clamp(apf2, -0x8000, 0x7fff);
+		_spu2mem[same_dst] = CLAMP(same, -0x8000, 0x7fff);
+		_spu2mem[diff_dst] = CLAMP(diff, -0x8000, 0x7fff);
+		_spu2mem[apf1_dst] = CLAMP(apf1, -0x8000, 0x7fff);
+		_spu2mem[apf2_dst] = CLAMP(apf2, -0x8000, 0x7fff);
 	}
 
-	out = std::clamp(out, -0x8000, 0x7fff);
+	out = CLAMP(out, -0x8000, 0x7fff);
 
 	RevbUpBuf[R][RevbSampleBufPos] = out;
 	RevbUpBuf[!R][RevbSampleBufPos] = 0;
