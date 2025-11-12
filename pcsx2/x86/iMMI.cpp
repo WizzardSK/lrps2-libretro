@@ -351,20 +351,6 @@ void recPSLLW()
 	_clearNeededXMMregs();
 }
 
-/*
-void recMADD()
-{
-}
-
-void recMADDU()
-{
-}
-
-void recPLZCW()
-{
-}
-*/
-
 #endif
 
 /*********************************************************

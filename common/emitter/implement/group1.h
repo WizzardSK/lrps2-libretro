@@ -30,8 +30,6 @@ namespace x86Emitter
 		G1Type_CMP
 	};
 
-	extern void _g1_EmitOp(G1Type InstType, const xRegisterInt& to, const xRegisterInt& from);
-
 	// --------------------------------------------------------------------------------------
 	//  xImpl_Group1
 	// --------------------------------------------------------------------------------------
@@ -51,18 +49,8 @@ namespace x86Emitter
 	// This class combines x86 with SSE/SSE2 logic operations (ADD, OR, and NOT).
 	// Note: ANDN [AndNot] is handled below separately.
 	//
-	struct xImpl_G1Logic
+	struct xImpl_G1Logic : public xImpl_Group1
 	{
-		G1Type InstType;
-
-		void operator()(const xRegisterInt& to, const xRegisterInt& from) const;
-
-		void operator()(const xIndirectVoid& to, const xRegisterInt& from) const;
-		void operator()(const xRegisterInt& to, const xIndirectVoid& from) const;
-		void operator()(const xRegisterInt& to, int imm) const;
-
-		void operator()(const xIndirect64orLess& to, int imm) const;
-
 		xImplSimd_DestRegSSE PS; // packed single precision
 		xImplSimd_DestRegSSE PD; // packed double precision
 	};
@@ -70,18 +58,8 @@ namespace x86Emitter
 	// ------------------------------------------------------------------------
 	// This class combines x86 with SSE/SSE2 arithmetic operations (ADD/SUB).
 	//
-	struct xImpl_G1Arith
+	struct xImpl_G1Arith : public xImpl_Group1
 	{
-		G1Type InstType;
-
-		void operator()(const xRegisterInt& to, const xRegisterInt& from) const;
-
-		void operator()(const xIndirectVoid& to, const xRegisterInt& from) const;
-		void operator()(const xRegisterInt& to, const xIndirectVoid& from) const;
-		void operator()(const xRegisterInt& to, int imm) const;
-
-		void operator()(const xIndirect64orLess& to, int imm) const;
-
 		xImplSimd_DestRegSSE PS; // packed single precision
 		xImplSimd_DestRegSSE PD; // packed double precision
 		xImplSimd_DestRegSSE SS; // scalar single precision
