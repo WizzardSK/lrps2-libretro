@@ -7,10 +7,10 @@
 #include <cmath>
 #include <float.h>
 
-/* Lower/Upper instructions can use that.. */
-#define _Ft_ ((VU->code >> 16) & 0x1F)  /* The rt part of the instruction register */
-#define _Fs_ ((VU->code >> 11) & 0x1F)  /* The rd part of the instruction register */
-#define _Fd_ ((VU->code >>  6) & 0x1F)  /* The sa part of the instruction register */
+//Lower/Upper instructions can use that..
+#define _Ft_ ((VU->code >> 16) & 0x1F)  // The rt part of the instruction register
+#define _Fs_ ((VU->code >> 11) & 0x1F)  // The rd part of the instruction register
+#define _Fd_ ((VU->code >>  6) & 0x1F)  // The sa part of the instruction register
 #define _It_ (_Ft_ & 0xF)
 #define _Is_ (_Fs_ & 0xF)
 #define _Id_ (_Fd_ & 0xF)
@@ -140,7 +140,7 @@ static __ri bool _vuFDIVflush(VURegs* VU)
 		{
 			VU->fdiv.enable = 0;
 			VU->VI[REG_Q].UL = VU->fdiv.reg.UL;
-			/* FDIV only affects D/I */
+			// FDIV only affects D/I
 			VU->VI[REG_STATUS_FLAG].UL = (VU->VI[REG_STATUS_FLAG].UL & 0xFCF) | (VU->fdiv.statusflag & 0xC30);
 
 			return true;
@@ -165,7 +165,7 @@ static __ri bool _vuEFUflush(VURegs* VU)
 	return false;
 }
 
-/* called at end of program */
+// called at end of program
 void _vuFlushAll(VURegs* VU)
 {
 	int i = 0;
@@ -191,13 +191,13 @@ void _vuFlushAll(VURegs* VU)
 
 	for (i = VU->fmacreadpos; VU->fmaccount > 0; i = (i + 1) & 3)
 	{
-		/* Clip flags (Affected by CLIP instruction) */
+		// Clip flags (Affected by CLIP instruction)
 		if (VU->fmac[i].flagreg & (1 << REG_CLIP_FLAG))
 			VU->VI[REG_CLIP_FLAG].UL = VU->fmac[i].clipflag;
 
-		/* Normal FMAC instructions only affects Z/S/I/O, 
-		 * D/I are modified only by FDIV instructions
-		 * Sticky flags (Affected by FSSET) */
+		// Normal FMAC instructions only affects Z/S/I/O, 
+		// D/I are modified only by FDIV instructions
+		// Sticky flags (Affected by FSSET)
 		if (VU->fmac[i].flagreg & (1 << REG_STATUS_FLAG))
 			VU->VI[REG_STATUS_FLAG].UL = (VU->VI[REG_STATUS_FLAG].UL & 0x30) | (VU->fmac[i].statusflag & 0xFC0) | (VU->fmac[i].statusflag & 0xF);
 		else
@@ -249,11 +249,11 @@ static void _vuFMACTestStall(VURegs* VU, u32 reg, u32 xyzw)
 
 	for (int currentpipe = VU->fmacreadpos; i < VU->fmaccount; currentpipe = (currentpipe + 1) & 3, i++)
 	{
-		/* Check if enough cycles have passed for this FMAC position */
+		//Check if enough cycles have passed for this FMAC position
 		if ((VU->cycle - VU->fmac[currentpipe].sCycle) >= VU->fmac[currentpipe].Cycle)
 			continue;
 
-		/* Check if the regs match */
+		// Check if the regs match
 		if ((VU->fmac[currentpipe].regupper == reg && VU->fmac[currentpipe].xyzwupper & xyzw)
 			|| (VU->fmac[currentpipe].reglower == reg && VU->fmac[currentpipe].xyzwlower & xyzw))
 		{
@@ -1439,8 +1439,15 @@ static __fi void _vuMSUBAw(VURegs* VU)
 // The functions below are floating point semantics min/max on integer representations to get
 // the effect of a floating point min/max without issues with denormal and special numbers.
 
-#define fp_max(a, b) (((s32)(a) < 0 && (s32)(b) < 0) ? MIN((a), (b)) : MAX((a), (b)))
-#define fp_min(a, b) (((s32)(a) < 0 && (s32)(b) < 0) ? MAX((a), (b)) : MIN((a), (b)))
+static __fi u32 fp_max(u32 a, u32 b)
+{
+	return ((s32)a < 0 && (s32)b < 0) ? std::min<s32>(a, b) : std::max<s32>(a, b);
+}
+
+static __fi u32 fp_min(u32 a, u32 b)
+{
+	return ((s32)a < 0 && (s32)b < 0) ? std::max<s32>(a, b) : std::min<s32>(a, b);
+}
 
 static __fi void _vuMAX(VURegs* VU)
 {

@@ -1419,13 +1419,13 @@ mVUop(mVU_WAITP)
 			mVUlow.isNOP = true;
 			return;
 		}
-		mVUstall = MAX(mVUstall, (u8)((mVUregs.p) ? (mVUregs.p - 1) : 0));
+		mVUstall = std::max(mVUstall, (u8)((mVUregs.p) ? (mVUregs.p - 1) : 0));
 	}
 }
 
 mVUop(mVU_WAITQ)
 {
-	pass1 { mVUstall = MAX(mVUstall, mVUregs.q); }
+	pass1 { mVUstall = std::max(mVUstall, mVUregs.q); }
 }
 
 //------------------------------------------------------------------
@@ -1535,10 +1535,10 @@ void _vuXGKICKTransfermVU(bool flush)
 		}
 
 		if (!flush)
-			transfersize = MIN(vuRegs[1].xgkicksizeremaining, vuRegs[1].xgkickcyclecount * 8);
+			transfersize = std::min(vuRegs[1].xgkicksizeremaining, vuRegs[1].xgkickcyclecount * 8);
 		else
 			transfersize = vuRegs[1].xgkicksizeremaining;
-		transfersize = MIN(transfersize, vuRegs[1].xgkickdiff);
+		transfersize = std::min(transfersize, vuRegs[1].xgkickdiff);
 
 		// Would be "nicer" to do the copy until it's all up, however this really screws up PATH3 masking stuff
 		// So lets just do it the other way :)

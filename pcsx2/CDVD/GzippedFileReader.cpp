@@ -23,6 +23,8 @@
 #include "../Config.h"
 #include "../Host.h"
 
+#define CLAMP(val, minval, maxval) (std::min(maxval, std::max(minval, val)))
+
 #define GZIP_ID "PCSX2.index.gzip.v1|"
 #define GZIP_ID_LEN (sizeof(GZIP_ID) - 1) /* sizeof includes the \0 terminator */
 

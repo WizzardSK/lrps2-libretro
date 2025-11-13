@@ -1,12 +1,10 @@
-#include <algorithm>
-
 #include "../GS/GSVector.h"
 #include "Global.h"
 
 MULTI_ISA_UNSHARED_START
 
 static constexpr u32 NUM_TAPS = 39;
-/* 39 tap filter, the 0's could be optimized out */
+// 39 tap filter, the 0's could be optimized out
 static constexpr std::array<s16, 48> filter_down_coefs alignas(32) = {
 	-1,
 	0,
@@ -54,10 +52,7 @@ static constexpr std::array<s16, 48> make_up_coefs()
 	std::array<s16, 48> ret = {};
 
 	for (u32 i = 0; i < NUM_TAPS; i++)
-	{
-		s32 newval = CLAMP(filter_down_coefs[i] * 2, INT16_MIN, INT16_MAX);
-		ret[i]     = static_cast<s16>(newval);
-	}
+		ret[i] = static_cast<s16>(std::clamp<s32>(filter_down_coefs[i] * 2, INT16_MIN, INT16_MAX));
 
 	return ret;
 }
@@ -68,10 +63,11 @@ s32 __forceinline ReverbDownsample_reference(V_Core& core, bool right)
 {
 	int index = (core.RevbSampleBufPos - NUM_TAPS) & 63;
 	s32 out = 0;
+
 	for (u32 i = 0; i < NUM_TAPS; i++)
 		out += core.RevbDownBuf[right][index + i] * filter_down_coefs[i];
-	out = CLAMP(out >> 15, -0x8000, 0x7fff);
-	return out;
+
+	return std::clamp(out >> 15, -0x8000, 0x7fff);
 }
 
 #if _M_SSE >= 0x501
@@ -153,8 +149,8 @@ StereoOut32 __forceinline ReverbUpsample_reference(V_Core& core)
 		r += core.RevbUpBuf[1][index + i] * filter_up_coefs[i];
 	}
 
-	val.Left  = CLAMP(l >> 15, -0x8000, 0x7fff);
-	val.Right = CLAMP(r >> 15, -0x8000, 0x7fff);
+	val.Left  = std::clamp(l >> 15, -0x8000, 0x7fff);
+	val.Right = std::clamp(r >> 15, -0x8000, 0x7fff);
 	return val;
 }
 

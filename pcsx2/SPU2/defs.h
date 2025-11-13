@@ -19,7 +19,6 @@
 #include "SndOut.h"
 #include "Global.h"
 
-#include "../../common/Pcsx2Defs.h"
 #include "../GS/MultiISA.h"
 
 #include <array>

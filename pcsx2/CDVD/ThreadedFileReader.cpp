@@ -145,7 +145,7 @@ ThreadedFileReader::Buffer* ThreadedFileReader::GetBlockPtr(const Chunk& block)
 		std::unique_lock<std::mutex> lock(m_mtx, std::defer_lock);
 		if (std::this_thread::get_id() == m_readThread.get_id())
 			lock.lock();
-		u32 size = MAX(block.length, MINIMUM_SIZE);
+		u32 size = std::max(block.length, MINIMUM_SIZE);
 		if (buf.cap < size)
 		{
 			buf.ptr = realloc(buf.ptr, size);
@@ -184,7 +184,7 @@ bool ThreadedFileReader::Decompress(void* target, u64 begin, u32 size)
 			u32 bufsize = buf->size.load(std::memory_order_relaxed);
 			if (bufsize <= bufoff)
 				return false;
-			u32 len          = MIN(bufsize - bufoff, remaining);
+			u32 len     = std::min(bufsize - bufoff, remaining);
 			char* cdst       = static_cast<char*>(write);
 			const char* csrc = static_cast<const char*>(static_cast<char*>(buf->ptr) + bufoff);
 			const char* cend = csrc + len;
@@ -212,7 +212,7 @@ bool ThreadedFileReader::Decompress(void* target, u64 begin, u32 size)
 				u32 bufsize = buf->size.load(std::memory_order_relaxed);
 				if (bufsize <= bufoff)
 					return false;
-				u32 len     = MIN(bufsize - bufoff, remaining);
+				u32 len     = std::min(bufsize - bufoff, remaining);
 				memcpy(write, static_cast<char*>(buf->ptr) + bufoff, len);
 				write      += len;
 				remaining  -= len;
@@ -251,7 +251,7 @@ bool ThreadedFileReader::TryCachedRead(void*& buffer, u64& offset, u32& size, co
 			{
 				size_t read;
 				u32 off          = offset - buf.offset;
-				u32 cpysize      = MIN(size, bufsize - off);
+				u32 cpysize      = std::min(size, bufsize - off);
 				char* cdst       = static_cast<char*>(buffer);
 				const char* csrc = static_cast<const char*>(static_cast<char*>(buf.ptr) + off);
 				const char* cend = csrc + cpysize;
@@ -282,7 +282,7 @@ bool ThreadedFileReader::TryCachedRead(void*& buffer, u64& offset, u32& size, co
 			{
 				size_t read;
 				u32 off      = offset - buf.offset;
-				u32 cpysize  = MIN(size, bufsize - off);
+				u32 cpysize  = std::min(size, bufsize - off);
 				memcpy(buffer, static_cast<char*>(buf.ptr) + off, cpysize);
 				read         = cpysize;
 				m_amtRead   += read;

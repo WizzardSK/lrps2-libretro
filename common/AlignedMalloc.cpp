@@ -43,9 +43,9 @@ void* pcsx2_aligned_realloc(void* handle, size_t new_size, size_t align, size_t 
 {
 	void* newbuf = _aligned_malloc(new_size, align);
 
-	if (newbuf && handle)
+	if (newbuf != NULL && handle != NULL)
 	{
-		memcpy(newbuf, handle, MIN(old_size, new_size));
+		memcpy(newbuf, handle, std::min(old_size, new_size));
 		_aligned_free(handle);
 	}
 	return newbuf;

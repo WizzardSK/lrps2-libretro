@@ -301,7 +301,7 @@ void VifUnpackSSE_Base::xUnpack(int upknum) const
 void VifUnpackSSE_Simple::doMaskWrite(const xRegisterSSE& regX) const
 {
 	xMOVAPS(xmm7, ptr[dstIndirect]);
-	int offX = MIN(curCycle, 3);
+	int offX = std::min(curCycle, 3);
 	xPAND(regX, ptr32[nVifMask[0][offX]]);
 	xPAND(xmm7, ptr32[nVifMask[1][offX]]);
 	xPOR (regX, ptr32[nVifMask[2][offX]]);

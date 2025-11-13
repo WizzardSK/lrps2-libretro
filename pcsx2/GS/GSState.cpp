@@ -831,7 +831,7 @@ void GSState::GIFRegHandlerTEX0(const GIFReg* RESTRICT r)
 		// NOTE 3: Everything is derrived from the width of the texture, TBW and TH are completely ignored (useful for handling non-rectangular ones)
 		// NOTE 4: Cartoon Network Racing's menu is VERY sensitive to this as it uses 4bit sized textures for the sky.
 		u32 bp = TEX0.TBP0;
-		u32 bw = MAX(1u, (1u << TEX0.TW) >> 6);
+		u32 bw = std::max(1u, (1u << TEX0.TW) >> 6);
 
 		// Address is calculated as a 4bit address space, then converted (/8) to 32bit address space
 		// ((w * w * bpp) / 8) / 64. No the 'w' is not a typo ;)
@@ -1438,7 +1438,7 @@ u32 GSState::CalcMask(int exp, int max_exp)
 {
 	const int amount = 9 + (max_exp - exp);
 
-	return (1 << MIN(amount, 23)) - 1;
+	return (1 << std::min(amount, 23)) - 1;
 }
 
 void GSState::FlushPrim()
@@ -1523,12 +1523,12 @@ void GSState::FlushPrim()
 					const int expS = (S >> 23) & 0xff;
 					const int expT = (T >> 23) & 0xff;
 					const int expQ = (Q >> 23) & 0xff;
-					int max_exp    = MAX(expS, expQ);
+					int max_exp = std::max(expS, expQ);
 
-					u32 mask       = CalcMask(expS, max_exp);
+					u32 mask = CalcMask(expS, max_exp);
 					S &= ~mask;
 					v->ST.S = cpp11_bit_cast<float>(S);
-					max_exp = MAX(expT, expQ);
+					max_exp = std::max(expT, expQ);
 					mask = CalcMask(expT, max_exp);
 					T &= ~mask;
 					v->ST.T = cpp11_bit_cast<float>(T);
@@ -2244,7 +2244,7 @@ void GSState::Transfer(const u8* mem, u32 size)
 					// and according to Pseudonym we shouldn't even land in this code. So hmm indeed. (rama)
 				case GIF_FLG_IMAGE:
 				{
-					const int len = (int)MIN(size, path.nloop);
+					const int len = (int)std::min(size, path.nloop);
 
 					switch (m_env.TRXDIR.XDIR)
 					{
@@ -2649,6 +2649,10 @@ GSState::PRIM_OVERLAP GSState::PrimitiveOverlap()
 		// loop so code is much faster (check game virtua fighter). Besides it allow to check
 		// properly the Y order.
 
+		// .x = min(v[i].XYZ.X, v[i+1].XYZ.X)
+		// .y = min(v[i].XYZ.Y, v[i+1].XYZ.Y)
+		// .z = max(v[i].XYZ.X, v[i+1].XYZ.X)
+		// .w = max(v[i].XYZ.Y, v[i+1].XYZ.Y)
 		GSVector4i all = GSVector4i(v[i].m[1]).upl16(GSVector4i(v[i + 1].m[1])).upl16().xzyw();
 		all = all.xyxy().blend(all.zwzw(), all > all.zwxy());
 
@@ -2939,10 +2943,10 @@ __forceinline void GSState::HandleAutoFlush()
 				tex_coord.y = static_cast<int>(std::round((1 << m_context->TEX0.TH) * t));
 			}
 
-			tex_rect.x = MIN(tex_rect.x, tex_coord.x);
-			tex_rect.z = MAX(tex_rect.z, tex_coord.x);
-			tex_rect.y = MIN(tex_rect.y, tex_coord.y);
-			tex_rect.w = MAX(tex_rect.w, tex_coord.y);
+			tex_rect.x = std::min(tex_rect.x, tex_coord.x);
+			tex_rect.z = std::max(tex_rect.z, tex_coord.x);
+			tex_rect.y = std::min(tex_rect.y, tex_coord.y);
+			tex_rect.w = std::max(tex_rect.w, tex_coord.y);
 		}
 
 		// If the draw was 1 line thick, make it larger as rects are exclusive of ends.
@@ -2977,21 +2981,21 @@ __forceinline void GSState::HandleAutoFlush()
 		switch (m_context->CLAMP.WMS)
 		{
 			case CLAMP_REGION_CLAMP:
-				tex_rect.x  = MAX(tex_rect.x, clamp_minu);
-				tex_rect.z  = MAX(tex_rect.z, clamp_minu);
-				tex_coord.x = MAX(tex_coord.x, clamp_minu);
-				tex_rect.x  = MIN(tex_rect.x, clamp_maxu);
-				tex_rect.z  = MIN(tex_rect.z, clamp_maxu);
-				tex_coord.x = MIN(tex_coord.x, clamp_maxu);
+				tex_rect.x = std::max(tex_rect.x, clamp_minu);
+				tex_rect.z = std::max(tex_rect.z, clamp_minu);
+				tex_coord.x = std::max(tex_coord.x, clamp_minu);
+				tex_rect.x = std::min(tex_rect.x, clamp_maxu);
+				tex_rect.z = std::min(tex_rect.z, clamp_maxu);
+				tex_coord.x = std::min(tex_coord.x, clamp_maxu);
 				break;
 
 			case CLAMP_REGION_REPEAT:
-				tex_rect.x  = MAX(tex_rect.x, clamp_maxu);
-				tex_rect.z  = MAX(tex_rect.z, clamp_maxu);
-				tex_coord.x = MAX(tex_coord.x, clamp_maxu);
-				tex_rect.x  = MIN(tex_rect.x, (clamp_maxu | clamp_minu));
-				tex_rect.z  = MIN(tex_rect.z, (clamp_maxu | clamp_minu));
-				tex_coord.x = MIN(tex_coord.x, (clamp_maxu | clamp_minu));
+				tex_rect.x = std::max(tex_rect.x, clamp_maxu);
+				tex_rect.z = std::max(tex_rect.z, clamp_maxu);
+				tex_coord.x = std::max(tex_coord.x, clamp_maxu);
+				tex_rect.x = std::min(tex_rect.x, (clamp_maxu | clamp_minu));
+				tex_rect.z = std::min(tex_rect.z, (clamp_maxu | clamp_minu));
+				tex_coord.x = std::min(tex_coord.x, (clamp_maxu | clamp_minu));
 				break;
 			default:
 				break;
@@ -3000,20 +3004,20 @@ __forceinline void GSState::HandleAutoFlush()
 		switch (m_context->CLAMP.WMT)
 		{
 			case CLAMP_REGION_CLAMP:
-				tex_rect.y  = MAX(tex_rect.y, clamp_minv);
-				tex_rect.w  = MAX(tex_rect.w, clamp_minv);
-				tex_coord.y = MAX(tex_coord.y, clamp_minv);
-				tex_rect.y  = MIN(tex_rect.y, clamp_maxv);
-				tex_rect.w  = MIN(tex_rect.w, clamp_maxv);
-				tex_coord.y = MIN(tex_coord.y, clamp_maxv);
+				tex_rect.y = std::max(tex_rect.y, clamp_minv);
+				tex_rect.w = std::max(tex_rect.w, clamp_minv);
+				tex_coord.y = std::max(tex_coord.y, clamp_minv);
+				tex_rect.y = std::min(tex_rect.y, clamp_maxv);
+				tex_rect.w = std::min(tex_rect.w, clamp_maxv);
+				tex_coord.y = std::min(tex_coord.y, clamp_maxv);
 				break;
 			case CLAMP_REGION_REPEAT:
-				tex_rect.y  = MAX(tex_rect.y, clamp_maxv);
-				tex_rect.w  = MAX(tex_rect.w, clamp_maxv);
-				tex_coord.y = MAX(tex_coord.y, clamp_maxv);
-				tex_rect.y  = MIN(tex_rect.y, (clamp_maxv | clamp_minv));
-				tex_rect.w  = MIN(tex_rect.w, (clamp_maxv | clamp_minv));
-				tex_coord.y = MIN(tex_coord.y, (clamp_maxv | clamp_minv));
+				tex_rect.y = std::max(tex_rect.y, clamp_maxv);
+				tex_rect.w = std::max(tex_rect.w, clamp_maxv);
+				tex_coord.y = std::max(tex_coord.y, clamp_maxv);
+				tex_rect.y = std::min(tex_rect.y, (clamp_maxv | clamp_minv));
+				tex_rect.w = std::min(tex_rect.w, (clamp_maxv | clamp_minv));
+				tex_coord.y = std::min(tex_coord.y, (clamp_maxv | clamp_minv));
 				break;
 			default:
 				break;
@@ -3080,10 +3084,10 @@ __forceinline void GSState::HandleAutoFlush()
 						}
 						else
 						{
-							old_draw_rect.x = MIN(old_draw_rect.x, tex_coord.x);
-							old_draw_rect.z = MAX(old_draw_rect.z, tex_coord.x);
-							old_draw_rect.y = MIN(old_draw_rect.y, tex_coord.y);
-							old_draw_rect.w = MAX(old_draw_rect.w, tex_coord.y);
+							old_draw_rect.x = std::min(old_draw_rect.x, tex_coord.x);
+							old_draw_rect.z = std::max(old_draw_rect.z, tex_coord.x);
+							old_draw_rect.y = std::min(old_draw_rect.y, tex_coord.y);
+							old_draw_rect.w = std::max(old_draw_rect.w, tex_coord.y);
 						}
 					}
 
@@ -3688,7 +3692,7 @@ void GSState::CalcAlphaMinMax(const int tex_alpha_min, const int tex_alpha_max)
 
 	// We wanted to force an update as we now know the alpha of the non-indexed texture.
 	// Limit max to 255 as we send 500 when we don't know, makes calculating 24/16bit easier.
-	int min = tex_alpha_min, max = MIN(tex_alpha_max, 255);
+	int min = tex_alpha_min, max = std::min(tex_alpha_max, 255);
 
 	if (IsCoverageAlpha())
 	{
@@ -3718,8 +3722,8 @@ void GSState::CalcAlphaMinMax(const int tex_alpha_min, const int tex_alpha_max)
 				case 2:
 					// If we're using the alpha from the texture, not the whole range, we can just use tex_alpha_min/max.
 					// AEM, TA0 and TA1 are precomputed with GSBlock::ReadAndExpandBlock16, so already worked out for tex_alpha.
-					a.y = (tex_alpha_max < INVALID_ALPHA_MINMAX) ? min : (env.TEXA.AEM ? 0 : MIN(env.TEXA.TA0, env.TEXA.TA1));
-					a.w = (tex_alpha_max < INVALID_ALPHA_MINMAX) ? max : MAX(env.TEXA.TA0, env.TEXA.TA1);
+					a.y = (tex_alpha_max < INVALID_ALPHA_MINMAX) ? min : (env.TEXA.AEM ? 0 : std::min(env.TEXA.TA0, env.TEXA.TA1));
+					a.w = (tex_alpha_max < INVALID_ALPHA_MINMAX) ? max : std::max(env.TEXA.TA0, env.TEXA.TA1);
 					break;
 				case 3:
 					if (tex_alpha_max < INVALID_ALPHA_MINMAX)
@@ -3781,24 +3785,24 @@ void GSState::CorrectATEAlphaMinMax(const u32 atst, const int aref)
 	switch (atst)
 	{
 		case ATST_LESS:
-			amin = MIN(amin, MAX(aref - 1, amin));
-			amax = MIN(amax, MAX(aref - 1, amin));
+			amin = std::min(amin, std::max(aref - 1, amin));
+			amax = std::min(amax, std::max(aref - 1, amin));
 			break;
 		case ATST_LEQUAL:
-			amin = MIN(amin, MAX(aref, amin));
-			amax = MIN(amax, MAX(aref, amin));
+			amin = std::min(amin, std::max(aref, amin));
+			amax = std::min(amax, std::max(aref, amin));
 			break;
 		case ATST_EQUAL:
 			amax = aref;
 			amin = aref;
 			break;
 		case ATST_GEQUAL:
-			amax = MAX(amax, MIN(aref, amax));
-			amin = MAX(amin, MIN(aref, amax));
+			amax = std::max(amax, std::min(aref, amax));
+			amin = std::max(amin, std::min(aref, amax));
 			break;
 		case ATST_GREATER:
-			amax = MAX(amax, MIN(aref + 1, amax));
-			amin = MAX(amin, MIN(aref + 1, amax));
+			amax = std::max(amax, std::min(aref + 1, amax));
+			amin = std::max(amin, std::min(aref + 1, amax));
 			break;
 		default:
 			break;
@@ -4218,8 +4222,8 @@ GSVector2i GSState::GSPCRTCRegs::GetResolution()
 		resolution = { offsets.x, offsets.y << shift };
 	}
 
-	resolution.x = MIN(resolution.x, offsets.x);
-	resolution.y = MIN(resolution.y, is_full_height ? offsets.y << 1 : offsets.y);
+	resolution.x = std::min(resolution.x, offsets.x);
+	resolution.y = std::min(resolution.y, is_full_height ? offsets.y << 1 : offsets.y);
 
 	return resolution;
 }
@@ -4267,7 +4271,7 @@ GSVector2i GSState::GSPCRTCRegs::GetFramebufferSize(int display)
 		}
 
 		// Cap the framebuffer read to the maximum display height, otherwise the hardware renderer gets messy.
-		const int min_mag = MAX(1, MIN(PCRTCDisplays[0].magnification.y, PCRTCDisplays[1].magnification.y));
+		const int min_mag = std::max(1, std::min(PCRTCDisplays[0].magnification.y, PCRTCDisplays[1].magnification.y));
 		int offset = PCRTCDisplays[0].displayRect.runion(PCRTCDisplays[1].displayRect).y;
 
 		if (FFMD && interlaced)
@@ -4278,14 +4282,14 @@ GSVector2i GSState::GSPCRTCRegs::GetFramebufferSize(int display)
 		// Hardware mode needs a wider framebuffer as it can't offset the read.
 		if (GSConfig.UseHardwareRenderer())
 		{
-			combined_rect.z += MAX(PCRTCDisplays[0].framebufferOffsets.x, PCRTCDisplays[1].framebufferOffsets.x);
-			combined_rect.w += MAX(PCRTCDisplays[0].framebufferOffsets.y, PCRTCDisplays[1].framebufferOffsets.y);
+			combined_rect.z += std::max(PCRTCDisplays[0].framebufferOffsets.x, PCRTCDisplays[1].framebufferOffsets.x);
+			combined_rect.w += std::max(PCRTCDisplays[0].framebufferOffsets.y, PCRTCDisplays[1].framebufferOffsets.y);
 		}
 
 		max_height += combined_rect.y;
 
 		offset = (max_height / min_mag) - offset;
-		combined_rect.w = MIN(combined_rect.w, offset);
+		combined_rect.w = std::min(combined_rect.w, offset);
 		return GSVector2i(combined_rect.z, combined_rect.w);
 	}
 	else
@@ -4299,7 +4303,7 @@ GSVector2i GSState::GSPCRTCRegs::GetFramebufferSize(int display)
 			out_rect.w -= out_rect.y;
 
 		// Cap the framebuffer read to the maximum display height, otherwise the hardware renderer gets messy.
-		const int min_mag = MAX(1, PCRTCDisplays[display].magnification.y);
+		const int min_mag = std::max(1, PCRTCDisplays[display].magnification.y);
 		int offset = PCRTCDisplays[display].displayRect.y;
 
 		if (FFMD && interlaced)
@@ -4308,7 +4312,7 @@ GSVector2i GSState::GSPCRTCRegs::GetFramebufferSize(int display)
 		max_height += out_rect.y;
 
 		offset = (max_height / min_mag) - offset;
-		out_rect.w = MIN(out_rect.w, offset);
+		out_rect.w = std::min(out_rect.w, offset);
 
 		return GSVector2i(out_rect.z, out_rect.w);
 	}
@@ -4341,12 +4345,12 @@ void GSState::GSPCRTCRegs::SetRects(int display, GSRegDISPLAY displayReg, GSRegD
 	// When using screen offsets the screen gets squashed/resized in to the actual screen size.
 	if (GSConfig.PCRTCOffsets)
 	{
-		finalDisplayWidth  = DW / (VideoModeDividers[videomode].x + 1);
+		finalDisplayWidth = DW / (VideoModeDividers[videomode].x + 1);
 		finalDisplayHeight = DH / (VideoModeDividers[videomode].y + 1);
 	}
 	else
 	{
-		finalDisplayWidth  = std::min(finalDisplayWidth ,DW / (VideoModeDividers[videomode].x + 1));
+		finalDisplayWidth = std::min(finalDisplayWidth ,DW / (VideoModeDividers[videomode].x + 1));
 		finalDisplayHeight = std::min(finalDisplayHeight, DH / (VideoModeDividers[videomode].y + 1));
 	}
 

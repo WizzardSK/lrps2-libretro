@@ -54,8 +54,8 @@ bool ADSR_Calculate(V_ADSR &v)
 	auto& p = v.CachedPhases.at(v.Phase);
 
 	// maybe not correct for the "infinite" settings
-	u32 counter_inc = 0x8000 >> MAX(0, p.Shift - 11);
-	s32 level_inc   = p.Step << MAX(0, 11 - p.Shift);
+	u32 counter_inc = 0x8000 >> std::max(0, p.Shift - 11);
+	s32 level_inc   = p.Step << std::max(0, 11 - p.Shift);
 
 	if (p.Exp)
 	{
@@ -68,13 +68,13 @@ bool ADSR_Calculate(V_ADSR &v)
 		}
 	}
 
-	counter_inc = MAX(1, counter_inc);
+	counter_inc = std::max<u32>(1, counter_inc);
 	v.Counter  += counter_inc;
 
 	if (v.Counter >= 0x8000)
 	{
 		v.Counter = 0;
-		v.Value   = CLAMP(v.Value + level_inc, 0, INT16_MAX);
+		v.Value   = std::clamp<s32>(v.Value + level_inc, 0, INT16_MAX);
 	}
 
 	// Stay in sustain until key off or silence

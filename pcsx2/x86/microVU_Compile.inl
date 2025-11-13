@@ -86,8 +86,8 @@ void mVUsetupRange(microVU& mVU, s32 pc, bool isStartPC)
 				if (((it->start >= rStart) && (it->start <= rEnd)) 
 				||  ((it->end   >= rStart) && (it->end <= rEnd))) 
 				{
-					mVUrange.start = rStart = MIN(it->start, rStart); /* Choose the earlier start */
-					mVUrange.end   = rEnd   = MAX(it->end, rEnd);
+					mVUrange.start = rStart = std::min(it->start, rStart); /* Choose the earlier start */
+					mVUrange.end   = rEnd   = std::max(it->end, rEnd);
 					it = ranges->erase(it);
 				}
 				else
@@ -355,21 +355,21 @@ void mVUsetCycles(mV)
 		cmpVFregs(mVUlow.VF_write, mVUup.VF_read[1], mVUinfo.backupVF);
 	}
 
-	mVUregs.VF[mVUregsTemp.VFreg[0]].x = MAX(mVUregs.VF[mVUregsTemp.VFreg[0]].x, mVUregsTemp.VF[0].x);
-	mVUregs.VF[mVUregsTemp.VFreg[0]].y = MAX(mVUregs.VF[mVUregsTemp.VFreg[0]].y, mVUregsTemp.VF[0].y);
-	mVUregs.VF[mVUregsTemp.VFreg[0]].z = MAX(mVUregs.VF[mVUregsTemp.VFreg[0]].z, mVUregsTemp.VF[0].z);
-	mVUregs.VF[mVUregsTemp.VFreg[0]].w = MAX(mVUregs.VF[mVUregsTemp.VFreg[0]].w, mVUregsTemp.VF[0].w);
+	mVUregs.VF[mVUregsTemp.VFreg[0]].x = std::max(mVUregs.VF[mVUregsTemp.VFreg[0]].x, mVUregsTemp.VF[0].x);
+	mVUregs.VF[mVUregsTemp.VFreg[0]].y = std::max(mVUregs.VF[mVUregsTemp.VFreg[0]].y, mVUregsTemp.VF[0].y);
+	mVUregs.VF[mVUregsTemp.VFreg[0]].z = std::max(mVUregs.VF[mVUregsTemp.VFreg[0]].z, mVUregsTemp.VF[0].z);
+	mVUregs.VF[mVUregsTemp.VFreg[0]].w = std::max(mVUregs.VF[mVUregsTemp.VFreg[0]].w, mVUregsTemp.VF[0].w);
 
-	mVUregs.VF[mVUregsTemp.VFreg[1]].x = MAX(mVUregs.VF[mVUregsTemp.VFreg[1]].x, mVUregsTemp.VF[1].x);
-	mVUregs.VF[mVUregsTemp.VFreg[1]].y = MAX(mVUregs.VF[mVUregsTemp.VFreg[1]].y, mVUregsTemp.VF[1].y);
-	mVUregs.VF[mVUregsTemp.VFreg[1]].z = MAX(mVUregs.VF[mVUregsTemp.VFreg[1]].z, mVUregsTemp.VF[1].z);
-	mVUregs.VF[mVUregsTemp.VFreg[1]].w = MAX(mVUregs.VF[mVUregsTemp.VFreg[1]].w, mVUregsTemp.VF[1].w);
+	mVUregs.VF[mVUregsTemp.VFreg[1]].x = std::max(mVUregs.VF[mVUregsTemp.VFreg[1]].x, mVUregsTemp.VF[1].x);
+	mVUregs.VF[mVUregsTemp.VFreg[1]].y = std::max(mVUregs.VF[mVUregsTemp.VFreg[1]].y, mVUregsTemp.VF[1].y);
+	mVUregs.VF[mVUregsTemp.VFreg[1]].z = std::max(mVUregs.VF[mVUregsTemp.VFreg[1]].z, mVUregsTemp.VF[1].z);
+	mVUregs.VF[mVUregsTemp.VFreg[1]].w = std::max(mVUregs.VF[mVUregsTemp.VFreg[1]].w, mVUregsTemp.VF[1].w);
 
-	mVUregs.VI[mVUregsTemp.VIreg]  = MAX(mVUregs.VI[mVUregsTemp.VIreg], mVUregsTemp.VI);
-	mVUregs.q                      = MAX(mVUregs.q,                     mVUregsTemp.q);
-	mVUregs.p                      = MAX(mVUregs.p,                     mVUregsTemp.p);
-	mVUregs.r                      = MAX(mVUregs.r,                     mVUregsTemp.r);
-	mVUregs.xgkick                 = MAX(mVUregs.xgkick,                mVUregsTemp.xgkick);
+	mVUregs.VI[mVUregsTemp.VIreg]  = std::max(mVUregs.VI[mVUregsTemp.VIreg], mVUregsTemp.VI);
+	mVUregs.q                      = std::max(mVUregs.q,                     mVUregsTemp.q);
+	mVUregs.p                      = std::max(mVUregs.p,                     mVUregsTemp.p);
+	mVUregs.r                      = std::max(mVUregs.r,                     mVUregsTemp.r);
+	mVUregs.xgkick                 = std::max(mVUregs.xgkick,                mVUregsTemp.xgkick);
 }
 
 // Test cycles to see if we need to exit-early...
