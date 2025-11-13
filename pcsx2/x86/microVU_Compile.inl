@@ -380,7 +380,7 @@ void mVUtestCycles(microVU& mVU, microFlagCycles& mFC)
 	// If the VUSyncHack is on, we want the VU to run behind, to avoid conditions where the VU is sped up.
 	if (isVU0 && EmuConfig.Speedhacks.EECycleRate != 0 && (!EmuConfig.Gamefixes.VUSyncHack || EmuConfig.Speedhacks.EECycleRate < 0))
 	{
-		switch (MIN(EmuConfig.Speedhacks.EECycleRate, mVUcycles))
+		switch (std::min(static_cast<int>(EmuConfig.Speedhacks.EECycleRate), static_cast<int>(mVUcycles)))
 		{
 			case -3: // 50%
 				mVUcycles *= 2.0f;
