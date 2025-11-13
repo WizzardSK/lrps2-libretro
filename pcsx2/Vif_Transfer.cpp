@@ -66,8 +66,11 @@ _vifT static __fi bool vifTransfer(u32 *data, int size, bool TTE) {
 
 	//Make this a minimum of 1 cycle so if it's the end of the packet it doesnt just fall through.
 	//Metal Saga can do this, just to be safe :)
-	if (!idx) g_vif0Cycles += std::max(1, (int)((transferred * BIAS) >> 2));
-	else	  g_vif1Cycles += std::max(1, (int)((transferred * BIAS) >> 2));
+        int tmp = (int)((transferred * BIAS) >> 2);
+	if (!idx)
+		g_vif0Cycles += MAX(1, tmp);
+	else	
+		g_vif1Cycles += MAX(1, tmp);
 
 	vifX.irqoffset.value = transferred % 4; // cannot lose the offset
 
@@ -80,7 +83,7 @@ _vifT static __fi bool vifTransfer(u32 *data, int size, bool TTE) {
 	if (!TTE) // *WARNING* - Tags CAN have interrupts! so lets just ignore the dma modifying stuffs (GT4)
 	{
 		transferred  = transferred >> 2;
-		transferred = std::min((int)vifXch.qwc, transferred);
+		transferred  = MIN((int)vifXch.qwc, transferred);
 		vifXch.madr +=(transferred << 4);
 		vifXch.qwc  -= transferred;
 

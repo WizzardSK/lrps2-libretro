@@ -100,11 +100,11 @@ u32 IsoFile::seek(s64 offset, int mode)
 
 		case SEEK_CUR:
 			// truncate negative values to zero, and positive values to 4gb
-			return seek(std::min(std::max<s64>(0, (s64)currentOffset + offset), (s64)ULONG_MAX));
+			return seek(MIN(MAX(0, (s64)currentOffset + offset), (s64)ULONG_MAX));
 
 		case SEEK_END:
 			// truncate negative values to zero, and positive values to 4gb
-			return seek(std::min(std::max<s64>(0, (s64)fileEntry.size + offset), (s64)ULONG_MAX));
+			return seek(MIN(MAX(0, (s64)fileEntry.size + offset), (s64)ULONG_MAX));
 		default:
 			break;
 	}
@@ -189,7 +189,7 @@ s32 IsoFile::read(void* dest, s32 len)
 
 	int off         = 0;
 	int totalLength = 0;
-	int firstSector = internalRead(dest, off, std::min(len, sectorLength - sectorOffset));
+	int firstSector = internalRead(dest, off, MIN(len, sectorLength - sectorOffset));
 	off            += firstSector;
 	len            -= firstSector;
 	totalLength    += firstSector;

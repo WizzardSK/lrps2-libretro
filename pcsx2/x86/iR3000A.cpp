@@ -931,7 +931,7 @@ static __fi u32 psxRecClearMem(u32 pc)
 		if (pexblock->startpc + pexblock->size * 4 <= lowerextent)
 			break;
 
-		lowerextent = std::min(lowerextent, pexblock->startpc);
+		lowerextent = MIN(lowerextent, pexblock->startpc);
 		blockidx--;
 	}
 
@@ -942,8 +942,8 @@ static __fi u32 psxRecClearMem(u32 pc)
 		if (pexblock->startpc >= upperextent)
 			break;
 
-		lowerextent = std::min(lowerextent, pexblock->startpc);
-		upperextent = std::max(upperextent, pexblock->startpc + pexblock->size * 4);
+		lowerextent = MIN(lowerextent, pexblock->startpc);
+		upperextent = MAX(upperextent, pexblock->startpc + pexblock->size * 4);
 
 		blockidx++;
 	}
@@ -1319,7 +1319,7 @@ StartRecomp:
 	s_pCurBlockEx->size = (psxpc - startpc) >> 2;
 
 	if (!(psxpc & 0x10000000))
-		g_psxMaxRecMem = std::max((psxpc & ~0xa0000000), g_psxMaxRecMem);
+		g_psxMaxRecMem = MAX((psxpc & ~0xa0000000), g_psxMaxRecMem);
 
 	if (psxbranch == 2)
 	{

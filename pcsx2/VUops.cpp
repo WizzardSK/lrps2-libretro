@@ -1441,12 +1441,12 @@ static __fi void _vuMSUBAw(VURegs* VU)
 
 static __fi u32 fp_max(u32 a, u32 b)
 {
-	return ((s32)a < 0 && (s32)b < 0) ? std::min<s32>(a, b) : std::max<s32>(a, b);
+	return ((s32)a < 0 && (s32)b < 0) ? MIN(a, b) : MAX(a, b);
 }
 
 static __fi u32 fp_min(u32 a, u32 b)
 {
-	return ((s32)a < 0 && (s32)b < 0) ? std::max<s32>(a, b) : std::min<s32>(a, b);
+	return ((s32)a < 0 && (s32)b < 0) ? MAX(a, b) : MIN(a, b);
 }
 
 static __fi void _vuMAX(VURegs* VU)

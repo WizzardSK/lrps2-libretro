@@ -19,21 +19,10 @@
 #include "SndOut.h"
 #include "Global.h"
 
+#include "../../common/Pcsx2Defs.h"
 #include "../GS/MultiISA.h"
 
 #include <array>
-
-#ifndef MAX
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
-#endif
-
-#ifndef MIN
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-#endif
-
-#ifndef CLAMP
-#define CLAMP(val, minval, maxval) (MIN(maxval, MAX(minval, val)))
-#endif
 
 struct V_SPDIF
 {

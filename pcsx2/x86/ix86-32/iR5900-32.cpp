@@ -288,12 +288,12 @@ static void recClear(u32 addr, u32 size)
 
 		if (blockend <= addr)
 		{
-			lowerextent = std::max(lowerextent, blockend);
+			lowerextent = MAX(lowerextent, blockend);
 			break;
 		}
 
-		lowerextent = std::min(lowerextent, blockstart);
-		upperextent = std::max(upperextent, blockend);
+		lowerextent      = MIN(lowerextent, blockstart);
+		upperextent      = MAX(upperextent, blockend);
 		pblock->m_pFnptr = ((uptr)JITCompile);
 
 		blockidx--;
@@ -302,7 +302,7 @@ static void recClear(u32 addr, u32 size)
 	if (toRemoveLast != blockidx)
 		recBlocks.Remove((blockidx + 1), toRemoveLast);
 
-	upperextent = std::min(upperextent, ceiling);
+	upperextent = MIN(upperextent, ceiling);
 
 	if (upperextent > lowerextent)
 		ClearRecLUT(PC_GETBLOCK(lowerextent), upperextent - lowerextent);
@@ -1575,7 +1575,7 @@ static bool recSkipTimeoutLoop(s32 reg, bool is_timeout_loop)
 	// update v0 to reflect how long the loop would have run for.
 
 	// if (cycle >= nextEventCycle) { jump to dispatcher, we're running late }
-	// new_cycles = min(v0 * 8, nextEventCycle)
+	// new_cycles = MIN(v0 * 8, nextEventCycle)
 	// new_v0 = (new_cycles - cycles) / 8
 	// if new_v0 > 0 { jump to dispatcher because loop exited early }
 	// else new_v0 is 0, so exit loop
@@ -1597,7 +1597,7 @@ static bool recSkipTimeoutLoop(s32 reg, bool is_timeout_loop)
 	xMOV(edx, ptr32[&cpuRegs.GPR.r[reg].UL[0]]); // eax = v0
 	xLEA(rax, ptrNative[rdx * 8 + rbx]); // edx = v0 * 8 + cycle
 	xCMP(rcx, rax);
-	xCMOVB(rax, rcx); // eax = new_cycles = min(v8 * 8, nextEventCycle)
+	xCMOVB(rax, rcx); // eax = new_cycles = MIN(v8 * 8, nextEventCycle)
 	xMOV(ptr32[&cpuRegs.cycle], eax); // writeback new_cycles
 	xSUB(eax, ebx); // new_cycles -= cycle
 	xSHR(eax, 3); // compute new v0 value
@@ -2022,7 +2022,7 @@ StartRecomp:
 	s_pCurBlock->m_pFnptr = ((uptr)recPtr);
 
 	if (!(pc & 0x10000000))
-		maxrecmem = std::max((pc & ~0xa0000000), maxrecmem);
+		maxrecmem = MAX((pc & ~0xa0000000), maxrecmem);
 
 	if (g_branch == 2)
 	{

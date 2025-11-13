@@ -485,13 +485,13 @@ GSVector4i GSLocalMemory::GetRectForPageOffset(u32 base_bp, u32 offset_bp, u32 b
 {
 	const u32 page_offset = (offset_bp - base_bp) >> 5;
 	const GSVector2i& pgs = m_psm[psm].pgs;
-	const u32 valid_bw = std::max(1U, bw);
-	const GSVector2i page_offset_xy = GSVector2i(page_offset % valid_bw, page_offset / std::max(1U, valid_bw));
+	const u32 valid_bw    = MAX(1U, bw);
+	const GSVector2i page_offset_xy = GSVector2i(page_offset % valid_bw, page_offset / MAX(1U, valid_bw));
 	return GSVector4i(pgs * page_offset_xy).xyxy() + GSVector4i::loadh(pgs);
 }
 
-bool GSLocalMemory::HasOverlap(const u32 src_bp, const u32 src_bw, const u32 src_psm, const GSVector4i src_rect
-							, const u32 dst_bp, const u32 dst_bw, const u32 dst_psm, const GSVector4i dst_rect)
+bool GSLocalMemory::HasOverlap(const u32 src_bp, const u32 src_bw, const u32 src_psm, const GSVector4i src_rect,
+		const u32 dst_bp, const u32 dst_bw, const u32 dst_psm, const GSVector4i dst_rect)
 {
 	const u32 src_start_bp = GSLocalMemory::GetStartBlockAddress(src_bp, src_bw, src_psm, src_rect) & ~(BLOCKS_PER_PAGE - 1);
 	const u32 dst_start_bp = GSLocalMemory::GetStartBlockAddress(dst_bp, dst_bw, dst_psm, dst_rect) & ~(BLOCKS_PER_PAGE - 1);

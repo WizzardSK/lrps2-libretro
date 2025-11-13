@@ -112,7 +112,7 @@ void IPU1dma(void)
 	// Nothing has been processed except maybe a tag, or the DMA is ending
 	if(totalqwc == 0 || (IPU1Status.DMAFinished && !IPU1Status.InProgress))
 	{
-		totalqwc = std::max(4, totalqwc) + tagcycles;
+		totalqwc = MAX(4, totalqwc) + tagcycles;
 		IPU_INT_TO(totalqwc * BIAS);
 	}
 	else
@@ -158,7 +158,7 @@ void IPU0dma(void)
 
 	pMem = dmaGetAddr(ipu0ch.madr, true);
 
-	readsize = std::min(ipu0ch.qwc, (u32)ipuRegs.ctrl.OFC);
+	readsize = MIN(ipu0ch.qwc, (u32)ipuRegs.ctrl.OFC);
 	ipu_fifo.out.read(pMem, readsize);
 
 	ipu0ch.madr += readsize << 4;
