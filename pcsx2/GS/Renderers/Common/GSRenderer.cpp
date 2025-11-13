@@ -304,7 +304,10 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 	if (!idle_frame)
 		g_gs_device->AgePool();
 
-	g_gs_device->ResetAPIState();
+	/* For D3D11 we call ResetAPIState a bit later or we'll get a black screen */
++       const bool is_d3d11 = (g_gs_device->GetRenderAPI() == RenderAPI::D3D11);
+	if (!is_d3d11)
+		g_gs_device->ResetAPIState();
 	if (BeginPresentFrame(false))
 	{
 		GSTexture* current = g_gs_device->GetCurrent();
@@ -315,6 +318,8 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 
 			g_gs_device->PresentRect(current, src_uv, nullptr, draw_rect);
 		}
+		if (is_d3d11)
++                       g_gs_device->ResetAPIState();
 
 		g_gs_device->EndPresent();
 	}
