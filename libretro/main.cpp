@@ -1311,10 +1311,12 @@ void retro_set_environment(retro_environment_t cb)
 		filestream_vfs_init(&vfs_iface_info);
 }
 
+#define MAX_DISKS 10
 static std::vector<std::string> disk_images;
 static int image_index = 0;
+static bool disk_ejected = false;
 
-static bool RETRO_CALLCONV get_eject_state(void) { return cdvdRead(0x0B); }
+static bool RETRO_CALLCONV get_eject_state(void) { return disk_ejected; }
 static unsigned RETRO_CALLCONV get_image_index(void) { return image_index; }
 static unsigned RETRO_CALLCONV get_num_images(void) { return disk_images.size(); }
 
@@ -1323,31 +1325,28 @@ static bool RETRO_CALLCONV set_eject_state(bool ejected)
 	if (get_eject_state() == ejected)
 		return false;
 
-	cpu_thread_pause();
-
-	if (ejected)
+	if (ejected || image_index < 0 || image_index >= (int)disk_images.size())
+	{
 		cdvdCtrlTrayOpen();
+		VMManager::ChangeDisc(CDVD_SourceType::NoDisc, "");
+	}
 	else
 	{
-		if (image_index < 0 || image_index >= (int)disk_images.size())
-			VMManager::ChangeDisc(CDVD_SourceType::NoDisc, "");
-		else
-			VMManager::ChangeDisc(CDVD_SourceType::Iso, disk_images[image_index]);
+		VMManager::ChangeDisc(CDVD_SourceType::Iso, disk_images[image_index]);
+		cdvdCtrlTrayClose();
 	}
 
-	VMManager::SetPaused(false);
+	disk_ejected = ejected;
 	return true;
 }
 
 static bool RETRO_CALLCONV set_image_index(unsigned index)
 {
-	if (get_eject_state())
-	{
-		image_index = index;
-		return true;
-	}
+	if (index >= disk_images.size())
+		return false;
 
-	return false;
+	image_index = index;
+	return true;
 }
 
 static bool RETRO_CALLCONV replace_image_index(unsigned index, const struct retro_game_info* info)
@@ -1427,7 +1426,7 @@ void retro_get_system_info(retro_system_info* info)
 	memset(info, 0, sizeof(*info));
 	info->library_version  = GIT_VERSION;
 	info->library_name     = "LRPS2";
-	info->valid_extensions = "elf|iso|ciso|cue|bin|gz|chd|cso|zso";
+	info->valid_extensions = "elf|iso|ciso|cue|gz|chd|cso|zso|m3u";
 	info->need_fullpath    = true;
 	info->block_extract    = true;
 }
@@ -2022,8 +2021,68 @@ bool retro_load_game(const struct retro_game_info* game)
 		if (!strcmp(path_get_extension(game->path), "cue"))
 			get_first_track_from_cue(game_path);
 
-		disk_images.push_back(game_path);
-		boot_params.filename = game_path;
+		/* M3U file list support */
+		if (!strcmp(path_get_extension(game->path), "m3u"))
+		{
+			RFILE *fd = filestream_open(game->path, RETRO_VFS_FILE_ACCESS_READ, RETRO_VFS_FILE_ACCESS_HINT_NONE);
+
+			if (fd)
+			{
+				int len;
+				char linebuf[PATH_MAX_LENGTH];
+				char game_dir[PATH_MAX_LENGTH];
+				char game_abs[PATH_MAX_LENGTH];
+
+				game_dir[0] = '\0';
+				game_abs[0] = '\0';
+
+				snprintf(game_dir, sizeof(game_dir), "%s", game_path.c_str());
+				path_basedir(game_dir);
+
+				while ((filestream_gets(fd, linebuf, PATH_MAX_LENGTH) != NULL) && (disk_images.size() < MAX_DISKS))
+				{
+					if (linebuf[0] == '#' || linebuf[0] == ';')
+						continue;
+
+					len = strlen(linebuf);
+
+					if (len == 0)
+						continue;
+
+					if (linebuf[len-1] == '\n')
+					{
+						linebuf[len-1] = 0;
+						len--;
+					}
+
+					if (len && (linebuf[len-1] == '\r'))
+					{
+						linebuf[len-1] = 0;
+						len--;
+					}
+
+					fill_pathname_join_special(game_abs, game_dir, linebuf, sizeof(game_abs));
+
+					if (path_is_valid(game_abs))
+					{
+						game_path = game_abs;
+						disk_images.push_back(game_path);
+
+						if (log_cb)
+							log_cb(RETRO_LOG_INFO, "Disk #%d added from M3U: \"%s\".\n", disk_images.size(), game_abs);
+					}
+				}
+
+				set_image_index(0);
+				get_image_path(get_image_index(), game_abs, sizeof(game_abs));
+				boot_params.filename = game_abs;
+			}
+		}
+		else
+		{
+			disk_images.push_back(game_path);
+			boot_params.filename = game_path;
+		}
 	}
 
 	cpu_thread = std::thread(cpu_thread_entry, boot_params);
