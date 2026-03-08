@@ -1424,7 +1424,8 @@ void retro_get_system_info(retro_system_info* info)
 #define GIT_VERSION ""
 #endif
 	memset(info, 0, sizeof(*info));
-	info->library_version  = GIT_VERSION;
+	/* the version is checked by retroachievements, it should be semver */
+	info->library_version  = "v2.0.0-" GIT_VERSION;
 	info->library_name     = "LRPS2";
 	info->valid_extensions = "elf|iso|ciso|cue|gz|chd|cso|zso|m3u";
 	info->need_fullpath    = true;
