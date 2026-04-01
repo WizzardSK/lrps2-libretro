@@ -224,8 +224,8 @@ struct tlbs
 
 #endif
 
-alignas(16) extern cpuRegisters cpuRegs;
-alignas(16) extern fpuRegisters fpuRegs;
+extern cpuRegisters& cpuRegs;
+extern fpuRegisters& fpuRegs;
 alignas(16) extern tlbs tlb[48];
 
 extern std::atomic<bool> eeEventTestIsActive;

@@ -42,8 +42,6 @@
 s32 EEsCycle;		// used to sync the IOP to the EE
 u32 EEoCycle;
 
-alignas(16) cpuRegisters cpuRegs;
-alignas(16) fpuRegisters fpuRegs;
 alignas(16) tlbs tlb[48];
 R5900cpu *Cpu = NULL;
 

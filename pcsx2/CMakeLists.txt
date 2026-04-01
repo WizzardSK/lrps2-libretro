@@ -729,6 +729,7 @@ set(pcsx2WindowsSources
 
 # x86 sources
 set(pcsx2x86Sources
+	x86/CpuState.cpp
 	x86/BaseblockEx.cpp
 	x86/iCOP0.cpp
 	x86/iCore.cpp
