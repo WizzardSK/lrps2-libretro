@@ -178,7 +178,13 @@ set(pcsx2Headers
 	VirtualMemory.h
 	vtlb.h
 	VUmicro.h
-	VUops.h)
+	VUops.h
+	microVU/microVU_Types.h
+	microVU/microVU_Const.h
+	microVU/microVU_Structs.h
+	microVU/microVU_BlockManager.inl
+	microVU/microVU_Analyze.inl
+	microVU/microVU_Pipeline.inl)
 
 # CDVD sources
 set(pcsx2CDVDSources
@@ -768,7 +774,6 @@ set(pcsx2x86Headers
 	x86/iR5900MultDiv.h
 	x86/iR5900Shift.h
 	x86/microVU_Alloc.inl
-	x86/microVU_Analyze.inl
 	x86/microVU_Branch.inl
 	x86/microVU_Clamp.inl
 	x86/microVU_Compile.inl

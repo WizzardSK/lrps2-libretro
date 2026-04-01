@@ -322,7 +322,7 @@ _mVUt void* mVUexecute(u32 startPC, u32 cycles)
 	u32 vuLimit     = vuIndex ? 0x3ff8 : 0xff8;
 	mVU.cycles      = cycles;
 	mVU.totalCycles = cycles;
-	xSetPtr(mVU.prog.x86ptr); // Set x86ptr to where last program left off
+	xSetPtr(mVU.prog.codePtr); // Set codePtr to where last program left off
 	return mVUsearchProg<vuIndex>(startPC & vuLimit, (uptr)&mVU.prog.lpState); // Find and set correct program
 }
 
@@ -334,9 +334,9 @@ _mVUt void mVUcleanUp(void)
 {
 	microVU& mVU = mVUx;
 
-	mVU.prog.x86ptr = xGetAlignedCallTarget();
+	mVU.prog.codePtr = xGetAlignedCallTarget();
 
-	if ((xGetPtr() < mVU.prog.x86start) || (xGetPtr() >= mVU.prog.x86end))
+	if ((xGetPtr() < mVU.prog.codeStart) || (xGetPtr() >= mVU.prog.codeEnd))
 		mVUreset(mVU, false);
 
 	mVU.cycles = mVU.totalCycles - std::max(0, mVU.cycles);

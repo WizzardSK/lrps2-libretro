@@ -107,9 +107,9 @@ void mVUreset(microVU& mVU, bool resetReserve)
 
 	// Setup Dynarec Cache Limits for Each Program
 	u8* z = mVU.cache;
-	mVU.prog.x86start = z;
-	mVU.prog.x86ptr   = z;
-	mVU.prog.x86end   = z + ((mVU.cacheSize - mVUcacheSafeZone) * _1mb);
+	mVU.prog.codeStart = z;
+	mVU.prog.codePtr   = z;
+	mVU.prog.codeEnd   = z + ((mVU.cacheSize - mVUcacheSafeZone) * _1mb);
 
 	for (u32 i = 0; i < (mVU.progSize / 2); i++)
 	{
