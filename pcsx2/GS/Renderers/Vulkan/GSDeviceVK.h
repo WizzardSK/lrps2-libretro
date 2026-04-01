@@ -118,10 +118,7 @@ public:
 	enum : u32
 	{
 		NUM_TFX_DYNAMIC_OFFSETS = 2,
-		NUM_TFX_DRAW_TEXTURES = 2,
-		NUM_TFX_RT_TEXTURES = 2,
-		NUM_CONVERT_TEXTURES = 1,
-		NUM_CONVERT_SAMPLERS = 1,
+		NUM_UTILITY_SAMPLERS = 1,
 		CONVERT_PUSH_CONSTANTS_SIZE = 96,
 
 		VERTEX_BUFFER_SIZE = 32 * 1024 * 1024,
@@ -133,7 +130,6 @@ public:
 	{
 		TFX_DESCRIPTOR_SET_UBO,
 		TFX_DESCRIPTOR_SET_TEXTURES,
-		TFX_DESCRIPTOR_SET_RT,
 
 		NUM_TFX_DESCRIPTOR_SETS,
 	};
@@ -204,9 +200,6 @@ public:
        __fi VkCommandBuffer GetCurrentCommandBuffer() const { return m_current_command_buffer; }
        __fi VKStreamBuffer& GetTextureUploadBuffer() { return m_texture_upload_buffer; }
        VkCommandBuffer GetCurrentInitCommandBuffer();
-
-       /// Allocates a descriptor set from the pool reserved for the current frame.
-       VkDescriptorSet AllocateDescriptorSet(VkDescriptorSetLayout set_layout);
 
        /// Allocates a descriptor set from the pool reserved for the current frame.
        VkDescriptorSet AllocatePersistentDescriptorSet(VkDescriptorSetLayout set_layout);
@@ -291,7 +284,6 @@ private:
 	       // [0] - Init (upload) command buffer, [1] - draw command buffer
 	       VkCommandPool command_pool = VK_NULL_HANDLE;
 	       std::array<VkCommandBuffer, 2> command_buffers{VK_NULL_HANDLE, VK_NULL_HANDLE};
-	       VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
 	       VkFence fence = VK_NULL_HANDLE;
 	       u64 fence_counter = 0;
 	       bool init_buffer_used = false;
@@ -351,8 +343,7 @@ private:
 	VkPipelineLayout m_utility_pipeline_layout = VK_NULL_HANDLE;
 
 	VkDescriptorSetLayout m_tfx_ubo_ds_layout = VK_NULL_HANDLE;
-	VkDescriptorSetLayout m_tfx_sampler_ds_layout = VK_NULL_HANDLE;
-	VkDescriptorSetLayout m_tfx_rt_texture_ds_layout = VK_NULL_HANDLE;
+	VkDescriptorSetLayout m_tfx_texture_ds_layout = VK_NULL_HANDLE;
 	VkPipelineLayout m_tfx_pipeline_layout = VK_NULL_HANDLE;
 
 	VKStreamBuffer m_vertex_stream_buffer;
@@ -545,22 +536,29 @@ public:
 private:
 	enum DIRTY_FLAG : u32
 	{
-		DIRTY_FLAG_TFX_SAMPLERS_DS = (1 << 0),
-		DIRTY_FLAG_TFX_RT_TEXTURE_DS = (1 << 1),
-		DIRTY_FLAG_TFX_UBO = (1 << 2),
-		DIRTY_FLAG_UTILITY_TEXTURE = (1 << 3),
-		DIRTY_FLAG_BLEND_CONSTANTS = (1 << 4),
-		DIRTY_FLAG_LINE_WIDTH = (1 << 5),
-		DIRTY_FLAG_INDEX_BUFFER = (1 << 6),
-		DIRTY_FLAG_VIEWPORT = (1 << 7),
-		DIRTY_FLAG_SCISSOR = (1 << 8),
-		DIRTY_FLAG_PIPELINE = (1 << 9),
-		DIRTY_FLAG_VS_CONSTANT_BUFFER = (1 << 10),
-		DIRTY_FLAG_PS_CONSTANT_BUFFER = (1 << 11),
+		DIRTY_FLAG_TFX_TEXTURE_0 = (1 << 0), // bits 0-3 for 4 textures
+		DIRTY_FLAG_TFX_UBO = (1 << 4),
+		DIRTY_FLAG_UTILITY_TEXTURE = (1 << 5),
+		DIRTY_FLAG_BLEND_CONSTANTS = (1 << 6),
+		DIRTY_FLAG_LINE_WIDTH = (1 << 7),
+		DIRTY_FLAG_INDEX_BUFFER = (1 << 8),
+		DIRTY_FLAG_VIEWPORT = (1 << 9),
+		DIRTY_FLAG_SCISSOR = (1 << 10),
+		DIRTY_FLAG_PIPELINE = (1 << 11),
+		DIRTY_FLAG_VS_CONSTANT_BUFFER = (1 << 12),
+		DIRTY_FLAG_PS_CONSTANT_BUFFER = (1 << 13),
 
-		DIRTY_BASE_STATE = DIRTY_FLAG_INDEX_BUFFER | DIRTY_FLAG_PIPELINE | DIRTY_FLAG_TFX_UBO |
-						   DIRTY_FLAG_VIEWPORT | DIRTY_FLAG_SCISSOR | DIRTY_FLAG_BLEND_CONSTANTS | DIRTY_FLAG_LINE_WIDTH,
-		DIRTY_TFX_STATE = DIRTY_BASE_STATE | DIRTY_FLAG_TFX_SAMPLERS_DS | DIRTY_FLAG_TFX_RT_TEXTURE_DS,
+		DIRTY_FLAG_TFX_TEXTURE_TEX    = (DIRTY_FLAG_TFX_TEXTURE_0 << TFX_TEXTURE_TEXTURE),
+		DIRTY_FLAG_TFX_TEXTURE_PALETTE = (DIRTY_FLAG_TFX_TEXTURE_0 << TFX_TEXTURE_PALETTE),
+		DIRTY_FLAG_TFX_TEXTURE_RT     = (DIRTY_FLAG_TFX_TEXTURE_0 << TFX_TEXTURE_RT),
+		DIRTY_FLAG_TFX_TEXTURE_PRIMID = (DIRTY_FLAG_TFX_TEXTURE_0 << TFX_TEXTURE_PRIMID),
+
+		DIRTY_FLAG_TFX_TEXTURES = DIRTY_FLAG_TFX_TEXTURE_TEX | DIRTY_FLAG_TFX_TEXTURE_PALETTE |
+		                          DIRTY_FLAG_TFX_TEXTURE_RT | DIRTY_FLAG_TFX_TEXTURE_PRIMID,
+
+		DIRTY_BASE_STATE = DIRTY_FLAG_INDEX_BUFFER | DIRTY_FLAG_PIPELINE |
+		                   DIRTY_FLAG_VIEWPORT | DIRTY_FLAG_SCISSOR | DIRTY_FLAG_BLEND_CONSTANTS | DIRTY_FLAG_LINE_WIDTH,
+		DIRTY_TFX_STATE = DIRTY_BASE_STATE | DIRTY_FLAG_TFX_TEXTURES,
 		DIRTY_UTILITY_STATE = DIRTY_BASE_STATE | DIRTY_FLAG_UTILITY_TEXTURE,
 		DIRTY_CONSTANT_BUFFER_STATE = DIRTY_FLAG_VS_CONSTANT_BUFFER | DIRTY_FLAG_PS_CONSTANT_BUFFER,
 		ALL_DIRTY_STATE = DIRTY_BASE_STATE | DIRTY_TFX_STATE | DIRTY_UTILITY_STATE | DIRTY_CONSTANT_BUFFER_STATE,
@@ -601,13 +599,10 @@ private:
 	VkSampler m_tfx_sampler = VK_NULL_HANDLE;
 	u32 m_tfx_sampler_sel = 0;
 	VkDescriptorSet m_tfx_ubo_descriptor_set = VK_NULL_HANDLE;
-	VkDescriptorSet m_tfx_texture_descriptor_set = VK_NULL_HANDLE;
-	VkDescriptorSet m_tfx_rt_descriptor_set = VK_NULL_HANDLE;
 	std::array<u32, NUM_TFX_DYNAMIC_OFFSETS> m_tfx_dynamic_offsets{};
 
 	const GSTextureVK* m_utility_texture = nullptr;
 	VkSampler m_utility_sampler = VK_NULL_HANDLE;
-	VkDescriptorSet m_utility_descriptor_set = VK_NULL_HANDLE;
 
 	PipelineLayout m_current_pipeline_layout = PipelineLayout::Undefined;
 	VkPipeline m_current_pipeline = VK_NULL_HANDLE;
