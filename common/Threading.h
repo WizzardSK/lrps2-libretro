@@ -215,6 +215,30 @@ namespace Threading
 		UserspaceSemaphore() = default;
 		~UserspaceSemaphore() = default;
 
+#if defined(__aarch64__)
+		void Post()
+		{
+			m_counter.fetch_add(1, std::memory_order_release);
+			__asm__ __volatile__("sev" ::: "memory");
+		}
+
+		void Wait()
+		{
+			int32_t val, res;
+			int32_t* ptr = reinterpret_cast<int32_t*>(&m_counter);
+			__asm__ __volatile__("sevl");
+			for (;;)
+			{
+				__asm__ __volatile__("wfe" ::: "memory");
+				__asm__ __volatile__("ldaxr %w0, [%1]" : "=&r"(val) : "r"(ptr) : "memory");
+				if (val <= 0)
+					continue;
+				__asm__ __volatile__("stlxr %w0, %w1, [%2]" : "=&r"(res) : "r"(val - 1), "r"(ptr) : "memory");
+				if (res == 0)
+					return;
+			}
+		}
+#else
 		void Post()
 		{
 			if (m_counter.fetch_add(1, std::memory_order_release) < 0)
@@ -226,6 +250,7 @@ namespace Threading
 			if (m_counter.fetch_sub(1, std::memory_order_acquire) <= 0)
 				m_sema.Wait();
 		}
+#endif
 
 		bool TryWait()
 		{
