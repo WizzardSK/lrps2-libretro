@@ -166,7 +166,7 @@ protected:
 	void CheckCLUTValidity(u32 prim);
 
 	template <u32 prim, bool auto_flush, bool index_swap>
-	void VertexKick(u32 skip);
+	void VertexKick(u32 skip, u32& maxcount);
 
 	// following functions need m_vt to be initialized
 

@@ -473,7 +473,7 @@ void GSState::GIFPackedRegHandlerXYZF2(const GIFPackedReg* RESTRICT r)
 
 	m_v.m[1] = xy.upl32(zf);
 
-	VertexKick<prim, auto_flush, index_swap>(adc ? 1 : r->XYZF2.Skip());
+	VertexKick<prim, auto_flush, index_swap>(adc ? 1 : r->XYZF2.Skip(), m_vertex.maxcount);
 }
 
 template <u32 prim, u32 adc, bool auto_flush, bool index_swap>
@@ -488,7 +488,7 @@ void GSState::GIFPackedRegHandlerXYZ2(const GIFPackedReg* RESTRICT r)
 
 	m_v.m[1] = xyz.upl64(GSVector4i::loadl(&m_v.UV));
 
-	VertexKick<prim, auto_flush, index_swap>(adc ? 1 : r->XYZ2.Skip());
+	VertexKick<prim, auto_flush, index_swap>(adc ? 1 : r->XYZ2.Skip(), m_vertex.maxcount);
 }
 
 void GSState::GIFPackedRegHandlerFOG(const GIFPackedReg* RESTRICT r)
@@ -517,9 +517,12 @@ void GSState::GIFPackedRegHandlerSTQRGBAXYZF2(const GIFPackedReg* RESTRICT r, u3
 	}
 
 	const GIFPackedReg* RESTRICT r_end = r + size;
+	u32 local_maxcount = m_vertex.maxcount;
 
 	while (r < r_end)
 	{
+		__builtin_prefetch(r + 6, 0, 3);
+
 		const GSVector4i st = GSVector4i::loadl(&r[0].U64[0]);
 		GSVector4i q = GSVector4i::loadl(&r[0].U64[1]);
 		const GSVector4i rgba = (GSVector4i::load<false>(&r[1]) & GSVector4i::x000000ff()).ps32().pu16();
@@ -541,7 +544,7 @@ void GSState::GIFPackedRegHandlerSTQRGBAXYZF2(const GIFPackedReg* RESTRICT r, u3
 			flushes_checked = true;
 			CheckFlushes();
 		}
-		VertexKick<prim, auto_flush, index_swap>(skip);
+		VertexKick<prim, auto_flush, index_swap>(skip, local_maxcount);
 
 		r += 3;
 	}
@@ -561,9 +564,12 @@ void GSState::GIFPackedRegHandlerSTQRGBAXYZ2(const GIFPackedReg* RESTRICT r, u32
 	}
 
 	const GIFPackedReg* RESTRICT r_end = r + size;
+	u32 local_maxcount = m_vertex.maxcount;
 
 	while (r < r_end)
 	{
+		__builtin_prefetch(r + 6, 0, 3);
+
 		const GSVector4i st = GSVector4i::loadl(&r[0].U64[0]);
 		GSVector4i q = GSVector4i::loadl(&r[0].U64[1]);
 		const GSVector4i rgba = (GSVector4i::load<false>(&r[1]) & GSVector4i::x000000ff()).ps32().pu16();
@@ -584,7 +590,7 @@ void GSState::GIFPackedRegHandlerSTQRGBAXYZ2(const GIFPackedReg* RESTRICT r, u32
 			flushes_checked = true;
 			CheckFlushes();
 		}
-		VertexKick<prim, auto_flush, index_swap>(skip);
+		VertexKick<prim, auto_flush, index_swap>(skip, local_maxcount);
 
 		r += 3;
 	}
@@ -674,7 +680,7 @@ void GSState::GIFRegHandlerXYZF2(const GIFReg* RESTRICT r)
 
 	m_v.m[1] = xyz.upl64(uvf);
 
-	VertexKick<prim, auto_flush, index_swap>(adc);
+	VertexKick<prim, auto_flush, index_swap>(adc, m_vertex.maxcount);
 }
 
 template <u32 prim, u32 adc, bool auto_flush, bool index_swap>
@@ -685,7 +691,7 @@ void GSState::GIFRegHandlerXYZ2(const GIFReg* RESTRICT r)
 
 	m_v.m[1] = GSVector4i::load(&r->XYZ, &m_v.UV);
 
-	VertexKick<prim, auto_flush, index_swap>(adc);
+	VertexKick<prim, auto_flush, index_swap>(adc, m_vertex.maxcount);
 }
 
 template <int i>
@@ -3136,7 +3142,7 @@ __forceinline void GSState::HandleAutoFlush()
 }
 
 template <u32 prim, bool auto_flush, bool index_swap>
-__forceinline void GSState::VertexKick(u32 skip)
+__forceinline void GSState::VertexKick(u32 skip, u32& maxcount)
 {
 	constexpr u32 n = NumIndicesForPrim(prim);
 
@@ -3194,7 +3200,7 @@ __forceinline void GSState::VertexKick(u32 skip)
 	GSVector4i pmin, pmax;
 	if (skip == 0)
 	{
-		const GSVector4i v0 = m_vertex.xy[(xy_tail - 1) & 3];
+		const GSVector4i v0 = xy; // reuse register — same as m_vertex.xy[(xy_tail - 1) & 3]
 		const GSVector4i v1 = m_vertex.xy[(xy_tail - 2) & 3];
 		const GSVector4i v2 = (prim == GS_TRIANGLEFAN) ? m_vertex.xyhead : m_vertex.xy[(xy_tail - 3) & 3];
 
@@ -3275,8 +3281,8 @@ __forceinline void GSState::VertexKick(u32 skip)
 				m_vertex.head = head + 1;
 				// fallthrough
 			case GS_TRIANGLEFAN:
-				if (tail >= m_vertex.maxcount)
-					GrowVertexBuffer(); // in case too many vertices were skipped
+				if (tail >= maxcount)
+					{ GrowVertexBuffer(); maxcount = m_vertex.maxcount; } // in case too many vertices were skipped
 				break;
 			default:
 				break;
@@ -3285,8 +3291,8 @@ __forceinline void GSState::VertexKick(u32 skip)
 		return;
 	}
 
-	if (tail >= m_vertex.maxcount)
-		GrowVertexBuffer();
+	if (tail >= maxcount)
+		{ GrowVertexBuffer(); maxcount = m_vertex.maxcount; }
 
 	if (m_index.tail == 0 && ((m_backed_up_ctx != m_env.PRIM.CTXT) || m_dirty_gs_regs))
 	{
