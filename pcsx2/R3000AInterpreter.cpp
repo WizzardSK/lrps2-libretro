@@ -22,8 +22,6 @@
 #include "IopBios.h"
 #include "IopHw.h"
 
-// Used to flag delay slot instructions when throwig exceptions.
-bool iopIsDelaySlot = false;
 
 static bool branch2 = 0;
 static u32 branchPC;
