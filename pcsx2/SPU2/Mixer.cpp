@@ -340,12 +340,31 @@ static void V_VolumeSlide_Update(V_VolumeSlide &vs)
 static __forceinline StereoOut32 MixVoice(V_Core& thiscore, V_Voice& vc, uint coreidx, uint voiceidx)
 {
 	StereoOut32 voiceOut;
-	s32 Value      = 0;
+	voiceOut.Left  = 0;
+	voiceOut.Right = 0;
+
+	// Stopped voices: advance pitch + NextA for IRQ tracking only.
+	// Skip VolumeSlide and sample decode — output is zero regardless.
+	if (vc.ADSR.Phase == PHASE_STOPPED)
+	{
+		UpdatePitch(vc, coreidx, voiceidx);
+		while (vc.SP >= 0)
+			GetNextDataDummy(thiscore, vc, voiceidx);
+
+		if (voiceidx == 1)
+			spu2M_WriteFast(((0 == coreidx) ? 0x400 : 0xc00) + OutPos, 0);
+		else if (voiceidx == 3)
+			spu2M_WriteFast(((0 == coreidx) ? 0x600 : 0xe00) + OutPos, 0);
+
+		return voiceOut;
+	}
+
+	// Active voice path.
 
 	// Most games don't use much volume slide effects.  So only call the UpdateVolume
 	// methods when needed by checking the flag outside the method here...
 	// (Note: Ys 6 : Ark of Nephistm uses these effects)
-	
+
 	if (vc.Volume.Left.Enable)
 		V_VolumeSlide_Update(vc.Volume.Left);
 	if (vc.Volume.Right.Enable)
@@ -357,36 +376,26 @@ static __forceinline StereoOut32 MixVoice(V_Core& thiscore, V_Voice& vc, uint co
 
 	UpdatePitch(vc, coreidx, voiceidx);
 
-	voiceOut.Left  = 0;
-	voiceOut.Right = 0;
-
-	if (vc.ADSR.Phase > PHASE_STOPPED)
-	{
-		if (vc.Noise)
-			Value = (s16)thiscore.NoiseOut;
-		else
-			Value = GetVoiceValues(thiscore, vc, voiceidx);
-
-		/* Update and Apply ADSR  (applies to normal and noise sources) */
-
-		if (vc.ADSR.Phase == PHASE_STOPPED)
-			vc.ADSR.Value = 0;
-		else if (!ADSR_Calculate(vc.ADSR))
-		{
-			vc.ADSR.Value = 0;
-			vc.ADSR.Phase = PHASE_STOPPED;
-		}
-		Value     = (Value * vc.ADSR.Value) >> 15;
-		vc.OutX   = Value;
-
-		voiceOut.Left   = (Value * vc.Volume.Left.Value)  >> 15;
-		voiceOut.Right  = (Value * vc.Volume.Right.Value) >> 15;
-	}
+	s32 Value;
+	if (vc.Noise)
+		Value = (s16)thiscore.NoiseOut;
 	else
+		Value = GetVoiceValues(thiscore, vc, voiceidx);
+
+	/* Update and Apply ADSR  (applies to normal and noise sources) */
+
+	if (vc.ADSR.Phase == PHASE_STOPPED)
+		vc.ADSR.Value = 0;
+	else if (!ADSR_Calculate(vc.ADSR))
 	{
-		while (vc.SP >= 0)
-			GetNextDataDummy(thiscore, vc, voiceidx); // Dummy is enough
+		vc.ADSR.Value = 0;
+		vc.ADSR.Phase = PHASE_STOPPED;
 	}
+	Value     = (Value * vc.ADSR.Value) >> 15;
+	vc.OutX   = Value;
+
+	voiceOut.Left   = (Value * vc.Volume.Left.Value)  >> 15;
+	voiceOut.Right  = (Value * vc.Volume.Right.Value) >> 15;
 
 	// Write-back of raw voice data (post ADSR applied)
 	if (voiceidx == 1)
