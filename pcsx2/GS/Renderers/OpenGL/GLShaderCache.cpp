@@ -27,6 +27,7 @@
 
 #include <file/file_path.h>
 
+namespace {
 #pragma pack(push, 1)
 struct CacheIndexEntry
 {
@@ -41,6 +42,7 @@ struct CacheIndexEntry
 	u32 blob_format;
 };
 #pragma pack(pop)
+} // namespace
 
 GLShaderCache::GLShaderCache() = default;
 

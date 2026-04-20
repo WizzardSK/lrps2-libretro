@@ -151,6 +151,7 @@ std::optional<SPIRVCodeVector> CompileShader(ShaderType type, std::string_view s
 	return std::nullopt;
 }
 
+namespace {
 #pragma pack(push, 4)
 struct VK_PIPELINE_CACHE_HEADER
 {
@@ -171,6 +172,7 @@ struct CacheIndexEntry
 	u32 blob_size;
 };
 #pragma pack(pop)
+} // namespace
 
 static bool ValidatePipelineCacheHeader(const VK_PIPELINE_CACHE_HEADER& header)
 {
