@@ -1602,23 +1602,39 @@ void GSDeviceVK::PresentRect(GSTexture* sTex, const GSVector4& sRect, GSTexture*
 	GSTextureVK* tex = (GSTextureVK*)sTex;
 	if (tex)
 	{
-		retro_vulkan_image vkimage;
-		vkimage.image_view   = tex->GetView();
-		vkimage.image_layout = tex->GetVkLayout();
-		vkimage.create_info  = {
-			VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, nullptr, 0,
-			tex->GetImage(), VK_IMAGE_VIEW_TYPE_2D, VK_FORMAT_R8G8B8A8_UNORM,
-			{VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
-				VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY},
-			{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
-		};
 		/* Blanking enforce, see 'GSRenderer::VSync()' */
 		if (!sRect.right && !sRect.bottom)
-			; /* no-op */
+		{
+			/* Blanking: clear the registered image so the frontend
+			 * falls back to its default (black) texture. Matches the
+			 * DX11 path's ClearRenderTarget(sTex, 0) blanking. */
+			vulkan->set_image(vulkan->handle, nullptr, 0, nullptr, vulkan->queue_index);
+			video_cb(RETRO_HW_FRAME_BUFFER_VALID, tex->GetWidth(), tex->GetHeight(), 0);
+		}
 		else
+		{
+			/* Storage for the retro_vulkan_image must outlive this
+			 * call: per the Vulkan HW interface spec the frontend
+			 * stores the pointer (no deep copy) and may dereference
+			 * it again during cached-frame replay (used for pause
+			 * and HW screenshots). A stack-allocated struct here
+			 * would be a use-after-return for those replays. */
+			static retro_vulkan_image vkimage;
+			vkimage = {};
+			vkimage.image_view   = tex->GetView();
+			vkimage.image_layout = tex->GetVkLayout();
+			vkimage.create_info  = {
+				VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, nullptr, 0,
+				tex->GetImage(), VK_IMAGE_VIEW_TYPE_2D, VK_FORMAT_R8G8B8A8_UNORM,
+				{VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+					VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY},
+				{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+			};
 			vulkan->set_image(vulkan->handle, &vkimage, 0, nullptr, vulkan->queue_index);
-		video_cb(RETRO_HW_FRAME_BUFFER_VALID, tex->GetWidth(), tex->GetHeight(), 0);
-		vulkan->set_image(vulkan->handle, nullptr, 0, nullptr, vulkan->queue_index);
+			video_cb(RETRO_HW_FRAME_BUFFER_VALID, tex->GetWidth(), tex->GetHeight(), 0);
+			/* Do not unregister the image after video_cb: the frontend
+			 * may reuse the pointer for cached-frame replays. */
+		}
 	}
 }
 

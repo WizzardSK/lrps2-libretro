@@ -521,7 +521,14 @@ void GSRendererPGS::VSync(u32 field, bool registers_written)
 			static uint32_t last_base_height = 0;
 			uint32_t new_base_width          = vsync.image->get_width();
 			uint32_t new_base_height         = vsync.image->get_height();
-			retro_vulkan_image vkimage       = {};
+			/* Storage for the retro_vulkan_image must outlive the
+			 * VSync() call: per the Vulkan HW interface spec, the
+			 * frontend stores the pointer (no deep copy) and may
+			 * dereference it again during cached-frame replay (used
+			 * for pause and HW screenshots). A stack-allocated struct
+			 * here would be a use-after-return for those replays. */
+			static retro_vulkan_image vkimage;
+			vkimage = {};
 			vkimage.image_view = vsync.image->get_view().get_unorm_view().view;
 			vkimage.image_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 			vkimage.create_info = {
@@ -571,7 +578,11 @@ void GSRendererPGS::VSync(u32 field, bool registers_written)
 
 			hw_render_iface->set_image(hw_render_iface->handle, &vkimage, 0, nullptr, hw_render_iface->queue_index);
 			video_cb(RETRO_HW_FRAME_BUFFER_VALID, new_base_width, new_base_height, 0);
-			hw_render_iface->set_image(hw_render_iface->handle, nullptr, 0, nullptr, hw_render_iface->queue_index);
+			/* Do not unregister the image after video_cb: the frontend
+			 * may reuse the pointer for cached-frame replays during
+			 * pause and HW screenshots. The underlying VkImage is kept
+			 * alive by `last_vsync_image`, and the static `vkimage`
+			 * keeps the descriptor pointer valid. */
 			last_vsync_image = vsync.image;
 			last_base_width  = new_base_width;
 			last_base_height = new_base_height;
