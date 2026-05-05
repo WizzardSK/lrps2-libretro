@@ -416,9 +416,12 @@ SOURCES_CXX += \
 	$(GRANITE_DIR)/math/transforms.cpp
 
 # Granite util
-# cli_parser, dynamic_library, message_queue, timeline_trace_file are excluded:
-# their consumers (viewer/slangmosh tools, audio mixer, ffmpeg decode, thread group,
-# wsi_dxgi) are not built in the libretro core.
+# cli_parser, dynamic_library, message_queue are excluded: their consumers
+# (viewer/slangmosh tools, audio mixer, ffmpeg decode, thread group, wsi_dxgi)
+# are not built in the libretro core.
+# timeline_trace_file is needed because Granite's vulkan/device.cpp calls
+# allocate_event/submit_event directly on system_handles.timeline_trace_file
+# (only the GRANITE_SCOPED_TIMELINE_EVENT macros are GRANITE_SHIPPING-gated).
 SOURCES_CXX += \
 	$(GRANITE_DIR)/util/aligned_alloc.cpp \
 	$(GRANITE_DIR)/util/arena_allocator.cpp \
@@ -429,6 +432,7 @@ SOURCES_CXX += \
 	$(GRANITE_DIR)/util/thread_id.cpp \
 	$(GRANITE_DIR)/util/thread_name.cpp \
 	$(GRANITE_DIR)/util/thread_priority.cpp \
+	$(GRANITE_DIR)/util/timeline_trace_file.cpp \
 	$(GRANITE_DIR)/util/timer.cpp
 
 # Granite vulkan
