@@ -37,13 +37,29 @@
 #if !defined(_WIN32)
 extern void* _aligned_malloc(size_t size, size_t align);
 extern void _aligned_free(void* pmem);
-extern void* pcsx2_aligned_realloc(void* handle, size_t new_size, size_t align, size_t old_size);
-#else
-// Both MSVC and mingw-w64 provide _aligned_realloc via <malloc.h>; use it
-// directly so that no out-of-line pcsx2_aligned_realloc symbol is needed.
-// AlignedMalloc.cpp guards its definition with `#if !defined(_WIN32)`, so on
-// the libretro Windows build no out-of-line copy ever existed - prior to
-// this change the mingw-w64 path declared an `extern` it never resolved.
-#define pcsx2_aligned_realloc(handle, new_size, align, old_size) \
-	_aligned_realloc(handle, new_size, align)
 #endif
+
+// pcsx2_aligned_realloc differs from MSVCRT's _aligned_realloc in one
+// important way: callers (Vif_HashBucket::add) are allowed to change the
+// alignment between the original allocation and the realloc.  MSDN
+// explicitly says:
+//   "It's an error to reallocate memory and change the alignment of a block."
+// (cpp-docs/c-runtime-library/reference/aligned-realloc.md)
+// So we cannot just forward to _aligned_realloc on Windows; we have to
+// emulate the POSIX-side behaviour of malloc-new + memcpy + free-old.
+// We provide an inline definition for every platform so no out-of-line
+// symbol is needed (matches the historical mingw situation where
+// AlignedMalloc.cpp's #if !defined(_WIN32) guard left the symbol
+// undefined - the build only ever linked because the mingw pre-d2d1ebc
+// __forceinline behaviour kept the call inlined into a single site).
+static inline void* pcsx2_aligned_realloc(void* handle, size_t new_size, size_t align, size_t old_size)
+{
+	void* newbuf = _aligned_malloc(new_size, align);
+
+	if (newbuf != NULL && handle != NULL)
+	{
+		std::memcpy(newbuf, handle, old_size < new_size ? old_size : new_size);
+		_aligned_free(handle);
+	}
+	return newbuf;
+}
