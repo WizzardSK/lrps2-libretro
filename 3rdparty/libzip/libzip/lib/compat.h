@@ -36,7 +36,7 @@
 
 #include "zipconf.h"
 
-#include "config.h"
+#include "libzip_config.h"
 
 /* to have *_MAX definitions for all types when compiling with g++ */
 #define __STDC_LIMIT_MACROS

@@ -19,7 +19,6 @@ GRANITE_DIR       := $(PGS_DIR)/Granite
 # Mirrors what the cmake LIBRETRO=ON build resolves to for pcsx2_libretro/PCSX2/
 # common targets.  Order matters: project headers first, then 3rdparty.
 INCFLAGS := \
-	-I$(DEPS_DIR)/libzip/private \
 	-I$(CORE_DIR) \
 	-I$(LRPS2_DIR) \
 	-I$(LRPS2_DIR)/x86 \
@@ -44,6 +43,7 @@ INCFLAGS := \
 	-I$(DEPS_DIR)/libpng \
 	-I$(DEPS_DIR)/libzip \
 	-I$(DEPS_DIR)/libzip/libzip/lib \
+	-I$(DEPS_DIR)/libzip/private \
 	-I$(DEPS_DIR)/chdr/libchdr/include \
 	-I$(DEPS_DIR)/lzma/include \
 	-I$(DEPS_DIR)/d3d12memalloc/include
