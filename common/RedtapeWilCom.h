@@ -34,6 +34,14 @@
 // The methods exposed below are exactly those used in the LRPS2 sources:
 //   .get(), .put(), .reset(), .detach(), .addressof()
 // plus the inherited operator->/operator bool/copy/move from WRL::ComPtr.
+//
+// operator& is overridden to return T** rather than WRL's ComPtrRef proxy.
+// IUnknown::QueryInterface has a templated overload `QueryInterface(Q** pp)`
+// whose argument deduction does not consider the user-defined conversions
+// ComPtrRef provides, so `obj->QueryInterface(&p)` fails to compile against
+// the WRL ComPtrRef return type.  Returning T** directly matches WIL's
+// original semantics and works for both QueryInterface(&p) and the
+// IID_PPV_ARGS(&p) and IID_PPV_ARGS(p.put()) forms on both MSVC and mingw.
 // ---------------------------------------------------------------------------
 #include <wrl/client.h>
 
@@ -55,6 +63,9 @@ namespace wil
 		T** addressof()       noexcept { return this->GetAddressOf(); }
 		void reset()          noexcept { this->Reset(); }
 		T*  detach()          noexcept { return this->Detach(); }
+
+		// Hide WRL's operator& (which returns ComPtrRef) -- see comment above.
+		T** operator&()       noexcept { return this->ReleaseAndGetAddressOf(); }
 	};
 } // namespace wil
 
