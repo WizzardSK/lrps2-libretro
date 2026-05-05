@@ -207,7 +207,12 @@ void GSDownloadTexture11::CopyFromTexture(
 	}
 	else
 	{
-		const CD3D11_BOX sbox(src.left, src.top, 0, src.right, src.bottom, 1);
+		// CD3D11_BOX is an MSVC d3d11.h-only C++ helper that mingw-w64
+		// doesn't ship.  Use the plain D3D11_BOX struct instead.
+		const D3D11_BOX sbox = {
+			static_cast<UINT>(src.left), static_cast<UINT>(src.top), 0u,
+			static_cast<UINT>(src.right), static_cast<UINT>(src.bottom), 1u,
+		};
 		GSDevice11::GetInstance()->GetD3DContext()->CopySubresourceRegion(
 			m_texture.get(), 0, drc.x, drc.y, 0, *static_cast<GSTexture11*>(stex), src_level, &sbox);
 	}

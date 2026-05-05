@@ -20,7 +20,7 @@
 
 #include "Pcsx2Defs.h"
 
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(_WIN32)
 #include <intrin.h>
 #endif
 
@@ -72,16 +72,19 @@
 #include <malloc.h> // alloca
 #endif
 
-#if !defined(_MSC_VER)
+#if !defined(_WIN32)
 /* http://svn.reactos.org/svn/reactos/trunk/reactos/include/crt/mingw32/intrin_x86.h?view=markup */
 //
-// MinGW used to be excluded from this branch under the assumption that it
-// shipped <intrin.h> with usable _BitScanForward / _BitScanReverse; in
-// practice that header has its own incompatibilities with libstdc++
-// (gcc bug 56038) and pulling it in just to get these two functions is
-// not worth the breakage.  Use the inline gcc-builtin fallback on MinGW
-// as well -- gcc provides __builtin_ctz / __builtin_clz on all the
-// targets PCSX2 cares about.
+// On Windows (MSVC, mingw-gcc, mingw-clang, clang-cl) <intrin.h> already
+// provides _BitScanForward / _BitScanReverse, included unconditionally
+// at the top of this file.  Defining our own here would conflict with
+// mingw-w64's declarations (which return 'unsigned char' rather than
+// 'int').  This block is therefore only for non-Windows targets: Linux,
+// macOS, etc., where <intrin.h> is unavailable and we synthesize the
+// functions from gcc / clang builtins.
+//
+// Note: __MINGW32__ is unreliable -- some MSYS2 mingw64 toolchains do
+// not define it -- so prefer the broader _WIN32 gate above.
 
 static inline int _BitScanForward(unsigned long* const Index, const unsigned long Mask)
 {

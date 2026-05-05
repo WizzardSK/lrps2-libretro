@@ -302,15 +302,11 @@ union MD5Hash
 
 static D3D12ShaderCache::CacheIndexKey D3D12ShaderCache_GetShaderCacheKey(D3D12ShaderCache::EntryType type, const char *shader_code, size_t shader_len, const D3D_SHADER_MACRO* macros, const char* entry_point)
 {
-	union
-	{
-		struct
-		{
-			u64 hash_low;
-			u64 hash_high;
-		};
-		u8 hash[16];
-	};
+	// gcc rejects anonymous struct-inside-union at function scope (an
+	// MSVC extension).  Use a plain byte buffer and memcpy out the two
+	// u64s -- this also keeps the strict-aliasing rules happy.
+	u8 hash[16];
+	u64 hash_low, hash_high;
 
 	D3D12ShaderCache::CacheIndexKey key = {};
 	key.type = type;
@@ -318,6 +314,8 @@ static D3D12ShaderCache::CacheIndexKey D3D12ShaderCache_GetShaderCacheKey(D3D12S
 	MD5Digest digest;
 	digest.Update(shader_code, static_cast<u32>(shader_len));
 	digest.Final(hash);
+	std::memcpy(&hash_low,  &hash[0], sizeof(u64));
+	std::memcpy(&hash_high, &hash[8], sizeof(u64));
 	key.source_hash_low = hash_low;
 	key.source_hash_high = hash_high;
 	key.source_length = static_cast<u32>(shader_len);
@@ -331,6 +329,8 @@ static D3D12ShaderCache::CacheIndexKey D3D12ShaderCache_GetShaderCacheKey(D3D12S
 			digest.Update(macro->Definition, std::strlen(macro->Definition));
 		}
 		digest.Final(hash);
+		std::memcpy(&hash_low,  &hash[0], sizeof(u64));
+		std::memcpy(&hash_high, &hash[8], sizeof(u64));
 		key.macro_hash_low = hash_low;
 		key.macro_hash_high = hash_high;
 	}
@@ -338,6 +338,8 @@ static D3D12ShaderCache::CacheIndexKey D3D12ShaderCache_GetShaderCacheKey(D3D12S
 	digest.Reset();
 	digest.Update(entry_point, static_cast<u32>(std::strlen(entry_point)));
 	digest.Final(hash);
+	std::memcpy(&hash_low,  &hash[0], sizeof(u64));
+	std::memcpy(&hash_high, &hash[8], sizeof(u64));
 	key.entry_point_low = hash_low;
 	key.entry_point_high = hash_high;
 

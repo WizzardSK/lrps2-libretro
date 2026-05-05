@@ -249,8 +249,14 @@ bool GSDevice11::Create()
 			return false;
 		}
 
-		const CD3D11_SHADER_RESOURCE_VIEW_DESC vb_srv_desc(
-			D3D11_SRV_DIMENSION_BUFFER, DXGI_FORMAT_UNKNOWN, 0, VERTEX_BUFFER_SIZE / sizeof(GSVertex));
+		// CD3D11_SHADER_RESOURCE_VIEW_DESC is an MSVC d3d11.h-only C++
+		// helper that mingw-w64 doesn't ship.  Spell out the equivalent
+		// plain D3D11_SHADER_RESOURCE_VIEW_DESC by hand.
+		D3D11_SHADER_RESOURCE_VIEW_DESC vb_srv_desc = {};
+		vb_srv_desc.Format = DXGI_FORMAT_UNKNOWN;
+		vb_srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		vb_srv_desc.Buffer.FirstElement = 0;
+		vb_srv_desc.Buffer.NumElements = VERTEX_BUFFER_SIZE / sizeof(GSVertex);
 		if (FAILED(m_dev->CreateShaderResourceView(m_expand_vb.get(), &vb_srv_desc, m_expand_vb_srv.put())))
 		{
 			Console.Error("Failed to create expand vertex buffer SRV.");
@@ -1428,9 +1434,13 @@ void GSDevice11::RestoreAPIState()
 	m_ctx->PSSetConstantBuffers(0, 1, &m_state.ps_cb);
 	m_ctx->IASetIndexBuffer(m_state.index_buffer, DXGI_FORMAT_R16_UINT, 0);
 
-	const CD3D11_VIEWPORT vp(0.0f, 0.0f,
+	// CD3D11_VIEWPORT is an MSVC d3d11.h-only C++ helper that mingw-w64
+	// doesn't ship.  Use the plain D3D11_VIEWPORT struct instead.
+	const D3D11_VIEWPORT vp = {
+		0.0f, 0.0f,
 		static_cast<float>(m_state.viewport.x), static_cast<float>(m_state.viewport.y),
-		0.0f, 1.0f);
+		0.0f, 1.0f,
+	};
 	m_ctx->RSSetViewports(1, &vp);
 	m_ctx->RSSetScissorRects(1, reinterpret_cast<const D3D11_RECT*>(&m_state.scissor));
 	m_ctx->RSSetState(m_rs.get());

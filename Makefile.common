@@ -453,7 +453,6 @@ SOURCES_CXX += \
 	$(GRANITE_DIR)/vulkan/pipeline_event.cpp \
 	$(GRANITE_DIR)/vulkan/query_pool.cpp \
 	$(GRANITE_DIR)/vulkan/render_pass.cpp \
-	$(GRANITE_DIR)/vulkan/renderdoc_capture.cpp \
 	$(GRANITE_DIR)/vulkan/sampler.cpp \
 	$(GRANITE_DIR)/vulkan/semaphore.cpp \
 	$(GRANITE_DIR)/vulkan/semaphore_manager.cpp \
