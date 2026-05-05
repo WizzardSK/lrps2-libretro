@@ -120,9 +120,22 @@
 // sidesteps this by enabling LTO/IPO on PCSX2_LTO so all .cpp's are merged
 // at link time, but the libretro-super static Makefile builds without LTO.
 //
-// Defining __forceinline as nothing keeps cross-TU calls linkable, while
-// gcc -O3 still inlines same-TU callsites naturally.  LTO builds (cmake)
-// remain free to inline across TUs at link time, so there is no perf loss
+// We want `__fi` (the project's own decoration) to expand to nothing for
+// the libretro non-LTO build, so cross-TU calls remain linkable.  However
+// we MUST NOT clobber `__forceinline` itself: mingw-w64's system headers
+// (winbase.h / processthreadsapi.h / synchapi.h / _mingw.h ...) define
+// many functions like `strnlen_s`, `_InterlockedIncrement`, `NtCurrentTeb`
+// as `__forceinline ...`, relying on the GNU-inline semantics that
+// mingw assigns to `__forceinline` (extern __inline__ + always_inline +
+// gnu_inline) so that no out-of-line copy is emitted per TU.  If we
+// `#undef`/redefine `__forceinline` to empty globally, every system inline
+// becomes a regular definition in every TU that includes the header, and
+// the link explodes with `multiple definition of strnlen_s` etc.
+//
+// Solution: leave `__forceinline` alone (system headers continue to work),
+// and bind `__fi` / `__ri` / `__releaseinline` directly to empty here.
+// gcc -O3 still inlines same-TU callsites naturally.  LTO builds (cmake's
+// PCSX2_LTO=ON) inline cross-TU at link time, so there is no perf loss
 // where it matters.
 #ifndef __forceinline
 #define __forceinline
@@ -157,10 +170,14 @@
 // from Devel builds is likely useful; but which should be inlined in an optimized Release
 // environment.
 //
-#define __releaseinline __forceinline
+// __releaseinline / __ri / __fi expand to nothing in libretro non-LTO builds
+// (see the long comment by `__forceinline` above for rationale).  They are
+// bound directly here rather than via `__forceinline` so we do not disturb
+// the system definition of `__forceinline` that mingw-w64's headers rely on.
+#define __releaseinline
 
-#define __ri __releaseinline
-#define __fi __forceinline
+#define __ri
+#define __fi
 
 // Makes sure that if anyone includes xbyak, it doesn't do anything bad
 #define XBYAK_ENABLE_OMITTED_OPERAND
