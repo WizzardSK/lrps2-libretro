@@ -38,15 +38,21 @@ static void ansi_make_tempname(char *buf, size_t len, const char *name, zip_uint
 
 /* clang-format off */
 
+/* The struct fields take 'const void *' (deliberate type-erasure so the
+ * same struct can hold ANSI or UTF-16 callbacks); the Win32 API
+ * functions take 'LPCSTR' / 'LPCWSTR'.  These are de-facto compatible
+ * (same parameter passing, same calling convention) but gcc 14+ rejects
+ * the implicit conversion as an error rather than a warning.  Cast
+ * each function pointer to the field's declared type. */
 zip_win32_file_operations_t ops_ansi = {
     ansi_allocate_tempname,
-    CreateFileA,
-    DeleteFileA,
-    GetFileAttributesA,
-    GetFileAttributesExA,
+    (HANDLE (__stdcall *)(const void *, DWORD, DWORD, PSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE))CreateFileA,
+    (BOOL (__stdcall *)(const void *))DeleteFileA,
+    (DWORD (__stdcall *)(const void *))GetFileAttributesA,
+    (BOOL (__stdcall *)(const void *, GET_FILEEX_INFO_LEVELS, void *))GetFileAttributesExA,
     ansi_make_tempname,
-    MoveFileExA,
-    SetFileAttributesA,
+    (BOOL (__stdcall *)(const void *, const void *, DWORD))MoveFileExA,
+    (BOOL (__stdcall *)(const void *, DWORD))SetFileAttributesA,
     strdup
 };
 
