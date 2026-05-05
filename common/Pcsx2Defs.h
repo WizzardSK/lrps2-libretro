@@ -90,6 +90,13 @@
 #define CALLBACK
 #endif
 #else
+// MinGW / clang do not implement __vectorcall.  The Win64 ABI already passes
+// the first four FP/vector arguments through XMM registers, so dropping the
+// attribute keeps the calling convention compatible with anything compiled
+// in the same toolchain (which is what matters for the libretro core).
+#if !defined(_MSC_VER)
+#define __vectorcall
+#endif
 #ifndef CALLBACK
 #define CALLBACK __attribute__((stdcall))
 #endif

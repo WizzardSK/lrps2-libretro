@@ -1,320 +1,820 @@
 SOURCES_CXX :=
 SOURCES_C   :=
+SOURCES_ASM :=
 
-DEPS_DIR     := $(CORE_DIR)/3rdparty
-LIBRETRO_DIR := $(CORE_DIR)/libretro
+# ----------------------------------------------------------------------------
+# Directories
+# ----------------------------------------------------------------------------
+DEPS_DIR          := $(CORE_DIR)/3rdparty
+LIBRETRO_DIR      := $(CORE_DIR)/libretro
 LIBRETRO_COMM_DIR := $(LIBRETRO_DIR)/libretro-common
-COMMON_DIR   := $(CORE_DIR)/common
-LRPS2_DIR := $(CORE_DIR)/pcsx2
+COMMON_DIR        := $(CORE_DIR)/common
+LRPS2_DIR         := $(CORE_DIR)/pcsx2
+PGS_DIR           := $(LRPS2_DIR)/GS/parallel-gs
+GRANITE_DIR       := $(PGS_DIR)/Granite
 
-ZLIB_INCFLAGS = -I$(ZLIB_DIR)
+# ----------------------------------------------------------------------------
+# Include flags
+# ----------------------------------------------------------------------------
+# Mirrors what the cmake LIBRETRO=ON build resolves to for pcsx2_libretro/PCSX2/
+# common targets.  Order matters: project headers first, then 3rdparty.
+INCFLAGS := \
+	-I$(CORE_DIR) \
+	-I$(LRPS2_DIR) \
+	-I$(LRPS2_DIR)/x86 \
+	-I$(COMMON_DIR) \
+	-I$(COMMON_DIR)/include \
+	-I$(LIBRETRO_DIR) \
+	-I$(LIBRETRO_COMM_DIR)/include \
+	-I$(DEPS_DIR) \
+	-I$(DEPS_DIR)/include \
+	-I$(DEPS_DIR)/xbyak \
+	-I$(DEPS_DIR)/wil/include \
+	-I$(DEPS_DIR)/fmt/fmt/include \
+	-I$(DEPS_DIR)/rapidyaml/rapidyaml/src \
+	-I$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src \
+	-I$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/ext/fast_float/include \
+	-I$(DEPS_DIR)/cpuinfo/include \
+	-I$(DEPS_DIR)/cpuinfo/src \
+	-I$(DEPS_DIR)/cpuinfo/deps/clog/include \
+	-I$(DEPS_DIR)/zlib \
+	-I$(DEPS_DIR)/zstd/zstd/lib \
+	-I$(DEPS_DIR)/lz4/lz4/lib \
+	-I$(DEPS_DIR)/libpng \
+	-I$(DEPS_DIR)/libzip \
+	-I$(DEPS_DIR)/libzip/libzip/lib \
+	-I$(DEPS_DIR)/libzip/private \
+	-I$(DEPS_DIR)/chdr/libchdr/include \
+	-I$(DEPS_DIR)/d3d12memalloc/include
 
 ifeq ($(HAVE_OPENGL), 1)
-   ifeq ($(GLES3), 1)
-      GLFLAGS  := -DHAVE_OPENGLES -DHAVE_OPENGLES3
-      CFLAGS   += $(GLFLAGS)
-      CXXFLAGS += $(GLFLAGS)
-   else ifeq ($(GLES), 1)
-      GLFLAGS  := -DHAVE_OPENGLES -DHAVE_OPENGLES2
-      CFLAGS   += $(GLFLAGS)
-      CXXFLAGS += $(GLFLAGS)
-   else
-      GLFLAGS   := -DHAVE_OPENGL -DCORE
-      CFLAGS    += $(GLFLAGS)
-      CXXFLAGS  += $(GLFLAGS)
-   endif
+	INCFLAGS += -I$(DEPS_DIR)/glad/include
 endif
 
-INCFLAGS := -I$(CORE_DIR) \
-	    -I$(LRPS2_DIR) \
-	    -I$(DEPS_DIR) \
-	    -I$(DEPS_DIR)/cpuinfo/include \
-	    -I$(DEPS_DIR)/cpuinfo/src \
-	    -I$(DEPS_DIR)/cpuinfo/deps/clog/include \
-            -I$(LIBRETRO_COMM_DIR)/include
-
-ifneq (,$(findstring msvc,$(platform)))
-   INCFLAGS += -I$(CORE_DIR)/msvc
+ifeq ($(HAVE_VULKAN), 1)
+	INCFLAGS += \
+		-I$(DEPS_DIR)/vulkan-headers/include \
+		-I$(DEPS_DIR)/glslang/glslang \
+		-I$(DEPS_DIR)/glslang/include \
+		-I$(GRANITE_DIR)/util \
+		-I$(GRANITE_DIR)/math \
+		-I$(GRANITE_DIR)/vulkan \
+		-I$(GRANITE_DIR)/application/global \
+		-I$(GRANITE_DIR)/third_party/volk \
+		-I$(PGS_DIR)/gs
 endif
 
-ifeq ($(SYSTEM_ZLIB), 1)
-   CFLAGS += $(shell pkg-config --cflags zlib)
-   LIBS += $(shell pkg-config --libs zlib)
-else
-   INCFLAGS += $(ZLIB_INCFLAGS)
-   SOURCES_C += $(ZLIB_SOURCES_C)
+# ----------------------------------------------------------------------------
+# Defines mirroring cmake's LIBRETRO=ON Windows build
+# ----------------------------------------------------------------------------
+ifeq ($(HAVE_OPENGL), 1)
+	ifeq ($(GLES3), 1)
+		FLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES3 -DENABLE_OPENGL
+	else ifeq ($(GLES), 1)
+		FLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2 -DENABLE_OPENGL
+	else
+		FLAGS += -DHAVE_OPENGL -DCORE -DENABLE_OPENGL
+	endif
+endif
+
+ifeq ($(HAVE_VULKAN), 1)
+	FLAGS += -DHAVE_VULKAN -DENABLE_VULKAN -DHAVE_PARALLEL_GS \
+		 -DGRANITE_SHIPPING -DGRANITE_RENDERDOC_CAPTURE \
+		 -DHAVE_WSI_DXGI_INTEROP -DVK_USE_PLATFORM_WIN32_KHR
 endif
 
 ifeq ($(NEED_THREADING), 1)
-   FLAGS += -DWANT_THREADING -DHAVE_THREADS
+	FLAGS += -DWANT_THREADING -DHAVE_THREADS
 endif
 
 ifeq ($(FRONTEND_SUPPORTS_RGB565), 1)
-   FLAGS += -DFRONTEND_SUPPORTS_RGB565
+	FLAGS += -DFRONTEND_SUPPORTS_RGB565
 endif
 
 CFLAGS   += $(FLAGS)
 CXXFLAGS += $(FLAGS)
 
-SOURCES_C   += \
-	       $(LIBRETRO_COMM_DIR)/compat/compat_posix_string.c \
-	       $(LIBRETRO_COMM_DIR)/compat/compat_strl.c \
-	       $(LIBRETRO_COMM_DIR)/compat/fopen_utf8.c \
-	       $(LIBRETRO_COMM_DIR)/encodings/encoding_utf.c \
-	       $(LIBRETRO_COMM_DIR)/file/file_path.c \
-	       $(LIBRETRO_COMM_DIR)/file/file_path_io.c \
-	       $(LIBRETRO_COMM_DIR)/streams/file_stream.c \
-	       $(LIBRETRO_COMM_DIR)/string/stdstring.c \
-	       $(LIBRETRO_COMM_DIR)/time/rtime.c \
-	       $(LIBRETRO_COMM_DIR)/rthreads/rthreads.c \
-	       $(LIBRETRO_COMM_DIR)/vfs/vfs_implementation.c
+# ============================================================================
+# libretro-common (C)
+# ============================================================================
+SOURCES_C += \
+	$(LIBRETRO_COMM_DIR)/compat/compat_posix_string.c \
+	$(LIBRETRO_COMM_DIR)/compat/compat_strl.c \
+	$(LIBRETRO_COMM_DIR)/compat/fopen_utf8.c \
+	$(LIBRETRO_COMM_DIR)/encodings/encoding_utf.c \
+	$(LIBRETRO_COMM_DIR)/file/file_path.c \
+	$(LIBRETRO_COMM_DIR)/file/file_path_io.c \
+	$(LIBRETRO_COMM_DIR)/streams/file_stream.c \
+	$(LIBRETRO_COMM_DIR)/string/stdstring.c \
+	$(LIBRETRO_COMM_DIR)/time/rtime.c \
+	$(LIBRETRO_COMM_DIR)/rthreads/rthreads.c \
+	$(LIBRETRO_COMM_DIR)/vfs/vfs_implementation.c
 
-SOURCES_C   += \
-	       $(DEPS_DIR)/cpuinfo/src/init.c \
-	       $(DEPS_DIR)/cpuinfo/src/cache.c \
-	       $(DEPS_DIR)/cpuinfo/src/api.c
-
-SOURCES_CXX += $(COMMON_DIR)/AlignedMalloc.cpp \
-	       $(COMMON_DIR)/Console.cpp \
-	       $(COMMON_DIR)/FastJmp.cpp \
-	       $(COMMON_DIR)/FileSystem.cpp \
-	       $(COMMON_DIR)/HostSys.cpp \
-	       $(COMMON_DIR)/MD5Digest.cpp \
-	       $(COMMON_DIR)/MemorySettingsInterface.cpp \
-	       $(COMMON_DIR)/Semaphore.cpp \
-	       $(COMMON_DIR)/SettingsWrapper.cpp \
-	       $(COMMON_DIR)/StringUtil.cpp \
-	       $(COMMON_DIR)/TextureDecompress.cpp \
-	       $(COMMON_DIR)/Threads.cpp \
-	       $(COMMON_DIR)/Timer.cpp \
-	       \
-	       $(COMMON_DIR)/emitter/avx.cpp \
-	       $(COMMON_DIR)/emitter/groups.cpp \
-	       $(COMMON_DIR)/emitter/jmp.cpp \
-	       $(COMMON_DIR)/emitter/legacy.cpp \
-	       $(COMMON_DIR)/emitter/legacy_sse.cpp \
-	       $(COMMON_DIR)/emitter/movs.cpp \
-	       $(COMMON_DIR)/emitter/simd.cpp \
-	       $(COMMON_DIR)/emitter/x86emitter.cpp \
-	       \
-	       $(CORE_DIR)/libretro/DEV9.cpp \
-	       $(CORE_DIR)/libretro/main.cpp \
-	       $(CORE_DIR)/libretro/patches.cpp \
-	       $(CORE_DIR)/libretro/USB.cpp \
-	       \
-	       $(LRPS2_DIR)/CDVD/CDVD.cpp \
-	       $(LRPS2_DIR)/CDVD/CDVDcommon.cpp \
-	       $(LRPS2_DIR)/CDVD/CDVDisoReader.cpp \
-	       $(LRPS2_DIR)/CDVD/ChdFileReader.cpp \
-	       $(LRPS2_DIR)/CDVD/CsoFileReader.cpp \
-	       $(LRPS2_DIR)/CDVD/FlatFileReader.cpp \
-	       $(LRPS2_DIR)/CDVD/GzippedFileReader.cpp \
-	       $(LRPS2_DIR)/CDVD/InputIsoFile.cpp \
-	       $(LRPS2_DIR)/CDVD/Ps1CD.cpp \
-	       $(LRPS2_DIR)/CDVD/ThreadedFileReader.cpp \
-	       $(LRPS2_DIR)/CDVD/IsoFS/IsoFile.cpp \
-	       $(LRPS2_DIR)/CDVD/IsoFS/IsoFS.cpp \
-	       $(LRPS2_DIR)/CDVD/IsoFS/IsoFSCDVD.cpp \
-	       \
-	       $(LRPS2_DIR)/DebugTools/DebugInterface.cpp \
-	       $(LRPS2_DIR)/DebugTools/MIPSAnalyst.cpp \
-	       $(LRPS2_DIR)/DebugTools/SymbolMap.cpp \
-	       \
-	       $(LRPS2_DIR)/Frontend/HostSettings.cpp \
-	       $(LRPS2_DIR)/Frontend/LayeredSettingsInterface.cpp \
-	       \
-	       $(LRPS2_DIR)/IPU/IPU.cpp \
-	       $(LRPS2_DIR)/IPU/IPU_Fifo.cpp \
-	       $(LRPS2_DIR)/IPU/IPU_MultiISA.cpp \
-	       $(LRPS2_DIR)/IPU/IPUdither.cpp \
-	       $(LRPS2_DIR)/IPU/IPUdma.cpp \
-	       $(LRPS2_DIR)/IPU/yuv2rgb.cpp \
-	       \
-	       $(LRPS2_DIR)/PAD/PAD.cpp \
-	       \
-	       $(LRPS2_DIR)/ps2/iop/IopHwRead.cpp \
-	       $(LRPS2_DIR)/ps2/iop/IopHwWrite.cpp \
-	       $(LRPS2_DIR)/ps2/BiosTools.cpp \
-	       $(LRPS2_DIR)/ps2/pgif.cpp \
-	       \
-	       $(LRPS2_DIR)/SPU2/ADSR.cpp \
-	       $(LRPS2_DIR)/SPU2/Dma.cpp \
-	       $(LRPS2_DIR)/SPU2/DplIIDecoder.cpp \
-	       $(LRPS2_DIR)/SPU2/Mixer.cpp \
-	       $(LRPS2_DIR)/SPU2/ReadInput.cpp \
-	       $(LRPS2_DIR)/SPU2/RegTable.cpp \
-	       $(LRPS2_DIR)/SPU2/Reverb.cpp \
-	       $(LRPS2_DIR)/SPU2/ReverbResample.cpp \
-	       $(LRPS2_DIR)/SPU2/spu2.cpp \
-	       $(LRPS2_DIR)/SPU2/spu2freeze.cpp \
-	       $(LRPS2_DIR)/SPU2/spu2sys.cpp \
-	       \
-	       $(LRPS2_DIR)/x86/BaseblockEx.cpp \
-	       $(LRPS2_DIR)/x86/iCOP0.cpp \
-	       $(LRPS2_DIR)/x86/iCore.cpp \
-	       $(LRPS2_DIR)/x86/iFPU.cpp \
-	       $(LRPS2_DIR)/x86/iFPUd.cpp \
-	       $(LRPS2_DIR)/x86/iMMI.cpp \
-	       $(LRPS2_DIR)/x86/iR3000A.cpp \
-	       $(LRPS2_DIR)/x86/iR3000Atables.cpp \
-	       $(LRPS2_DIR)/x86/iR5900Analysis.cpp \
-	       $(LRPS2_DIR)/x86/iR5900Misc.cpp \
-	       $(LRPS2_DIR)/x86/microVU.cpp \
-	       $(LRPS2_DIR)/x86/newVif_Dynarec.cpp \
-	       $(LRPS2_DIR)/x86/newVif_UnpackSSE.cpp \
-	       $(LRPS2_DIR)/x86/ix86-32/iCore-32.cpp \
-	       $(LRPS2_DIR)/x86/ix86-32/iR5900-32.cpp \
-	       $(LRPS2_DIR)/x86/ix86-32/iR5900Arit.cpp \
-	       $(LRPS2_DIR)/x86/ix86-32/iR5900AritImm.cpp \
-	       $(LRPS2_DIR)/x86/ix86-32/iR5900Branch.cpp \
-	       $(LRPS2_DIR)/x86/ix86-32/iR5900Jump.cpp \
-	       $(LRPS2_DIR)/x86/ix86-32/iR5900LoadStore.cpp \
-	       $(LRPS2_DIR)/x86/ix86-32/iR5900Move.cpp \
-	       $(LRPS2_DIR)/x86/ix86-32/iR5900MultDiv.cpp \
-	       $(LRPS2_DIR)/x86/ix86-32/iR5900Shift.cpp \
-	       $(LRPS2_DIR)/x86/ix86-32/iR5900Templates.cpp \
-	       $(LRPS2_DIR)/x86/ix86-32/recVTLB.cpp \
-	       \
-	       $(LRPS2_DIR)/Cache.cpp \
-	       $(LRPS2_DIR)/COP0.cpp \
-	       $(LRPS2_DIR)/COP2.cpp \
-	       $(LRPS2_DIR)/Counters.cpp \
-	       $(LRPS2_DIR)/Dmac.cpp \
-	       $(LRPS2_DIR)/Elfheader.cpp \
-	       $(LRPS2_DIR)/FiFo.cpp \
-	       $(LRPS2_DIR)/FPU.cpp \
-	       $(LRPS2_DIR)/FW.cpp \
-	       $(LRPS2_DIR)/GameDatabase.cpp \
-	       $(LRPS2_DIR)/Gif.cpp \
-	       $(LRPS2_DIR)/Gif_Unit.cpp \
-	       $(LRPS2_DIR)/GS.cpp \
-	       $(LRPS2_DIR)/Hw.cpp \
-	       $(LRPS2_DIR)/Interpreter.cpp \
-	       $(LRPS2_DIR)/IopBios.cpp \
-	       $(LRPS2_DIR)/IopCounters.cpp \
-	       $(LRPS2_DIR)/IopDma.cpp \
-	       $(LRPS2_DIR)/IopGte.cpp \
-	       $(LRPS2_DIR)/IopHw.cpp \
-	       $(LRPS2_DIR)/IopIrq.cpp \
-	       $(LRPS2_DIR)/IopMem.cpp \
-	       $(LRPS2_DIR)/IopModuleNames.cpp \
-	       $(LRPS2_DIR)/Mdec.cpp \
-	       $(LRPS2_DIR)/Memory.cpp \
-	       $(LRPS2_DIR)/MemoryCardFile.cpp \
-	       $(LRPS2_DIR)/MemoryCardProtocol.cpp \
-	       $(LRPS2_DIR)/MMI.cpp \
-	       $(LRPS2_DIR)/MTGS.cpp \
-	       $(LRPS2_DIR)/MTVU.cpp \
-	       $(LRPS2_DIR)/MultitapProtocol.cpp \
-	       $(LRPS2_DIR)/Patch.cpp \
-	       $(LRPS2_DIR)/Pcsx2Config.cpp \
-	       $(LRPS2_DIR)/PerformanceMetrics.cpp \
-	       $(LRPS2_DIR)/R3000A.cpp \
-	       $(LRPS2_DIR)/R3000AInterpreter.cpp \
-	       $(LRPS2_DIR)/R3000AOpcodeTables.cpp \
-	       $(LRPS2_DIR)/R5900.cpp \
-	       $(LRPS2_DIR)/R5900OpcodeImpl.cpp \
-	       $(LRPS2_DIR)/R5900OpcodeTables.cpp \
-	       $(LRPS2_DIR)/SaveState.cpp \
-	       $(LRPS2_DIR)/Sif.cpp \
-	       $(LRPS2_DIR)/Sif0.cpp \
-	       $(LRPS2_DIR)/Sif1.cpp \
-	       $(LRPS2_DIR)/sif2.cpp \
-	       $(LRPS2_DIR)/Sio.cpp \
-	       $(LRPS2_DIR)/SPR.cpp \
-	       $(LRPS2_DIR)/Vif.cpp \
-	       $(LRPS2_DIR)/Vif_Codes.cpp \
-	       $(LRPS2_DIR)/Vif_Transfer.cpp \
-	       $(LRPS2_DIR)/Vif_Unpack.cpp \
-	       $(LRPS2_DIR)/Vif0_Dma.cpp \
-	       $(LRPS2_DIR)/Vif1_Dma.cpp \
-	       $(LRPS2_DIR)/Vif1_MFIFO.cpp \
-	       $(LRPS2_DIR)/VirtualMemory.cpp \
-	       $(LRPS2_DIR)/VMManager.cpp \
-	       $(LRPS2_DIR)/vtlb.cpp \
-	       $(LRPS2_DIR)/VU0.cpp \
-	       $(LRPS2_DIR)/VU0micro.cpp \
-	       $(LRPS2_DIR)/VU0microInterp.cpp \
-	       $(LRPS2_DIR)/VU1micro.cpp \
-	       $(LRPS2_DIR)/VU1microInterp.cpp \
-	       $(LRPS2_DIR)/VUmicro.cpp \
-	       $(LRPS2_DIR)/VUmicroMem.cpp \
-	       $(LRPS2_DIR)/VUops.cpp \
-	       \
-	       $(LRPS2_DIR)/GS/GS.cpp \
-	       $(LRPS2_DIR)/GS/GSBlock.cpp \
-	       $(LRPS2_DIR)/GS/GSClut.cpp \
-	       $(LRPS2_DIR)/GS/GSDrawingContext.cpp \
-	       $(LRPS2_DIR)/GS/GSLocalMemory.cpp \
-	       $(LRPS2_DIR)/GS/GSLocalMemoryMultiISA.cpp \
-	       $(LRPS2_DIR)/GS/GSRingHeap.cpp \
-	       $(LRPS2_DIR)/GS/GSState.cpp \
-	       $(LRPS2_DIR)/GS/GSTables.cpp \
-	       $(LRPS2_DIR)/GS/GSUtil.cpp \
-	       $(LRPS2_DIR)/GS/GSVector.cpp \
-	       $(LRPS2_DIR)/GS/GSXXH.cpp \
-	       $(LRPS2_DIR)/GS/MultiISA.cpp \
-	       \
-	       $(LRPS2_DIR)/GS/Renderers/Common/GSDevice.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/Common/GSDirtyRect.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/Common/GSFunctionMap.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/Common/GSRenderer.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/Common/GSTexture.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/Common/GSVertexTrace.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/Common/GSVertexTraceFMM.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/HW/GSHwHack.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/HW/GSRendererHW.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/HW/GSRendererHWMultiISA.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/HW/GSTextureCache.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/HW/GSTextureReplacementLoaders.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/HW/GSTextureReplacements.cpp
-
+# ============================================================================
+# libretro core entry points (C++)
+# ============================================================================
 SOURCES_CXX += \
-	       $(LRPS2_DIR)/GS/Renderers/SW/GSDrawScanline.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/SW/GSDrawScanlineCodeGenerator.all.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/SW/GSDrawScanlineCodeGenerator.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/SW/GSRasterizer.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/SW/GSRendererSW.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/SW/GSSetupPrimeCodeGenerator.all.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/SW/GSSetupPrimeCodeGenerator.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/SW/GSTextureCacheSW.cpp
+	$(LIBRETRO_DIR)/main.cpp \
+	$(LIBRETRO_DIR)/patches.cpp \
+	$(LIBRETRO_DIR)/DEV9.cpp \
+	$(LIBRETRO_DIR)/USB.cpp
 
+# ============================================================================
+# common
+# ============================================================================
 SOURCES_CXX += \
-	       $(LRPS2_DIR)/GS/Renderers/OpenGL/GLContext.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/OpenGL/GLProgram.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/OpenGL/GLShaderCache.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/OpenGL/GLState.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/OpenGL/GLStreamBuffer.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/OpenGL/GSDeviceOGL.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/OpenGL/GSTextureOGL.cpp
+	$(COMMON_DIR)/AlignedMalloc.cpp \
+	$(COMMON_DIR)/Console.cpp \
+	$(COMMON_DIR)/FastJmp.cpp \
+	$(COMMON_DIR)/FileSystem.cpp \
+	$(COMMON_DIR)/HostSys.cpp \
+	$(COMMON_DIR)/MD5Digest.cpp \
+	$(COMMON_DIR)/MemorySettingsInterface.cpp \
+	$(COMMON_DIR)/Semaphore.cpp \
+	$(COMMON_DIR)/SettingsWrapper.cpp \
+	$(COMMON_DIR)/StringUtil.cpp \
+	$(COMMON_DIR)/TextureDecompress.cpp \
+	$(COMMON_DIR)/Threads.cpp \
+	$(COMMON_DIR)/Timer.cpp \
+	\
+	$(COMMON_DIR)/emitter/avx.cpp \
+	$(COMMON_DIR)/emitter/groups.cpp \
+	$(COMMON_DIR)/emitter/jmp.cpp \
+	$(COMMON_DIR)/emitter/legacy.cpp \
+	$(COMMON_DIR)/emitter/legacy_sse.cpp \
+	$(COMMON_DIR)/emitter/movs.cpp \
+	$(COMMON_DIR)/emitter/simd.cpp \
+	$(COMMON_DIR)/emitter/x86emitter.cpp
 
-SOURCES_CXX += \
-	       $(LRPS2_DIR)/GS/Renderers/Vulkan/GSDeviceVK.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/Vulkan/GSTextureVK.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/Vulkan/vk_mem_alloc.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/Vulkan/VKBuilders.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/Vulkan/VKLoader.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/Vulkan/VKShaderCache.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/Vulkan/VKStreamBuffer.cpp
+# Win32 variant of FastJmp uses a dedicated GAS source for MinGW
+# (matches the FastJmp.asm MASM source used for the MSVC build).
+ifeq ($(IS_WIN_MINGW), 1)
+	SOURCES_ASM += $(COMMON_DIR)/FastJmp_mingw.S
+endif
 
+# ============================================================================
+# pcsx2 core - emulation
+# ============================================================================
 SOURCES_CXX += \
-	       $(LRPS2_DIR)/GS/Renderers/DX11/D3D.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/DX11/D3D11ShaderCache.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/DX11/GSDevice11.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/DX11/GSTexture11.cpp
+	$(LRPS2_DIR)/Cache.cpp \
+	$(LRPS2_DIR)/COP0.cpp \
+	$(LRPS2_DIR)/COP2.cpp \
+	$(LRPS2_DIR)/Counters.cpp \
+	$(LRPS2_DIR)/Dmac.cpp \
+	$(LRPS2_DIR)/Elfheader.cpp \
+	$(LRPS2_DIR)/FiFo.cpp \
+	$(LRPS2_DIR)/FPU.cpp \
+	$(LRPS2_DIR)/FW.cpp \
+	$(LRPS2_DIR)/GameDatabase.cpp \
+	$(LRPS2_DIR)/Gif.cpp \
+	$(LRPS2_DIR)/Gif_Unit.cpp \
+	$(LRPS2_DIR)/GS.cpp \
+	$(LRPS2_DIR)/Hw.cpp \
+	$(LRPS2_DIR)/Interpreter.cpp \
+	$(LRPS2_DIR)/IopBios.cpp \
+	$(LRPS2_DIR)/IopCounters.cpp \
+	$(LRPS2_DIR)/IopDma.cpp \
+	$(LRPS2_DIR)/IopGte.cpp \
+	$(LRPS2_DIR)/IopHw.cpp \
+	$(LRPS2_DIR)/IopIrq.cpp \
+	$(LRPS2_DIR)/IopMem.cpp \
+	$(LRPS2_DIR)/MMI.cpp \
+	$(LRPS2_DIR)/MTGS.cpp \
+	$(LRPS2_DIR)/MTVU.cpp \
+	$(LRPS2_DIR)/Mdec.cpp \
+	$(LRPS2_DIR)/Memory.cpp \
+	$(LRPS2_DIR)/MemoryCardFile.cpp \
+	$(LRPS2_DIR)/MemoryCardProtocol.cpp \
+	$(LRPS2_DIR)/MultitapProtocol.cpp \
+	$(LRPS2_DIR)/Patch.cpp \
+	$(LRPS2_DIR)/Pcsx2Config.cpp \
+	$(LRPS2_DIR)/PerformanceMetrics.cpp \
+	$(LRPS2_DIR)/R3000A.cpp \
+	$(LRPS2_DIR)/R3000AInterpreter.cpp \
+	$(LRPS2_DIR)/R3000AOpcodeTables.cpp \
+	$(LRPS2_DIR)/R5900.cpp \
+	$(LRPS2_DIR)/R5900OpcodeImpl.cpp \
+	$(LRPS2_DIR)/R5900OpcodeTables.cpp \
+	$(LRPS2_DIR)/SaveState.cpp \
+	$(LRPS2_DIR)/Sif.cpp \
+	$(LRPS2_DIR)/Sif0.cpp \
+	$(LRPS2_DIR)/Sif1.cpp \
+	$(LRPS2_DIR)/sif2.cpp \
+	$(LRPS2_DIR)/Sio.cpp \
+	$(LRPS2_DIR)/SPR.cpp \
+	$(LRPS2_DIR)/Vif.cpp \
+	$(LRPS2_DIR)/Vif_Codes.cpp \
+	$(LRPS2_DIR)/Vif_Transfer.cpp \
+	$(LRPS2_DIR)/Vif_Unpack.cpp \
+	$(LRPS2_DIR)/Vif0_Dma.cpp \
+	$(LRPS2_DIR)/Vif1_Dma.cpp \
+	$(LRPS2_DIR)/Vif1_MFIFO.cpp \
+	$(LRPS2_DIR)/VirtualMemory.cpp \
+	$(LRPS2_DIR)/VMManager.cpp \
+	$(LRPS2_DIR)/vtlb.cpp \
+	$(LRPS2_DIR)/VU0.cpp \
+	$(LRPS2_DIR)/VU0micro.cpp \
+	$(LRPS2_DIR)/VU0microInterp.cpp \
+	$(LRPS2_DIR)/VU1micro.cpp \
+	$(LRPS2_DIR)/VU1microInterp.cpp \
+	$(LRPS2_DIR)/VUmicro.cpp \
+	$(LRPS2_DIR)/VUmicroMem.cpp \
+	$(LRPS2_DIR)/VUops.cpp
 
+# pcsx2/CDVD
 SOURCES_CXX += \
-	       $(LRPS2_DIR)/GS/Renderers/DX12/D3D12Builders.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/DX12/D3D12DescriptorHeapManager.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/DX12/D3D12ShaderCache.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/DX12/D3D12StreamBuffer.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/DX12/GSDevice12.cpp \
-	       $(LRPS2_DIR)/GS/Renderers/DX12/GSTexture12.cpp
+	$(LRPS2_DIR)/CDVD/CDVD.cpp \
+	$(LRPS2_DIR)/CDVD/CDVDcommon.cpp \
+	$(LRPS2_DIR)/CDVD/CDVDisoReader.cpp \
+	$(LRPS2_DIR)/CDVD/ChdFileReader.cpp \
+	$(LRPS2_DIR)/CDVD/CsoFileReader.cpp \
+	$(LRPS2_DIR)/CDVD/FlatFileReader.cpp \
+	$(LRPS2_DIR)/CDVD/GzippedFileReader.cpp \
+	$(LRPS2_DIR)/CDVD/InputIsoFile.cpp \
+	$(LRPS2_DIR)/CDVD/Ps1CD.cpp \
+	$(LRPS2_DIR)/CDVD/ThreadedFileReader.cpp \
+	$(LRPS2_DIR)/CDVD/IsoFS/IsoFile.cpp \
+	$(LRPS2_DIR)/CDVD/IsoFS/IsoFS.cpp \
+	$(LRPS2_DIR)/CDVD/IsoFS/IsoFSCDVD.cpp
 
+# pcsx2/DebugTools
 SOURCES_CXX += \
-	       $(LRPS2_DIR)/GS/Renderers/parallel-gs/GSRendererPGS.cpp \
-	       \
-	       $(LRPS2_DIR)/GS/parallel-gs/gs/gs_interface.cpp \
-	       $(LRPS2_DIR)/GS/parallel-gs/gs/gs_renderer.cpp \
-	       $(LRPS2_DIR)/GS/parallel-gs/gs/gs_util.cpp \
-	       $(LRPS2_DIR)/GS/parallel-gs/gs/page_tracker.cpp
+	$(LRPS2_DIR)/DebugTools/DebugInterface.cpp \
+	$(LRPS2_DIR)/DebugTools/MIPSAnalyst.cpp \
+	$(LRPS2_DIR)/DebugTools/SymbolMap.cpp
+
+# pcsx2/Frontend
+SOURCES_CXX += \
+	$(LRPS2_DIR)/Frontend/HostSettings.cpp \
+	$(LRPS2_DIR)/Frontend/LayeredSettingsInterface.cpp
+
+# pcsx2/IPU
+SOURCES_CXX += \
+	$(LRPS2_DIR)/IPU/IPU.cpp \
+	$(LRPS2_DIR)/IPU/IPU_Fifo.cpp \
+	$(LRPS2_DIR)/IPU/IPU_MultiISA.cpp \
+	$(LRPS2_DIR)/IPU/IPUdither.cpp \
+	$(LRPS2_DIR)/IPU/IPUdma.cpp \
+	$(LRPS2_DIR)/IPU/yuv2rgb.cpp
+
+# pcsx2/PAD
+SOURCES_CXX += $(LRPS2_DIR)/PAD/PAD.cpp
+
+# pcsx2/ps2
+SOURCES_CXX += \
+	$(LRPS2_DIR)/ps2/BiosTools.cpp \
+	$(LRPS2_DIR)/ps2/pgif.cpp \
+	$(LRPS2_DIR)/ps2/Iop/IopHwRead.cpp \
+	$(LRPS2_DIR)/ps2/Iop/IopHwWrite.cpp \
+	$(LRPS2_DIR)/ps2/Iop/PsxBios.cpp
+
+# pcsx2/SPU2
+SOURCES_CXX += \
+	$(LRPS2_DIR)/SPU2/ADSR.cpp \
+	$(LRPS2_DIR)/SPU2/Dma.cpp \
+	$(LRPS2_DIR)/SPU2/DplIIdecoder.cpp \
+	$(LRPS2_DIR)/SPU2/Mixer.cpp \
+	$(LRPS2_DIR)/SPU2/ReadInput.cpp \
+	$(LRPS2_DIR)/SPU2/RegTable.cpp \
+	$(LRPS2_DIR)/SPU2/Reverb.cpp \
+	$(LRPS2_DIR)/SPU2/ReverbResample.cpp \
+	$(LRPS2_DIR)/SPU2/spu2.cpp \
+	$(LRPS2_DIR)/SPU2/spu2freeze.cpp \
+	$(LRPS2_DIR)/SPU2/spu2sys.cpp
+
+# pcsx2/x86 (recompilers)
+SOURCES_CXX += \
+	$(LRPS2_DIR)/x86/BaseblockEx.cpp \
+	$(LRPS2_DIR)/x86/iCOP0.cpp \
+	$(LRPS2_DIR)/x86/iCore.cpp \
+	$(LRPS2_DIR)/x86/iFPU.cpp \
+	$(LRPS2_DIR)/x86/iFPUd.cpp \
+	$(LRPS2_DIR)/x86/iMMI.cpp \
+	$(LRPS2_DIR)/x86/iR3000A.cpp \
+	$(LRPS2_DIR)/x86/iR3000Atables.cpp \
+	$(LRPS2_DIR)/x86/iR5900Analysis.cpp \
+	$(LRPS2_DIR)/x86/iR5900Misc.cpp \
+	$(LRPS2_DIR)/x86/microVU.cpp \
+	$(LRPS2_DIR)/x86/newVif_Dynarec.cpp \
+	$(LRPS2_DIR)/x86/newVif_UnpackSSE.cpp \
+	$(LRPS2_DIR)/x86/ix86-32/iCore-32.cpp \
+	$(LRPS2_DIR)/x86/ix86-32/iR5900-32.cpp \
+	$(LRPS2_DIR)/x86/ix86-32/iR5900Arit.cpp \
+	$(LRPS2_DIR)/x86/ix86-32/iR5900AritImm.cpp \
+	$(LRPS2_DIR)/x86/ix86-32/iR5900Branch.cpp \
+	$(LRPS2_DIR)/x86/ix86-32/iR5900Jump.cpp \
+	$(LRPS2_DIR)/x86/ix86-32/iR5900LoadStore.cpp \
+	$(LRPS2_DIR)/x86/ix86-32/iR5900Move.cpp \
+	$(LRPS2_DIR)/x86/ix86-32/iR5900MultDiv.cpp \
+	$(LRPS2_DIR)/x86/ix86-32/iR5900Shift.cpp \
+	$(LRPS2_DIR)/x86/ix86-32/iR5900Templates.cpp \
+	$(LRPS2_DIR)/x86/ix86-32/recVTLB.cpp
+
+# ============================================================================
+# pcsx2/GS - common renderer code
+# ============================================================================
+SOURCES_CXX += \
+	$(LRPS2_DIR)/GS/GS.cpp \
+	$(LRPS2_DIR)/GS/GSBlock.cpp \
+	$(LRPS2_DIR)/GS/GSClut.cpp \
+	$(LRPS2_DIR)/GS/GSDrawingContext.cpp \
+	$(LRPS2_DIR)/GS/GSLocalMemory.cpp \
+	$(LRPS2_DIR)/GS/GSLocalMemoryMultiISA.cpp \
+	$(LRPS2_DIR)/GS/GSRingHeap.cpp \
+	$(LRPS2_DIR)/GS/GSState.cpp \
+	$(LRPS2_DIR)/GS/GSTables.cpp \
+	$(LRPS2_DIR)/GS/GSUtil.cpp \
+	$(LRPS2_DIR)/GS/GSVector.cpp \
+	$(LRPS2_DIR)/GS/GSXXH.cpp \
+	$(LRPS2_DIR)/GS/MultiISA.cpp \
+	\
+	$(LRPS2_DIR)/GS/Renderers/Common/GSDevice.cpp \
+	$(LRPS2_DIR)/GS/Renderers/Common/GSDirtyRect.cpp \
+	$(LRPS2_DIR)/GS/Renderers/Common/GSFunctionMap.cpp \
+	$(LRPS2_DIR)/GS/Renderers/Common/GSRenderer.cpp \
+	$(LRPS2_DIR)/GS/Renderers/Common/GSTexture.cpp \
+	$(LRPS2_DIR)/GS/Renderers/Common/GSVertexTrace.cpp \
+	$(LRPS2_DIR)/GS/Renderers/Common/GSVertexTraceFMM.cpp \
+	\
+	$(LRPS2_DIR)/GS/Renderers/HW/GSHwHack.cpp \
+	$(LRPS2_DIR)/GS/Renderers/HW/GSRendererHW.cpp \
+	$(LRPS2_DIR)/GS/Renderers/HW/GSRendererHWMultiISA.cpp \
+	$(LRPS2_DIR)/GS/Renderers/HW/GSTextureCache.cpp \
+	$(LRPS2_DIR)/GS/Renderers/HW/GSTextureReplacementLoaders.cpp \
+	$(LRPS2_DIR)/GS/Renderers/HW/GSTextureReplacements.cpp
+
+# pcsx2/GS/Renderers/SW - software renderer (always on)
+SOURCES_CXX += \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSDrawScanline.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSDrawScanlineCodeGenerator.all.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSDrawScanlineCodeGenerator.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSRasterizer.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSRendererSW.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSSetupPrimCodeGenerator.all.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSSetupPrimCodeGenerator.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSTextureCacheSW.cpp
+
+# pcsx2/GS/Renderers/OpenGL
+ifeq ($(HAVE_OPENGL), 1)
+SOURCES_CXX += \
+	$(LRPS2_DIR)/GS/Renderers/OpenGL/GLContext.cpp \
+	$(LRPS2_DIR)/GS/Renderers/OpenGL/GLProgram.cpp \
+	$(LRPS2_DIR)/GS/Renderers/OpenGL/GLShaderCache.cpp \
+	$(LRPS2_DIR)/GS/Renderers/OpenGL/GLState.cpp \
+	$(LRPS2_DIR)/GS/Renderers/OpenGL/GLStreamBuffer.cpp \
+	$(LRPS2_DIR)/GS/Renderers/OpenGL/GSDeviceOGL.cpp \
+	$(LRPS2_DIR)/GS/Renderers/OpenGL/GSTextureOGL.cpp
+endif
+
+# pcsx2/GS/Renderers/Vulkan + parallel-gs
+ifeq ($(HAVE_VULKAN), 1)
+SOURCES_CXX += \
+	$(LRPS2_DIR)/GS/Renderers/Vulkan/GSDeviceVK.cpp \
+	$(LRPS2_DIR)/GS/Renderers/Vulkan/GSTextureVK.cpp \
+	$(LRPS2_DIR)/GS/Renderers/Vulkan/vk_mem_alloc.cpp \
+	$(LRPS2_DIR)/GS/Renderers/Vulkan/VKBuilders.cpp \
+	$(LRPS2_DIR)/GS/Renderers/Vulkan/VKLoader.cpp \
+	$(LRPS2_DIR)/GS/Renderers/Vulkan/VKShaderCache.cpp \
+	$(LRPS2_DIR)/GS/Renderers/Vulkan/VKStreamBuffer.cpp \
+	\
+	$(LRPS2_DIR)/GS/Renderers/parallel-gs/GSRendererPGS.cpp
+endif
+
+# pcsx2/GS/Renderers/DX11/DX12 (Windows only)
+ifeq ($(IS_WINDOWS), 1)
+SOURCES_CXX += \
+	$(LRPS2_DIR)/GS/Renderers/DX11/D3D.cpp \
+	$(LRPS2_DIR)/GS/Renderers/DX11/D3D11ShaderCache.cpp \
+	$(LRPS2_DIR)/GS/Renderers/DX11/GSDevice11.cpp \
+	$(LRPS2_DIR)/GS/Renderers/DX11/GSTexture11.cpp \
+	\
+	$(LRPS2_DIR)/GS/Renderers/DX12/D3D12Builders.cpp \
+	$(LRPS2_DIR)/GS/Renderers/DX12/D3D12DescriptorHeapManager.cpp \
+	$(LRPS2_DIR)/GS/Renderers/DX12/D3D12ShaderCache.cpp \
+	$(LRPS2_DIR)/GS/Renderers/DX12/D3D12StreamBuffer.cpp \
+	$(LRPS2_DIR)/GS/Renderers/DX12/GSDevice12.cpp \
+	$(LRPS2_DIR)/GS/Renderers/DX12/GSTexture12.cpp
+endif
+
+# ============================================================================
+# parallel-gs + Granite (Vulkan only)
+# ============================================================================
+ifeq ($(HAVE_VULKAN), 1)
+# parallel-gs core
+SOURCES_CXX += \
+	$(PGS_DIR)/gs/gs_interface.cpp \
+	$(PGS_DIR)/gs/gs_renderer.cpp \
+	$(PGS_DIR)/gs/gs_util.cpp \
+	$(PGS_DIR)/gs/page_tracker.cpp
+
+# Granite math
+SOURCES_CXX += \
+	$(GRANITE_DIR)/math/aabb.cpp \
+	$(GRANITE_DIR)/math/frustum.cpp \
+	$(GRANITE_DIR)/math/interpolation.cpp \
+	$(GRANITE_DIR)/math/math.cpp \
+	$(GRANITE_DIR)/math/muglm/muglm.cpp \
+	$(GRANITE_DIR)/math/transforms.cpp
+
+# Granite util
+SOURCES_CXX += \
+	$(GRANITE_DIR)/util/aligned_alloc.cpp \
+	$(GRANITE_DIR)/util/arena_allocator.cpp \
+	$(GRANITE_DIR)/util/cli_parser.cpp \
+	$(GRANITE_DIR)/util/dynamic_library.cpp \
+	$(GRANITE_DIR)/util/environment.cpp \
+	$(GRANITE_DIR)/util/logging.cpp \
+	$(GRANITE_DIR)/util/message_queue.cpp \
+	$(GRANITE_DIR)/util/slab_allocator.cpp \
+	$(GRANITE_DIR)/util/string_helpers.cpp \
+	$(GRANITE_DIR)/util/thread_id.cpp \
+	$(GRANITE_DIR)/util/thread_name.cpp \
+	$(GRANITE_DIR)/util/thread_priority.cpp \
+	$(GRANITE_DIR)/util/timeline_trace_file.cpp \
+	$(GRANITE_DIR)/util/timer.cpp
+
+# Granite vulkan
+SOURCES_CXX += \
+	$(GRANITE_DIR)/vulkan/buffer.cpp \
+	$(GRANITE_DIR)/vulkan/buffer_pool.cpp \
+	$(GRANITE_DIR)/vulkan/command_buffer.cpp \
+	$(GRANITE_DIR)/vulkan/command_pool.cpp \
+	$(GRANITE_DIR)/vulkan/context.cpp \
+	$(GRANITE_DIR)/vulkan/cookie.cpp \
+	$(GRANITE_DIR)/vulkan/descriptor_set.cpp \
+	$(GRANITE_DIR)/vulkan/device.cpp \
+	$(GRANITE_DIR)/vulkan/event_manager.cpp \
+	$(GRANITE_DIR)/vulkan/fence.cpp \
+	$(GRANITE_DIR)/vulkan/fence_manager.cpp \
+	$(GRANITE_DIR)/vulkan/image.cpp \
+	$(GRANITE_DIR)/vulkan/indirect_layout.cpp \
+	$(GRANITE_DIR)/vulkan/memory_allocator.cpp \
+	$(GRANITE_DIR)/vulkan/pipeline_cache.cpp \
+	$(GRANITE_DIR)/vulkan/pipeline_event.cpp \
+	$(GRANITE_DIR)/vulkan/query_pool.cpp \
+	$(GRANITE_DIR)/vulkan/render_pass.cpp \
+	$(GRANITE_DIR)/vulkan/renderdoc_capture.cpp \
+	$(GRANITE_DIR)/vulkan/sampler.cpp \
+	$(GRANITE_DIR)/vulkan/semaphore.cpp \
+	$(GRANITE_DIR)/vulkan/semaphore_manager.cpp \
+	$(GRANITE_DIR)/vulkan/shader.cpp \
+	$(GRANITE_DIR)/vulkan/texture/texture_format.cpp \
+	$(GRANITE_DIR)/vulkan/wsi.cpp \
+	$(GRANITE_DIR)/vulkan/wsi_dxgi.cpp
+
+# Granite volk (C, single TU)
+SOURCES_C += $(GRANITE_DIR)/third_party/volk/volk.c
+endif
+
+# ============================================================================
+# 3rdparty - always-on dependencies
+# ============================================================================
+
+# zlib
+ifeq ($(SYSTEM_ZLIB), 1)
+	CFLAGS  += $(shell pkg-config --cflags zlib)
+	LIBS    += $(shell pkg-config --libs zlib)
+else
+SOURCES_C += \
+	$(DEPS_DIR)/zlib/adler32.c \
+	$(DEPS_DIR)/zlib/compress.c \
+	$(DEPS_DIR)/zlib/crc32.c \
+	$(DEPS_DIR)/zlib/deflate.c \
+	$(DEPS_DIR)/zlib/gzclose.c \
+	$(DEPS_DIR)/zlib/gzlib.c \
+	$(DEPS_DIR)/zlib/gzread.c \
+	$(DEPS_DIR)/zlib/gzwrite.c \
+	$(DEPS_DIR)/zlib/infback.c \
+	$(DEPS_DIR)/zlib/inffast.c \
+	$(DEPS_DIR)/zlib/inflate.c \
+	$(DEPS_DIR)/zlib/inftrees.c \
+	$(DEPS_DIR)/zlib/trees.c \
+	$(DEPS_DIR)/zlib/uncompr.c \
+	$(DEPS_DIR)/zlib/zutil.c
+endif
+
+# libpng
+SOURCES_C += \
+	$(DEPS_DIR)/libpng/png.c \
+	$(DEPS_DIR)/libpng/pngerror.c \
+	$(DEPS_DIR)/libpng/pngget.c \
+	$(DEPS_DIR)/libpng/pngmem.c \
+	$(DEPS_DIR)/libpng/pngpread.c \
+	$(DEPS_DIR)/libpng/pngread.c \
+	$(DEPS_DIR)/libpng/pngrio.c \
+	$(DEPS_DIR)/libpng/pngrtran.c \
+	$(DEPS_DIR)/libpng/pngrutil.c \
+	$(DEPS_DIR)/libpng/pngset.c \
+	$(DEPS_DIR)/libpng/pngtrans.c \
+	$(DEPS_DIR)/libpng/pngwio.c \
+	$(DEPS_DIR)/libpng/pngwrite.c \
+	$(DEPS_DIR)/libpng/pngwtran.c \
+	$(DEPS_DIR)/libpng/pngwutil.c
+
+# zstd
+SOURCES_C += \
+	$(DEPS_DIR)/zstd/zstd/lib/common/debug.c \
+	$(DEPS_DIR)/zstd/zstd/lib/common/entropy_common.c \
+	$(DEPS_DIR)/zstd/zstd/lib/common/error_private.c \
+	$(DEPS_DIR)/zstd/zstd/lib/common/fse_decompress.c \
+	$(DEPS_DIR)/zstd/zstd/lib/common/pool.c \
+	$(DEPS_DIR)/zstd/zstd/lib/common/threading.c \
+	$(DEPS_DIR)/zstd/zstd/lib/common/xxhash.c \
+	$(DEPS_DIR)/zstd/zstd/lib/common/zstd_common.c \
+	$(DEPS_DIR)/zstd/zstd/lib/compress/fse_compress.c \
+	$(DEPS_DIR)/zstd/zstd/lib/compress/hist.c \
+	$(DEPS_DIR)/zstd/zstd/lib/compress/huf_compress.c \
+	$(DEPS_DIR)/zstd/zstd/lib/compress/zstd_compress.c \
+	$(DEPS_DIR)/zstd/zstd/lib/compress/zstd_compress_literals.c \
+	$(DEPS_DIR)/zstd/zstd/lib/compress/zstd_compress_sequences.c \
+	$(DEPS_DIR)/zstd/zstd/lib/compress/zstd_compress_superblock.c \
+	$(DEPS_DIR)/zstd/zstd/lib/compress/zstd_double_fast.c \
+	$(DEPS_DIR)/zstd/zstd/lib/compress/zstd_fast.c \
+	$(DEPS_DIR)/zstd/zstd/lib/compress/zstd_lazy.c \
+	$(DEPS_DIR)/zstd/zstd/lib/compress/zstd_ldm.c \
+	$(DEPS_DIR)/zstd/zstd/lib/compress/zstd_opt.c \
+	$(DEPS_DIR)/zstd/zstd/lib/compress/zstdmt_compress.c \
+	$(DEPS_DIR)/zstd/zstd/lib/decompress/huf_decompress.c \
+	$(DEPS_DIR)/zstd/zstd/lib/decompress/zstd_ddict.c \
+	$(DEPS_DIR)/zstd/zstd/lib/decompress/zstd_decompress.c \
+	$(DEPS_DIR)/zstd/zstd/lib/decompress/zstd_decompress_block.c
+
+# lz4
+SOURCES_C += $(DEPS_DIR)/lz4/lz4/lib/lz4.c
+
+# lzma (7z)
+SOURCES_C += \
+	$(DEPS_DIR)/lzma/src/7zAlloc.c \
+	$(DEPS_DIR)/lzma/src/7zArcIn.c \
+	$(DEPS_DIR)/lzma/src/7zBuf.c \
+	$(DEPS_DIR)/lzma/src/7zBuf2.c \
+	$(DEPS_DIR)/lzma/src/7zCrc.c \
+	$(DEPS_DIR)/lzma/src/7zCrcOpt.c \
+	$(DEPS_DIR)/lzma/src/7zDec.c \
+	$(DEPS_DIR)/lzma/src/7zFile.c \
+	$(DEPS_DIR)/lzma/src/7zStream.c \
+	$(DEPS_DIR)/lzma/src/Alloc.c \
+	$(DEPS_DIR)/lzma/src/Bcj2.c \
+	$(DEPS_DIR)/lzma/src/Bcj2Enc.c \
+	$(DEPS_DIR)/lzma/src/Bra.c \
+	$(DEPS_DIR)/lzma/src/Bra86.c \
+	$(DEPS_DIR)/lzma/src/BraIA64.c \
+	$(DEPS_DIR)/lzma/src/CpuArch.c \
+	$(DEPS_DIR)/lzma/src/Delta.c \
+	$(DEPS_DIR)/lzma/src/LzFind.c \
+	$(DEPS_DIR)/lzma/src/LzFindOpt.c \
+	$(DEPS_DIR)/lzma/src/Lzma2Dec.c \
+	$(DEPS_DIR)/lzma/src/Lzma2DecMt.c \
+	$(DEPS_DIR)/lzma/src/Lzma2Enc.c \
+	$(DEPS_DIR)/lzma/src/Lzma86Dec.c \
+	$(DEPS_DIR)/lzma/src/Lzma86Enc.c \
+	$(DEPS_DIR)/lzma/src/LzmaDec.c \
+	$(DEPS_DIR)/lzma/src/LzmaEnc.c \
+	$(DEPS_DIR)/lzma/src/LzmaLib.c \
+	$(DEPS_DIR)/lzma/src/Ppmd7.c \
+	$(DEPS_DIR)/lzma/src/Ppmd7Dec.c \
+	$(DEPS_DIR)/lzma/src/Ppmd7Enc.c \
+	$(DEPS_DIR)/lzma/src/Sha256.c \
+	$(DEPS_DIR)/lzma/src/Sha256Opt.c \
+	$(DEPS_DIR)/lzma/src/Xz.c \
+	$(DEPS_DIR)/lzma/src/XzCrc64.c \
+	$(DEPS_DIR)/lzma/src/XzCrc64Opt.c \
+	$(DEPS_DIR)/lzma/src/XzDec.c \
+	$(DEPS_DIR)/lzma/src/XzEnc.c \
+	$(DEPS_DIR)/lzma/src/XzIn.c
+
+# libchdr
+SOURCES_C += \
+	$(DEPS_DIR)/chdr/libchdr/src/libchdr_bitstream.c \
+	$(DEPS_DIR)/chdr/libchdr/src/libchdr_cdrom.c \
+	$(DEPS_DIR)/chdr/libchdr/src/libchdr_chd.c \
+	$(DEPS_DIR)/chdr/libchdr/src/libchdr_flac.c \
+	$(DEPS_DIR)/chdr/libchdr/src/libchdr_huffman.c
+
+# cpuinfo + clog
+SOURCES_C += \
+	$(DEPS_DIR)/cpuinfo/src/api.c \
+	$(DEPS_DIR)/cpuinfo/src/cache.c \
+	$(DEPS_DIR)/cpuinfo/src/init.c \
+	$(DEPS_DIR)/cpuinfo/src/x86/cache/descriptor.c \
+	$(DEPS_DIR)/cpuinfo/src/x86/cache/deterministic.c \
+	$(DEPS_DIR)/cpuinfo/src/x86/cache/init.c \
+	$(DEPS_DIR)/cpuinfo/src/x86/info.c \
+	$(DEPS_DIR)/cpuinfo/src/x86/init.c \
+	$(DEPS_DIR)/cpuinfo/src/x86/isa.c \
+	$(DEPS_DIR)/cpuinfo/src/x86/name.c \
+	$(DEPS_DIR)/cpuinfo/src/x86/topology.c \
+	$(DEPS_DIR)/cpuinfo/src/x86/uarch.c \
+	$(DEPS_DIR)/cpuinfo/src/x86/vendor.c \
+	$(DEPS_DIR)/cpuinfo/src/x86/windows/init.c \
+	$(DEPS_DIR)/cpuinfo/deps/clog/src/clog.c
+
+# fmt
+SOURCES_CXX += \
+	$(DEPS_DIR)/fmt/fmt/src/format.cc \
+	$(DEPS_DIR)/fmt/fmt/src/os.cc
+
+# rapidyaml (rolls c4core into the same library, matching ryml.vcxproj)
+SOURCES_CXX += \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/src/c4/yml/common.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/src/c4/yml/node.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/src/c4/yml/parse.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/src/c4/yml/preprocess.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/src/c4/yml/tree.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/base64.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/char_traits.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/error.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/format.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/language.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/memory_resource.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/memory_util.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/utf.cpp
+
+# libzip - uses pre-generated zip_err_str.c and config.h from
+# 3rdparty/libzip/private/ (matches the upstream MSVC vcxproj path).
+SOURCES_C += \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_add.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_add_dir.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_add_entry.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_algorithm_deflate.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_algorithm_zstd.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_buffer.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_close.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_crypto_win.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_delete.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_dirent.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_dir_add.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_discard.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_entry.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_error.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_error_clear.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_error_get.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_error_get_sys_type.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_error_strerror.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_error_to_str.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_extra_field.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_extra_field_api.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_fclose.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_fdopen.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_file_add.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_file_error_clear.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_file_error_get.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_file_get_comment.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_file_get_external_attributes.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_file_get_offset.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_file_rename.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_file_replace.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_file_set_comment.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_file_set_encryption.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_file_set_external_attributes.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_file_set_mtime.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_file_strerror.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_fopen.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_fopen_encrypted.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_fopen_index.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_fopen_index_encrypted.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_fread.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_fseek.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_ftell.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_get_archive_comment.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_get_archive_flag.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_get_encryption_implementation.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_get_file_comment.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_get_name.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_get_num_entries.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_get_num_files.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_hash.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_io_util.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_libzip_version.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_memdup.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_name_locate.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_new.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_open.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_pkware.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_progress.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_random_win32.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_rename.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_replace.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_set_archive_comment.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_set_archive_flag.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_set_default_password.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_set_file_comment.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_set_file_compression.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_set_name.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_accept_empty.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_begin_write.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_begin_write_cloning.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_buffer.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_call.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_close.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_commit_write.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_compress.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_crc.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_error.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_file_common.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_file_stdio.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_file_win32.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_file_win32_ansi.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_file_win32_named.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_file_win32_utf16.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_file_win32_utf8.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_free.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_function.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_get_file_attributes.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_is_deleted.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_layered.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_open.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_pkware_decode.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_pkware_encode.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_read.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_remove.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_rollback_write.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_seek.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_seek_write.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_stat.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_supports.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_tell.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_tell_write.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_window.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_winzip_aes_decode.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_winzip_aes_encode.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_write.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_zip.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_source_zip_new.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_stat.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_stat_index.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_stat_init.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_strerror.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_string.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_unchange.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_unchange_all.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_unchange_archive.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_unchange_data.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_utf-8.c \
+	$(DEPS_DIR)/libzip/libzip/lib/zip_winzip_aes.c \
+	$(DEPS_DIR)/libzip/private/zip_err_str.c
+
+# D3D12MemAlloc (Windows only)
+ifeq ($(IS_WINDOWS), 1)
+SOURCES_CXX += $(DEPS_DIR)/d3d12memalloc/src/D3D12MemAlloc.cpp
+endif
+
+# glad (OpenGL)
+ifeq ($(HAVE_OPENGL), 1)
+SOURCES_C += $(DEPS_DIR)/glad/src/glad.c
+endif
+
+# glslang (Vulkan only)
+ifeq ($(HAVE_VULKAN), 1)
+SOURCES_CXX += \
+	$(DEPS_DIR)/glslang/glslang/glslang/CInterface/glslang_c_interface.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/GenericCodeGen/CodeGen.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/GenericCodeGen/Link.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/attribute.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/Constant.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/glslang_tab.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/InfoSink.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/Initialize.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/Intermediate.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/intermOut.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/IntermTraverse.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/iomapper.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/limits.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/linkValidate.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/parseConst.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/ParseContextBase.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/ParseHelper.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/PoolAlloc.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/preprocessor/Pp.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/preprocessor/PpAtom.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/preprocessor/PpContext.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/preprocessor/PpScanner.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/preprocessor/PpTokens.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/propagateNoContraction.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/reflection.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/RemoveTree.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/Scan.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/ShaderLang.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/SpirvIntrinsics.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/SymbolTable.cpp \
+	$(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent/Versions.cpp \
+	$(DEPS_DIR)/glslang/glslang/OGLCompilersDLL/InitializeDll.cpp \
+	$(DEPS_DIR)/glslang/glslang/SPIRV/disassemble.cpp \
+	$(DEPS_DIR)/glslang/glslang/SPIRV/doc.cpp \
+	$(DEPS_DIR)/glslang/glslang/SPIRV/GlslangToSpv.cpp \
+	$(DEPS_DIR)/glslang/glslang/SPIRV/InReadableOrder.cpp \
+	$(DEPS_DIR)/glslang/glslang/SPIRV/Logger.cpp \
+	$(DEPS_DIR)/glslang/glslang/SPIRV/SpvBuilder.cpp \
+	$(DEPS_DIR)/glslang/glslang/SPIRV/SpvPostProcess.cpp \
+	$(DEPS_DIR)/glslang/glslang/SPIRV/SPVRemapper.cpp \
+	$(DEPS_DIR)/glslang/glslang/SPIRV/SpvTools.cpp \
+	$(DEPS_DIR)/glslang/glslang/StandAlone/ResourceLimits.cpp \
+	$(DEPS_DIR)/glslang/glslang/StandAlone/resource_limits_c.cpp
+
+# glslang OS bindings: Windows variant on win32, Unix variant elsewhere.
+ifeq ($(IS_WINDOWS), 1)
+SOURCES_CXX += $(DEPS_DIR)/glslang/glslang/glslang/OSDependent/Windows/ossource.cpp
+else
+SOURCES_CXX += $(DEPS_DIR)/glslang/glslang/glslang/OSDependent/Unix/ossource.cpp
+endif
+endif
