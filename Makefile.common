@@ -29,7 +29,6 @@ INCFLAGS := \
 	-I$(DEPS_DIR) \
 	-I$(DEPS_DIR)/include \
 	-I$(DEPS_DIR)/xbyak \
-	-I$(DEPS_DIR)/wil/include \
 	-I$(DEPS_DIR)/fmt/fmt/include \
 	-I$(DEPS_DIR)/rapidyaml/rapidyaml/src \
 	-I$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src \

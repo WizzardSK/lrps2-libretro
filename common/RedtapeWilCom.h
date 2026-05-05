@@ -19,16 +19,43 @@
 
 #include "RedtapeWindows.h"
 
-// warning : variable 's_hrErrorLast' set but not used [-Wunused-but-set-variable]
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunused-but-set-variable"
-#endif
+// ---------------------------------------------------------------------------
+// Minimal wil::com_ptr_nothrow<T> shim built on Microsoft::WRL::ComPtr<T>.
+//
+// The codebase used Microsoft's WIL (Windows Implementation Library) for
+// exactly one feature: the `wil::com_ptr_nothrow<T>` smart pointer.  WIL
+// itself is a 100k+-line vendored dependency whose remaining surface area
+// here -- a refcounted COM smart pointer -- is exactly what
+// Microsoft::WRL::ComPtr<T> already provides.  WRL ships in both the MSVC
+// Windows SDK (<wrl/client.h>) and mingw-w64's headers under the same name
+// and identical API, so a thin alias keeps source files unchanged while
+// removing the WIL dependency entirely.
+//
+// The methods exposed below are exactly those used in the LRPS2 sources:
+//   .get(), .put(), .reset(), .detach(), .addressof()
+// plus the inherited operator->/operator bool/copy/move from WRL::ComPtr.
+// ---------------------------------------------------------------------------
+#include <wrl/client.h>
 
-#include <wil/com.h>
+namespace wil
+{
+	template <typename T>
+	class com_ptr_nothrow : public Microsoft::WRL::ComPtr<T>
+	{
+		using Base = Microsoft::WRL::ComPtr<T>;
 
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
+	public:
+		using Base::Base;
+		using Base::operator=;
+
+		com_ptr_nothrow() = default;
+
+		T*  get()       const noexcept { return this->Get(); }
+		T** put()             noexcept { return this->ReleaseAndGetAddressOf(); }
+		T** addressof()       noexcept { return this->GetAddressOf(); }
+		void reset()          noexcept { this->Reset(); }
+		T*  detach()          noexcept { return this->Detach(); }
+	};
+} // namespace wil
 
 #endif

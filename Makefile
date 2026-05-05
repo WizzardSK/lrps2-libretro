@@ -464,7 +464,6 @@ else
             -D_HAS_EXCEPTIONS=0 \
             -D_ITERATOR_DEBUG_LEVEL=0 \
             -D_SCL_SECURE_NO_WARNINGS \
-            -DWIL_SUPPRESS_EXCEPTIONS \
             -D__SSE4_1__ \
             -DHAVE_D3D11 -DHAVE_D3D12 \
             -DZIP_STATIC \

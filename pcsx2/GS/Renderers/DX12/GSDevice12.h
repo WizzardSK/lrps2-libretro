@@ -35,7 +35,7 @@
 #include <memory>
 #include <vector>
 #include <functional>
-#include <wil/com.h>
+#include "common/RedtapeWilCom.h"
 
 struct IDXGIAdapter;
 struct IDXGIFactory;

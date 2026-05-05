@@ -58,7 +58,6 @@ if(WIN32)
 		WINVER=${MIN_WIN32}
 		_WIN32_WINNT=${MIN_WIN32}
 		WIN32_LEAN_AND_MEAN
-		WIL_SUPPRESS_EXCEPTIONS
 	)
 	target_include_directories(PCSX2_FLAGS INTERFACE
 		../3rdparty # GL headers
@@ -550,15 +549,6 @@ if(USE_VULKAN)
 endif()
 
 if(WIN32)
-	list(APPEND pcsx2DEV9Sources
-		DEV9/Win32/pcap_io_win32.cpp
-		DEV9/Win32/tap-win32.cpp
-	)
-	list(APPEND pcsx2DEV9Headers
-		DEV9/Win32/pcap_io_win32_funcs.h
-		DEV9/Win32/tap.h
-	)
-
 	list(APPEND pcsx2USBSources
 		USB/usb-eyetoy/cam-windows.cpp
 	)
@@ -897,7 +887,6 @@ target_link_libraries(PCSX2_FLAGS INTERFACE
 
 if(WIN32)
 	target_link_libraries(PCSX2_FLAGS INTERFACE
-		WIL::WIL
 		D3D12MemAlloc
 		d3dcompiler.lib
 		d3d11.lib

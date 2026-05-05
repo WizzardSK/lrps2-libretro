@@ -20,7 +20,7 @@
 #include "GS/Renderers/Common/GSDevice.h"
 #include "D3D11ShaderCache.h"
 #include <unordered_map>
-#include <wil/com.h>
+#include "common/RedtapeWilCom.h"
 #include <dxgi1_5.h>
 #include <d3d11_1.h>
 

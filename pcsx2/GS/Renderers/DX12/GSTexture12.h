@@ -22,7 +22,7 @@
 #include "D3D12DescriptorHeapManager.h"
 
 #include <d3d12.h>
-#include <wil/com.h>
+#include "common/RedtapeWilCom.h"
 
 #include <limits>
 

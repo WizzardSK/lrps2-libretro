@@ -13,7 +13,6 @@ else()
 endif()
 if (WIN32)
 	# We bundle everything on Windows
-	add_subdirectory(3rdparty/wil EXCLUDE_FROM_ALL)
 	add_subdirectory(3rdparty/D3D12MemAlloc EXCLUDE_FROM_ALL)
 else()
 	find_package(LibLZMA REQUIRED)

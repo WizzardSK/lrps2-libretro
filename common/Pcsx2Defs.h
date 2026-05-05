@@ -111,14 +111,21 @@
 #define _inline __inline__ __attribute__((unused))
 #endif
 
-#ifdef NDEBUG
+// __forceinline / __fi: the codebase applies these to NON-static, NON-inline
+// function *definitions* in .cpp files, with `extern` declarations in headers.
+// gcc 15 at -O3 takes `__attribute__((always_inline, unused))` on such a
+// definition as license to inline at every callsite *and* not emit an
+// out-of-line copy, leaving cross-TU callers with undefined references
+// (e.g. dmaSIF1, vtlb_GetPhyPtr, x86Emitter::xPUSH...).  The cmake build
+// sidesteps this by enabling LTO/IPO on PCSX2_LTO so all .cpp's are merged
+// at link time, but the libretro-super static Makefile builds without LTO.
+//
+// Defining __forceinline as nothing keeps cross-TU calls linkable, while
+// gcc -O3 still inlines same-TU callsites naturally.  LTO builds (cmake)
+// remain free to inline across TUs at link time, so there is no perf loss
+// where it matters.
 #ifndef __forceinline
-#define __forceinline __attribute__((always_inline, unused))
-#endif
-#else
-#ifndef __forceinline
-#define __forceinline __attribute__((unused))
-#endif
+#define __forceinline
 #endif
 
 #ifndef __noinline
