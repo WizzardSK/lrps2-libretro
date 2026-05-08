@@ -49,8 +49,6 @@
 extern std::unique_ptr<GSRendererPGS> g_pgs_renderer;
 #endif
 
-#define RETRO_AUDIO_SAMPLE_BATCH
-
 #if 0
 #define PERF_TEST
 #endif
@@ -78,7 +76,7 @@ static struct retro_perf_callback perf_cb;
 retro_environment_t environ_cb;
 retro_video_refresh_t video_cb;
 retro_log_printf_t log_cb;
-retro_audio_sample_t sample_cb;
+static retro_audio_sample_t sample_cb;
 static retro_audio_sample_batch_t batch_cb;
 struct retro_hw_render_callback hw_render;
 
@@ -1214,11 +1212,15 @@ void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { batch_cb = cb
 void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
 void retro_set_audio_sample(retro_audio_sample_t cb)   { sample_cb = cb; }
 
-static bool audio_ready   = false;
-static float sample_rate  = 48000.0f;
-static float retro_fps    = 60.0f;
-
-/* Audio output buffer */
+/* Audio output buffer.
+ *
+ * SPU2 emits stereo int16_t samples directly into this buffer via
+ * retro_audio_queue() during retro_run(). One bulk batch_cb() upload
+ * happens at the end of retro_run(). The buffer grows on demand;
+ * worst-case PAL is ~960 stereo samples (1920 int16) per frame and
+ * SPU2's TimeUpdate sanity cap is SANITYINTERVAL (4800) stereo samples
+ * per call, so 8192 int16 covers a quiet steady-state and we just grow
+ * past that on catch-up. */
 static struct {
    int16_t *data;
    int32_t size;
@@ -1227,67 +1229,53 @@ static struct {
 
 static void ensure_output_audio_buffer_capacity(int32_t capacity)
 {
-#ifdef RETRO_AUDIO_SAMPLE_BATCH
    if (capacity <= output_audio_buffer.capacity)
       return;
 
    output_audio_buffer.data = (int16_t*)realloc(output_audio_buffer.data, capacity * sizeof(*output_audio_buffer.data));
    output_audio_buffer.capacity = capacity;
    log_cb(RETRO_LOG_DEBUG, "Output audio buffer capacity set to %d\n", capacity);
-#endif
 }
 
 static void init_output_audio_buffer(int32_t capacity)
 {
-#ifdef RETRO_AUDIO_SAMPLE_BATCH
    output_audio_buffer.data = NULL;
    output_audio_buffer.size = 0;
    output_audio_buffer.capacity = 0;
    ensure_output_audio_buffer_capacity(capacity);
-#endif
 }
 
 static void free_output_audio_buffer(void)
 {
-#ifdef RETRO_AUDIO_SAMPLE_BATCH
    free(output_audio_buffer.data);
    output_audio_buffer.data = NULL;
    output_audio_buffer.size = 0;
    output_audio_buffer.capacity = 0;
-#endif
 }
 
 static void upload_output_audio_buffer(void)
 {
-#ifdef RETRO_AUDIO_SAMPLE_BATCH
-   if (!audio_ready)
+   /* output_audio_buffer.size counts int16s (left+right interleaved);
+    * batch_cb takes stereo frames, hence /2. An empty frame (0 samples)
+    * is legitimate and must not be padded with synthetic silence:
+    * silence padding decouples the audio stream from SPU2's actual
+    * output and breaks both determinism and the 48 kHz contract. */
+   if (output_audio_buffer.size > 0)
    {
-      unsigned samples = (sample_rate / retro_fps);
-      memset(output_audio_buffer.data + output_audio_buffer.size, 0, samples * sizeof(*output_audio_buffer.data));
-      output_audio_buffer.size += samples;
+      batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);
+      output_audio_buffer.size = 0;
    }
-   batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);
-   output_audio_buffer.size = 0;
-
-   audio_ready = false;
-#endif
 }
 
 void retro_audio_queue(const int16_t *data, int32_t samples)
 {
    if (samples < 1)
       return;
-#ifdef RETRO_AUDIO_SAMPLE_BATCH
    if (output_audio_buffer.capacity - output_audio_buffer.size < samples)
       ensure_output_audio_buffer_capacity((output_audio_buffer.capacity + samples) * 1.5);
 
    memcpy(output_audio_buffer.data + output_audio_buffer.size, data, samples * sizeof(*output_audio_buffer.data));
    output_audio_buffer.size += samples;
-
-   audio_ready = true;
-#else
-   sample_cb(data[0], data[1]);
-#endif
 }
 
 void retro_set_environment(retro_environment_t cb)
@@ -1495,15 +1483,16 @@ void retro_get_system_av_info(retro_system_av_info* info)
 
 	info->timing.fps         = (retro_get_region() == RETRO_REGION_NTSC) ? (60.0f / 1.001f) : 50.0f;
 	info->timing.sample_rate = 48000;
-
-	retro_fps                = info->timing.fps;
-	sample_rate              = info->timing.sample_rate;
 }
 
 void retro_reset(void)
 {
 	cpu_thread_pause();
 	VMManager::Reset();
+	/* Discard any audio buffered before the reset; carrying pre-reset
+	 * samples into the post-reset stream causes audible glitches and
+	 * leaves the buffer in a non-deterministic starting state. */
+	output_audio_buffer.size = 0;
 	VMManager::SetPaused(false);
 }
 
@@ -1847,7 +1836,11 @@ void retro_init(void)
 
 	environ_cb(RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, &disk_control);
 
-	init_output_audio_buffer(2048);
+	/* PAL: ~960 stereo samples/frame -> 1920 int16. NTSC: ~801 stereo
+	 * samples/frame -> 1602 int16. 4096 int16 (2048 stereo) gives us
+	 * headroom past the steady-state nominal so we don't realloc on
+	 * the first frame. */
+	init_output_audio_buffer(4096);
 }
 
 static void get_first_track_from_cue(std::string &path)

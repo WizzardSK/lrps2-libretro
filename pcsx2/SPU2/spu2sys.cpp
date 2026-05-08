@@ -207,9 +207,14 @@ __fi void TimeUpdate(u32 cClocks)
 		lClocks = cClocks - dClocks;
 	}
 
-	short snd_buffer[2];
-
-	snd_buffer[0] = snd_buffer[1] = 0;
+	/* Per-call stack batch. Mix() produces exactly one stereo sample per
+	 * TICKINTERVAL of IOP clocks, so the maximum number of stereo samples
+	 * a single TimeUpdate can emit is bounded by SANITYINTERVAL (the
+	 * dClocks cap above is SAMPLECOUNT == TICKINTERVAL * SANITYINTERVAL).
+	 * Every sample must be queued: dropping any (or filtering by zero
+	 * value) breaks audio determinism and the sample-rate contract. */
+	short snd_buffer[SANITYINTERVAL * 2];
+	int   snd_count = 0;
 
 	//Update Mixing Progress
 	while (dClocks >= TICKINTERVAL)
@@ -284,11 +289,12 @@ __fi void TimeUpdate(u32 cClocks)
 				Cores[c].KeyOn = 0;
 			}
 		}
-		Mix(&snd_buffer[0], &snd_buffer[1]);
+		Mix(&snd_buffer[snd_count], &snd_buffer[snd_count + 1]);
+		snd_count += 2;
 	}
 
-	if (snd_buffer[0] != 0 && snd_buffer[1] != 0)
-		retro_audio_queue(snd_buffer, 2);
+	if (snd_count)
+		retro_audio_queue(snd_buffer, snd_count);
 
 	//Update DMA4 interrupt delay counter
 	if (Cores[0].DMAICounter > 0 && (psxRegs.cycle - Cores[0].LastClock) > 0)
