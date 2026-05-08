@@ -55,7 +55,6 @@ extern std::unique_ptr<GSRendererPGS> g_pgs_renderer;
 retro_environment_t environ_cb;
 retro_video_refresh_t video_cb;
 retro_log_printf_t log_cb;
-static retro_audio_sample_t sample_cb;
 static retro_audio_sample_batch_t batch_cb;
 struct retro_hw_render_callback hw_render;
 
@@ -1222,7 +1221,10 @@ void vk_libretro_set_hwrender_interface(retro_hw_render_interface_vulkan *hw_ren
 
 void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { batch_cb = cb; }
 void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
-void retro_set_audio_sample(retro_audio_sample_t cb)   { sample_cb = cb; }
+/* The core only ever uses batch_cb (audio is queued in bulk via
+ * upload_output_audio_buffer at end-of-frame). The libretro API still
+ * requires this symbol to exist, so accept the callback and discard. */
+void retro_set_audio_sample(retro_audio_sample_t /*cb*/) { }
 
 /* Audio output buffer.
  *
