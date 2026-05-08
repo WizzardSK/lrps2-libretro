@@ -3767,7 +3767,7 @@ void GSRendererHW::EmulateBlending(int rt_alpha_min, int rt_alpha_max, const boo
 	bool color_dest_blend = !!(blend_flag & BLEND_CD);
 
 	// HW blend can handle it, no need for sw blend or hdr, Cd*Alpha or Cd*(1 - Alpha) where Alpha <= 128, Alpha is As or Af.
-	bool color_dest_blend2 = alpha_eq_less_one && ((blend_flag & BLEND_HW2) || (m_conf.ps.blend_b == m_conf.ps.blend_d == 1 && m_conf.ps.blend_a == 2));
+	bool color_dest_blend2 = alpha_eq_less_one && ((blend_flag & BLEND_HW2) || (m_conf.ps.blend_b == 1 && m_conf.ps.blend_d == 1 && m_conf.ps.blend_a == 2));
 
 	// Do the multiplication in shader for blending accumulation: Cs*As + Cd or Cs*Af + Cd
 	bool accumulation_blend = !!(blend_flag & BLEND_ACCU);
@@ -3871,7 +3871,7 @@ void GSRendererHW::EmulateBlending(int rt_alpha_min, int rt_alpha_max, const boo
 				/* fallthrough */
 			case AccBlendLevel::High:
 				// Enable sw blend on Cd*(Alpha + 1) cases where prims don't overlap.
-				sw_blending |= (m_conf.ps.blend_a == m_conf.ps.blend_d == 1) && no_prim_overlap;
+				sw_blending |= (m_conf.ps.blend_a == 1 && m_conf.ps.blend_d == 1) && no_prim_overlap;
 				/* fallthrough */
 			case AccBlendLevel::Medium:
 				// Enable sw blend on Ad cases where prims don't overlap, blend_ad_alpha_masked, rta correction or ad_second_pass isn't possible.
