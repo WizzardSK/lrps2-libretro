@@ -62,12 +62,7 @@ namespace MTGS
 	static std::atomic<unsigned int> s_ReadPos      = 0; // cur pos gs is reading from
 	static std::atomic<unsigned int> s_WritePos     = 0; // cur pos ee thread is writing to
 
-	static std::atomic<int>  s_QueuedFrameCount     = 0;
-	static std::atomic<bool> s_VsyncSignalListener  = false;
-
-	static std::mutex s_mtx_RingBufferBusy2; // Gets released on semaXGkick waiting...
 	static Threading::WorkSema s_sem_event;
-	static Threading::UserspaceSemaphore s_sem_Vsync;
 
 	static std::thread::id s_thread;
 	static std::atomic<bool> s_open_flag = false;
@@ -82,11 +77,7 @@ void MTGS::ResetGS(bool hardware_reset)
 	//  * Signal a reset.
 	//  * clear the path and byRegs structs (used by GIFtagDummy)
 	if (hardware_reset)
-	{
 		s_ReadPos             = s_WritePos.load();
-		s_QueuedFrameCount.store(0, std::memory_order_release);
-		s_VsyncSignalListener.store(false, std::memory_order_release);
-	}
 
 	const unsigned int writepos = s_WritePos.load(std::memory_order_relaxed);
 	PacketTagType& tag          = (PacketTagType&)m_Ring[writepos];
@@ -111,30 +102,19 @@ void MTGS::PostVsyncStart()
 	tag.command                       = GS_RINGTYPE_VSYNC;
 	tag.data[0]                       = 0;
 
-	s_VsyncSignalListener.store(true, std::memory_order_release);
 	s_WritePos.store((writepos + 1) & RINGBUFFERMASK, std::memory_order_release);
 
-	// Remove extra frame input lag
-	WaitGS(false);
+	// In the libretro topology, MTGS is the libretro thread - it can only
+	// drain the ring during retro_run. So cpu_thread (us) blocks here
+	// waiting for one VSYNC's worth of work to be processed, which is the
+	// natural frame-pacing point. Standalone PCSX2 has a queue-depth knob
+	// (VsyncQueueSize) for letting EE simulate ahead of the renderer, but
+	// in libretro that queue would just sit unprocessed until the next
+	// retro_run anyway, so it adds input lag with no throughput benefit.
+	WaitGS();
 
 	// Vsyncs should always start the GS thread, regardless of how little has actually be queued.
 	s_sem_event.NotifyOfWork();
-
-	// If the MTGS is allowed to queue a lot of frames in advance, it creates input lag.
-	// Use the Queued FrameCount to stall the EE if another vsync (or two) are already queued
-	// in the ringbuffer.  The queue limit is disabled when both FrameLimiting and Vsync are
-	// disabled, since the queue can have perverse effects on framerate benchmarking.
-
-	// Edit: It's possible that MTGS is that much faster than GS that it creates so much lag,
-	// a game becomes uncontrollable (software rendering for example).
-	// For that reason it's better to have the limit always in place, at the cost of a few max FPS in benchmarks.
-	// If those are needed back, it's better to increase the VsyncQueueSize via PCSX_vm.ini.
-	// (The Xenosaga engine is known to run into this, due to it throwing bulks of data in one frame followed by 2 empty frames.)
-
-	if (s_QueuedFrameCount.fetch_add(1) < EmuConfig.GS.VsyncQueueSize)
-		return;
-
-	s_sem_Vsync.Wait();
 }
 
 void MTGS::InitAndReadFIFO(u8* mem, u32 qwc)
@@ -157,7 +137,7 @@ void MTGS::InitAndReadFIFO(u8* mem, u32 qwc)
 	tag.pointer                 = (uptr)mem;
 
 	s_WritePos.store((writepos + 1) & RINGBUFFERMASK, std::memory_order_release);
-	WaitGS(false);
+	WaitGS();
 }
 
 void MTGS::TryOpenGS(void)
@@ -174,8 +154,6 @@ void MTGS::MainLoop(bool flush_all)
 	// Threading info: run in MTGS thread
 	// s_ReadPos is only update by the MTGS thread so it is safe to load it with a relaxed atomic
 
-	std::unique_lock mtvu_lock(s_mtx_RingBufferBusy2);
-
 	for (;;)
 	{
 		if (flush_all)
@@ -184,11 +162,7 @@ void MTGS::MainLoop(bool flush_all)
 				return;
 		}
 		else
-		{
-			mtvu_lock.unlock();
 			s_sem_event.WaitForWork();
-			mtvu_lock.lock();
-		}
 
 		if (!s_open_flag.load(std::memory_order_acquire))
 			break;
@@ -215,13 +189,14 @@ void MTGS::MainLoop(bool flush_all)
 
 				case GS_RINGTYPE_MTVU_GSPACKET:
 				{
+					/* MTVU is unsupported in this fork (vuThread is forced
+					 * to false at libretro setup) so this packet type is
+					 * never enqueued in practice. Kept in the switch for
+					 * defensive completeness; a future MTVU re-enable
+					 * would also need to reintroduce the MTGS<->MTVU
+					 * synchronization that used to be here. */
 					if (!vu1Thread.semaXGkick.TryWait())
-					{
-						mtvu_lock.unlock();
-						// Wait for MTVU to complete vu1 program
 						vu1Thread.semaXGkick.Wait();
-						mtvu_lock.lock();
-					}
 					Gif_Path& path = gifUnit.gifPath[GIF_PATH_1];
 					GS_Packet gsPack = path.GetGSPacketMTVU(); // Get vu1 program's xgkick packet(s)
 					if (gsPack.size)
@@ -235,10 +210,6 @@ void MTGS::MainLoop(bool flush_all)
 					if(!flush_all)
 						GSvsync((((u32&)PS2MEM_GS[0x1000]) & 0x2000) ? 0 : 1, s_GSRegistersWritten);
 					s_GSRegistersWritten = false;
-
-					s_QueuedFrameCount.fetch_sub(1);
-					if (s_VsyncSignalListener.exchange(false))
-						s_sem_Vsync.Post();
 					break;
 				case GS_RINGTYPE_FREEZE:
 					{
@@ -276,16 +247,12 @@ void MTGS::MainLoop(bool flush_all)
 
 void MTGS::CloseGS(void)
 {
-	if (s_VsyncSignalListener.exchange(false))
-		s_sem_Vsync.Post();
 	GSclose();
 	s_open_flag.store(false, std::memory_order_release);
 }
 
 // Waits for the GS to empty out the entire ring buffer contents.
-// This function is allowed to exit after MTGS finished a path1 packet.
-// If isMTVU, then this implies this function is being called from the MTVU thread...
-void MTGS::WaitGS(bool isMTVU)
+void MTGS::WaitGS(void)
 {
 	if(std::this_thread::get_id() == s_thread)
 	{
@@ -296,33 +263,8 @@ void MTGS::WaitGS(bool isMTVU)
 		return;
 
 	s_sem_event.NotifyOfWork();
-	if (isMTVU)
-	{
-		Gif_Path& path = gifUnit.gifPath[GIF_PATH_1];
-
-		// We will stop waiting on the MTGS thread if the
-		// MTGS thread has processed a vu1 xgkick packet, or is pending on
-		// its final vu1 xgkick packet (!curP1Packs)...
-		// Note: s_WritePos doesn't seem to have proper atomic write
-		// code, so reading it from the MTVU thread might be dangerous;
-		// hence it has been avoided...
-		u32 startP1Packs = path.GetPendingGSPackets();
-		if (startP1Packs)
-		{
-			for (;;)
-			{
-				s_mtx_RingBufferBusy2.lock();
-				s_mtx_RingBufferBusy2.unlock();
-				if (path.GetPendingGSPackets() != startP1Packs)
-					break;
-			}
-		}
-	}
-	else
-	{
-		/* if it returns false, MTGS thread died */
-		if (!s_sem_event.WaitForEmpty()) { }
-	}
+	/* if it returns false, MTGS thread died */
+	if (!s_sem_event.WaitForEmpty()) { }
 }
 
 void MTGS::WaitForClose()
@@ -343,7 +285,7 @@ void MTGS::Freeze(FreezeAction mode, MTGS_FreezeData& data)
 	tag.pointer                 = (uptr)&data;
 
 	s_WritePos.store((writepos + 1) & RINGBUFFERMASK, std::memory_order_release);
-	WaitGS(false);
+	WaitGS();
 }
 
 void MTGS::GameChanged()
@@ -358,7 +300,7 @@ void MTGS::ApplySettings()
 	// is unsynchronized, because otherwise we might potentially read in the middle of
 	// the GS renderer being reopened.
 	if (EmuConfig.GS.HWDownloadMode == GSHardwareDownloadMode::Unsynchronized)
-		WaitGS(false);
+		WaitGS();
 }
 
 void MTGS::SwitchRenderer(GSRendererType renderer, GSInterlaceMode interlace)
@@ -366,7 +308,7 @@ void MTGS::SwitchRenderer(GSRendererType renderer, GSInterlaceMode interlace)
 	GSSwitchRenderer(renderer, hw_render.context_type, interlace);
 	// See note in ApplySettings() for reasoning here.
 	if (EmuConfig.GS.HWDownloadMode == GSHardwareDownloadMode::Unsynchronized)
-		WaitGS(false);
+		WaitGS();
 }
 
 // Adds a finished GS Packet to the MTGS ring buffer

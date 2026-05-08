@@ -164,7 +164,7 @@ bool SaveStateBase::gifPathFreeze(u32 path)
 bool SaveStateBase::gifFreeze(void)
 {
 	bool mtvuMode = THREAD_VU1;
-	MTGS::WaitGS(false);
+	MTGS::WaitGS();
 	if (!(FreezeTag("Gif Unit")))
 		return false;
 
