@@ -2198,6 +2198,13 @@ bool retro_serialize(void* data, size_t size)
 
 	cpu_thread_pause();
 
+	/* retro_serialize_size() already computed the exact upper bound on
+	 * what we need. Reserve once so memSavingState's incremental
+	 * resize() calls inside FreezeMem/PrepBlock don't realloc and copy
+	 * the partial buffer multiple times as different sections (BIOS,
+	 * internals, EE/IOP/VU memory, SPU2/PAD/GS freeze blocks) accumulate. */
+	buffer.reserve(size);
+
 	memSavingState saveme(buffer);
 
 	saveme.FreezeBios();
