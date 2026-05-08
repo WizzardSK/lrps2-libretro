@@ -2220,6 +2220,16 @@ bool retro_serialize(void* data, size_t size)
 	GSfreeze(FreezeAction::Save, &fP);
 	saveme.CommitBlock(fP.size);
 
+	/* Bound the copy by the frontend-provided buffer size: if the
+	 * actual saved size somehow exceeds what retro_serialize_size()
+	 * predicted, refuse rather than overrun the caller's buffer. */
+	if (buffer.size() > size)
+	{
+		log_cb(RETRO_LOG_ERROR, "retro_serialize: produced %zu bytes, "
+			"frontend buffer is only %zu\n", buffer.size(), size);
+		VMManager::SetPaused(false);
+		return false;
+	}
 	memcpy(data, buffer.data(), buffer.size());
 
 	VMManager::SetPaused(false);
@@ -2233,7 +2243,12 @@ bool retro_unserialize(const void* data, size_t size)
 
 	cpu_thread_pause();
 
-	buffer.reserve(size);
+	/* resize() (not reserve()): m_memory.size() is what PrepBlock and
+	 * memLoadingState::FreezeMem use for bounds-checking. With reserve()
+	 * size() stays 0, the very first PrepBlock for SPU2/PAD/GS sets
+	 * m_error=true, and every subsequent freeze block silently loads as
+	 * zeros - SPU2/PAD/GS state was effectively never restored. */
+	buffer.resize(size);
 	memcpy(buffer.data(), data, size);
 	memLoadingState loadme(buffer);
 
@@ -2275,7 +2290,17 @@ bool retro_unserialize(const void* data, size_t size)
 	GSfreeze(FreezeAction::Load, &fP);
 	loadme.CommitBlock(fP.size);
 
+	/* Discard buffered audio: any pre-load samples in the buffer no
+	 * longer match the SPU2 state we just restored. */
+	output_audio_buffer.size = 0;
+
 	VMManager::SetPaused(false);
+	if (!loadme.IsOkay())
+	{
+		log_cb(RETRO_LOG_ERROR, "retro_unserialize: short or "
+			"corrupt savestate (size=%zu)\n", size);
+		return false;
+	}
 	return true;
 }
 
