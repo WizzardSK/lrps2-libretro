@@ -489,12 +489,12 @@ public:
 protected:
 	__forceinline static u32 Expand24To32(u32 c, const GIFRegTEXA& TEXA)
 	{
-		return (((!TEXA.AEM | (c & 0xffffff)) ? TEXA.TA0 : 0) << 24) | (c & 0xffffff);
+		return (((!TEXA.AEM || (c & 0xffffff)) ? TEXA.TA0 : 0) << 24) | (c & 0xffffff);
 	}
 
 	__forceinline static u32 Expand16To32(u16 c, const GIFRegTEXA& TEXA)
 	{
-		return (((c & 0x8000) ? TEXA.TA1 : (!TEXA.AEM | c) ? TEXA.TA0 : 0) << 24)
+		return (((c & 0x8000) ? TEXA.TA1 : (!TEXA.AEM || c) ? TEXA.TA0 : 0) << 24)
 			| ((c & 0x7c00) << 9)
 			| ((c & 0x03e0) << 6)
 			| ((c & 0x001f) << 3);
