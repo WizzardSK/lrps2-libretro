@@ -385,21 +385,6 @@ static void check_variables(bool first_run)
 			bool fast_cdvd = !strcmp(var.value, "enabled");
 			s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "fastCDVD", fast_cdvd);
 		}
-
-		/* MTVU is unsupported in this fork. Reasons:
-		 * - GameDB only ever explicitly *disables* it (~60 entries, all
-		 *   "mtvu: 0" with comments like "Fixes corrupted textures" /
-		 *   "Stops crashing"); zero entries enable it.
-		 * - The libretro topology has no spare thread to host VU work.
-		 *   cpu_thread runs EE+IOP+SPU2+VU; libretro thread runs MTGS
-		 *   plus the graphics-API driver. MTVU would need a 3rd worker
-		 *   thread that the frontend doesn't expect.
-		 * - MTVU breaks determinism (cycle-stealing depends on host
-		 *   scheduler), which breaks RetroArch netplay/replay/rewind.
-		 *
-		 * Force it off here so a stray .ini override or future GameDB
-		 * entry can't silently turn it on. */
-		s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vuThread", false);
 	}
 
 	if (setting_plugin_type == PLUGIN_PGS)
@@ -1250,7 +1235,7 @@ void retro_set_audio_sample(retro_audio_sample_t /*cb*/) { }
  * Threading: the buffer is touched by SPU2 (cpu_thread) and by
  * upload_output_audio_buffer (libretro thread). They are implicitly
  * serialized by the MTGS ring barrier: cpu_thread blocks in
- * MTGS::WaitGS() at PostVsyncStart immediately after queueing the
+ * MTGS::WaitGS(false) at PostVsyncStart immediately after queueing the
  * VSYNC packet, and cannot resume - and therefore cannot append more
  * audio - until libretro thread fully drains the ring and the next
  * retro_run wakes it. We read+reset the buffer at end-of-retro_run,
