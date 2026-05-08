@@ -1214,17 +1214,23 @@ void retro_set_audio_sample(retro_audio_sample_t cb)   { sample_cb = cb; }
 
 /* Audio output buffer.
  *
- * SPU2 emits stereo int16_t samples directly into this buffer via
- * retro_audio_queue() during retro_run(). One bulk batch_cb() upload
- * happens at the end of retro_run(). The buffer grows on demand;
- * worst-case PAL is ~960 stereo samples (1920 int16) per frame and
- * SPU2's TimeUpdate sanity cap is SANITYINTERVAL (4800) stereo samples
- * per call, so 8192 int16 covers a quiet steady-state and we just grow
- * past that on catch-up. */
+ * SPU2 writes stereo int16 samples directly into this buffer during
+ * retro_run() via the reserve/commit pair below. One bulk batch_cb()
+ * upload happens at the end of retro_run().
+ *
+ * Threading: the buffer is touched by SPU2 (cpu_thread) and by
+ * upload_output_audio_buffer (libretro thread). They are implicitly
+ * serialized by the MTGS ring barrier: cpu_thread blocks in
+ * MTGS::WaitGS(false) at PostVsyncStart immediately after queueing the
+ * VSYNC packet, and cannot resume - and therefore cannot append more
+ * audio - until libretro thread fully drains the ring and the next
+ * retro_run wakes it. We read+reset the buffer at end-of-retro_run,
+ * before letting cpu_thread make progress, so no concurrent writes
+ * race with the upload. */
 static struct {
    int16_t *data;
-   int32_t size;
-   int32_t capacity;
+   int32_t size;     /* number of int16s currently filled (left+right interleaved) */
+   int32_t capacity; /* allocated int16s */
 } output_audio_buffer = {NULL, 0, 0};
 
 static void ensure_output_audio_buffer_capacity(int32_t capacity)
@@ -1267,14 +1273,25 @@ static void upload_output_audio_buffer(void)
    }
 }
 
-void retro_audio_queue(const int16_t *data, int32_t samples)
+/* Reserve room for `max_samples` int16s past the current write position
+ * and return a writable pointer to the start of that region. The caller
+ * fills as many samples as it wants up to max_samples, then calls
+ * retro_audio_commit() with the actual count.
+ *
+ * This avoids allocating a per-call stack batch (TimeUpdate is __fi /
+ * always_inline, called from many sites; a 4800-stereo stack array
+ * would balloon every caller's frame) and the intermediate memcpy
+ * the previous push-style API required - SPU2's Mix() now writes
+ * straight into the persistent buffer. */
+int16_t *retro_audio_reserve(int32_t max_samples)
 {
-   if (samples < 1)
-      return;
-   if (output_audio_buffer.capacity - output_audio_buffer.size < samples)
-      ensure_output_audio_buffer_capacity((output_audio_buffer.capacity + samples) * 1.5);
+   if (output_audio_buffer.capacity - output_audio_buffer.size < max_samples)
+      ensure_output_audio_buffer_capacity((output_audio_buffer.capacity + max_samples) * 1.5);
+   return output_audio_buffer.data + output_audio_buffer.size;
+}
 
-   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, samples * sizeof(*output_audio_buffer.data));
+void retro_audio_commit(int32_t samples)
+{
    output_audio_buffer.size += samples;
 }
 

@@ -30,7 +30,8 @@
 
 #include <libretro.h>
 
-extern void retro_audio_queue(const int16_t *data, int32_t samples);
+extern int16_t *retro_audio_reserve(int32_t max_samples);
+extern void     retro_audio_commit(int32_t samples);
 
 s16 spu2regs[0x010000 / sizeof(s16)];
 s16 _spu2mem[0x200000 / sizeof(s16)];
@@ -207,14 +208,18 @@ __fi void TimeUpdate(u32 cClocks)
 		lClocks = cClocks - dClocks;
 	}
 
-	/* Per-call stack batch. Mix() produces exactly one stereo sample per
-	 * TICKINTERVAL of IOP clocks, so the maximum number of stereo samples
-	 * a single TimeUpdate can emit is bounded by SANITYINTERVAL (the
-	 * dClocks cap above is SAMPLECOUNT == TICKINTERVAL * SANITYINTERVAL).
-	 * Every sample must be queued: dropping any (or filtering by zero
-	 * value) breaks audio determinism and the sample-rate contract. */
-	short snd_buffer[SANITYINTERVAL * 2];
-	int   snd_count = 0;
+	/* Mix() emits exactly one stereo sample per TICKINTERVAL of IOP
+	 * clocks, so worst-case stereo samples for this call is
+	 * (dClocks / TICKINTERVAL) which is bounded by SANITYINTERVAL
+	 * (the dClocks cap above is SAMPLECOUNT == TICKINTERVAL *
+	 * SANITYINTERVAL). Reserve room up front and write Mix's output
+	 * straight into the libretro audio buffer - no per-call stack
+	 * scratch (TimeUpdate is always_inline and called from many
+	 * sites; a 19 KB on-stack array would balloon every caller's
+	 * frame), and no intermediate memcpy. */
+	int       max_pairs = dClocks / TICKINTERVAL;
+	int16_t  *snd_buffer = retro_audio_reserve(max_pairs * 2);
+	int       snd_count  = 0;
 
 	//Update Mixing Progress
 	while (dClocks >= TICKINTERVAL)
@@ -294,7 +299,7 @@ __fi void TimeUpdate(u32 cClocks)
 	}
 
 	if (snd_count)
-		retro_audio_queue(snd_buffer, snd_count);
+		retro_audio_commit(snd_count);
 
 	//Update DMA4 interrupt delay counter
 	if (Cores[0].DMAICounter > 0 && (psxRegs.cycle - Cores[0].LastClock) > 0)
