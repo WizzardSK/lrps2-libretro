@@ -527,6 +527,8 @@ void GSRendererPGS::VSync(u32 field, bool registers_written)
 			 * dereference it again during cached-frame replay (used
 			 * for pause and HW screenshots). A stack-allocated struct
 			 * here would be a use-after-return for those replays. */
+			dev.flush_frame();
+
 			static retro_vulkan_image vkimage;
 			vkimage = {};
 			vkimage.image_view = vsync.image->get_view().get_unorm_view().view;
