@@ -396,6 +396,14 @@ void Gif_AddCompletedGSPacket(GS_Packet& _gsPack, GIF_PATH _path)
 
 void Gif_AddBlankGSPacket(u32 _size, GIF_PATH _path)
 {
+	// If we're running on the same thread (single-threaded libretro
+	// topology), readAmount tracking via blank packets is unnecessary:
+	// there is no concurrent GS thread observing readAmount between
+	// the fetch_add here and the fetch_sub in MainLoop.  Skipping
+	// the ringbuffer entry removes ~88% of MainLoop entries.
+	if (std::this_thread::get_id() == MTGS::s_thread)
+		return;
+
 	gifUnit.gifPath[_path].readAmount.fetch_add(_size);
 	const unsigned int writepos = MTGS::s_WritePos.load(std::memory_order_relaxed);
 	PacketTagType& tag          = (PacketTagType&)m_Ring[writepos];
