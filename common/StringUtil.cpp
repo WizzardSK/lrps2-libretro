@@ -52,8 +52,9 @@ namespace StringUtil
 		// If an encoding error occurs, len is -1. Which we definitely don't want to resize to.
 		if (len > 0)
 		{
+			ret.resize(len + 1);
+			std::vsnprintf(ret.data(), ret.size(), format, ap);
 			ret.resize(len);
-			std::vsnprintf(ret.data(), ret.size() + 1, format, ap);
 		}
 
 		return ret;
@@ -61,94 +62,51 @@ namespace StringUtil
 
 	bool WildcardMatch(const char* subject, const char* mask, bool case_sensitive /*= true*/)
 	{
-		if (case_sensitive)
+		const auto match_char = [case_sensitive](char m, char s) {
+			return (m == '?') || (case_sensitive ? (m == s) : (std::tolower(m) == std::tolower(s)));
+		};
+
+		const char* cp = nullptr;
+		const char* mp = nullptr;
+
+		while ((*subject) && (*mask != '*'))
 		{
-			const char* cp = nullptr;
-			const char* mp = nullptr;
+			if (!match_char(*mask, *subject))
+				return false;
 
-			while ((*subject) && (*mask != '*'))
+			mask++;
+			subject++;
+		}
+
+		while (*subject)
+		{
+			if (*mask == '*')
 			{
-				if ((*mask != '?') && (std::tolower(*mask) != std::tolower(*subject)))
-					return false;
+				if (*++mask == 0)
+					return true;
 
-				mask++;
-				subject++;
+				mp = mask;
+				cp = subject + 1;
 			}
-
-			while (*subject)
+			else
 			{
-				if (*mask == '*')
+				if (match_char(*mask, *subject))
 				{
-					if (*++mask == 0)
-						return true;
-
-					mp = mask;
-					cp = subject + 1;
+					mask++;
+					subject++;
 				}
 				else
 				{
-					if ((*mask == '?') || (std::tolower(*mask) == std::tolower(*subject)))
-					{
-						mask++;
-						subject++;
-					}
-					else
-					{
-						mask = mp;
-						subject = cp++;
-					}
+					mask = mp;
+					subject = cp++;
 				}
 			}
-
-			while (*mask == '*')
-				mask++;
-
-			return *mask == 0;
 		}
-		else
-		{
-			const char* cp = nullptr;
-			const char* mp = nullptr;
 
-			while ((*subject) && (*mask != '*'))
-			{
-				if ((*mask != *subject) && (*mask != '?'))
-					return false;
+		while (*mask == '*')
+			mask++;
 
-				mask++;
-				subject++;
-			}
-
-			while (*subject)
-			{
-				if (*mask == '*')
-				{
-					if (*++mask == 0)
-						return true;
-
-					mp = mask;
-					cp = subject + 1;
-				}
-				else
-				{
-					if ((*mask == *subject) || (*mask == '?'))
-					{
-						mask++;
-						subject++;
-					}
-					else
-					{
-						mask = mp;
-						subject = cp++;
-					}
-				}
-			}
-
-			while (*mask == '*')
-				mask++;
-
-			return *mask == 0;
-		}
+		return *mask == 0;
 	}
 
 	std::string toLower(const std::string_view& input)

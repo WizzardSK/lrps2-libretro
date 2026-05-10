@@ -15,6 +15,7 @@
 
 #include <ctype.h>
 #include <string.h>
+#include <compat/strl.h>
 #include <sys/stat.h>
 
 #include <fcntl.h>
@@ -416,13 +417,13 @@ namespace R3000A
 			if (iomanX)
 			{
 				fxio_dirent_t* hostcontent = (fxio_dirent_t*)buf;
-				strcpy(hostcontent->name, dir->FileName.c_str());
+				strlcpy(hostcontent->name, dir->FileName.c_str(), sizeof(hostcontent->name));
 				host_stat(host_path(Path::Combine(basedir, dir->FileName), true), &hostcontent->stat);
 			}
 			else
 			{
 				fio_dirent_t* hostcontent = (fio_dirent_t*)buf;
-				strcpy(hostcontent->name, dir->FileName.c_str());
+				strlcpy(hostcontent->name, dir->FileName.c_str(), sizeof(hostcontent->name));
 				host_stat(host_path(Path::Combine(basedir, dir->FileName), true), &hostcontent->stat);
 			}
 

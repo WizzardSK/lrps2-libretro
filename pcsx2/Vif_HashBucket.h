@@ -95,7 +95,10 @@ public:
 
 		// Warning there is an extra +1 due to the empty cell
 		// Performance note: 64B align to reduce cache miss penalty in `find`
-		m_bucket[b] = (nVifBlock*)pcsx2_aligned_realloc(m_bucket[b], sizeof(nVifBlock) * (size + 2), 64, sizeof(nVifBlock) * (size + 1));
+		nVifBlock* new_bucket = (nVifBlock*)pcsx2_aligned_realloc(m_bucket[b], sizeof(nVifBlock) * (size + 2), 64, sizeof(nVifBlock) * (size + 1));
+		if (!new_bucket)
+			return;
+		m_bucket[b] = new_bucket;
 		// Replace the empty cell by the new block and create a new empty cell
 		memcpy(&m_bucket[b][size++], &dataPtr, sizeof(nVifBlock));
 		memset(&m_bucket[b][size], 0, sizeof(nVifBlock));

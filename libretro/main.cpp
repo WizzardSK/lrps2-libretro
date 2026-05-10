@@ -1252,9 +1252,14 @@ static void ensure_output_audio_buffer_capacity(int32_t capacity)
    if (capacity <= output_audio_buffer.capacity)
       return;
 
-   output_audio_buffer.data = (int16_t*)realloc(output_audio_buffer.data, capacity * sizeof(*output_audio_buffer.data));
+   const int32_t old_capacity = output_audio_buffer.capacity;
+   int16_t* new_data = (int16_t*)realloc(output_audio_buffer.data, capacity * sizeof(*output_audio_buffer.data));
+   if (!new_data)
+      return;
+   output_audio_buffer.data = new_data;
    output_audio_buffer.capacity = capacity;
-   log_cb(RETRO_LOG_DEBUG, "Output audio buffer capacity set to %d\n", capacity);
+   if (old_capacity != 0)
+      log_cb(RETRO_LOG_DEBUG, "Output audio buffer capacity set to %d\n", capacity);
 }
 
 static void init_output_audio_buffer(int32_t capacity)
@@ -1300,7 +1305,12 @@ static void upload_output_audio_buffer(void)
 int16_t *retro_audio_reserve(int32_t max_samples)
 {
    if (output_audio_buffer.capacity - output_audio_buffer.size < max_samples)
-      ensure_output_audio_buffer_capacity((output_audio_buffer.capacity + max_samples) * 1.5);
+   {
+      const int32_t old_capacity = output_audio_buffer.capacity;
+      ensure_output_audio_buffer_capacity(static_cast<int32_t>((output_audio_buffer.capacity + max_samples) * 1.5));
+      if (output_audio_buffer.capacity == old_capacity)
+         return NULL;
+   }
    return output_audio_buffer.data + output_audio_buffer.size;
 }
 

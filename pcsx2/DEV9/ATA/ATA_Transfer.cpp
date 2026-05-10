@@ -334,7 +334,7 @@ void ATA::HDD_ReadAsync(void (ATA::*drqCMD)())
 	nsectorLeft = nsector;
 	if (readBufferLen < nsector * 512)
 	{
-		delete readBuffer;
+		delete[] readBuffer;
 		readBuffer = new u8[nsector * 512];
 		readBufferLen = nsector * 512;
 	}

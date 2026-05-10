@@ -56,10 +56,16 @@ static inline void* pcsx2_aligned_realloc(void* handle, size_t new_size, size_t 
 {
 	void* newbuf = _aligned_malloc(new_size, align);
 
-	if (newbuf != NULL && handle != NULL)
+	if (newbuf != NULL)
 	{
-		std::memcpy(newbuf, handle, old_size < new_size ? old_size : new_size);
-		_aligned_free(handle);
+		if (handle != NULL)
+		{
+			std::memcpy(newbuf, handle, old_size < new_size ? old_size : new_size);
+			_aligned_free(handle);
+		}
+		return newbuf;
 	}
-	return newbuf;
+
+	// allocation failed, original handle remains valid
+	return NULL;
 }

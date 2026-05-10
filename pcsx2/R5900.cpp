@@ -15,6 +15,7 @@
 
 
 #include <cstring> /* memset */
+#include <compat/strl.h>
 
 #include "Common.h"
 
@@ -597,7 +598,7 @@ void eeloadHook(void)
 				arg_len = strlen((char *)PSM(arg_ptr));
 				memset(PSM(arg_ptr + arg_len), 0x20, 1);
 			}
-			strcpy((char *)PSM(arg_ptr + arg_len + 1), EmuConfig.CurrentGameArgs.c_str());
+			strlcpy((char *)PSM(arg_ptr + arg_len + 1), EmuConfig.CurrentGameArgs.c_str(), 512);
 			u32 first_arg_ptr = memRead32(cpuRegs.GPR.n.a1.UD[0]);
 			argc = ParseArgumentString(first_arg_ptr);
 
@@ -635,7 +636,7 @@ void eeloadHook(void)
 				if (!strcmp((char*)PSM(g_osdsys_str), "rom0:OSDSYS"))
 				{
 					// Overwrite OSDSYS with game's ELF name
-					strcpy((char*)PSM(g_osdsys_str), elftoload.c_str());
+					strlcpy((char*)PSM(g_osdsys_str), elftoload.c_str(), EELOAD_START + EELOAD_SIZE - g_osdsys_str);
 					g_GameLoading = true;
 					return;
 				}
@@ -661,7 +662,7 @@ void eeloadHook2(void)
 	// string we insert a space character so that ParseArgumentString() has one continuous string to process.
 	size_t game_len = strlen((char *)PSM(g_osdsys_str));
 	memset(PSM(g_osdsys_str + game_len), 0x20, 1);
-	strcpy((char *)PSM(g_osdsys_str + game_len + 1), EmuConfig.CurrentGameArgs.c_str());
+	strlcpy((char *)PSM(g_osdsys_str + game_len + 1), EmuConfig.CurrentGameArgs.c_str(), EELOAD_START + EELOAD_SIZE - g_osdsys_str - game_len - 1);
 	int argc = ParseArgumentString(g_osdsys_str);
 
 	// Back up 4 bytes from start of args block for every arg + 4 bytes for start of argv pointer block, write pointers

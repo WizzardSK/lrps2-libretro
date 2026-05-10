@@ -22,6 +22,7 @@
 #include <arpa/inet.h>
 
 #include "common/StringUtil.h"
+#include <compat/strl.h>
 
 #ifdef __linux__
 #include <unistd.h>
@@ -259,7 +260,7 @@ std::optional<MAC_Address> AdapterUtils::GetAdapterMAC(Adapter* adapter)
 std::optional<MAC_Address> AdapterUtils::GetAdapterMAC(Adapter* adapter)
 {
 	struct ifreq ifr;
-	strcpy(ifr.ifr_name, adapter->ifa_name);
+	strlcpy(ifr.ifr_name, adapter->ifa_name, sizeof(ifr.ifr_name));
 
 	int fd = socket(AF_INET, SOCK_DGRAM, 0);
 	int ret = ioctl(fd, SIOCGIFHWADDR, &ifr);

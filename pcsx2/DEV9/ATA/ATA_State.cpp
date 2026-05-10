@@ -45,8 +45,7 @@ ATA::ATA()
 
 ATA::~ATA()
 {
-	if (hddImage)
-		std::fclose(hddImage);
+	ATA::Close();
 }
 
 int ATA::Open(const std::string& hddPath)

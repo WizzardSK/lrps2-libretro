@@ -179,8 +179,7 @@ bool Threading::ThreadHandle::SetAffinity(u64 processor_mask) const
 		processor_mask = ~processor_mask;
 
 	return (SetThreadAffinityMask(GetCurrentThread(),
-		          (DWORD_PTR)processor_mask) != 0 
-			|| GetLastError() != ERROR_SUCCESS);
+		          (DWORD_PTR)processor_mask) != 0);
 #elif defined(__linux__)
 	cpu_set_t set;
 	CPU_ZERO(&set);

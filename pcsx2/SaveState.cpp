@@ -15,6 +15,7 @@
 
 
 #include <cstring> /* memset */
+#include <compat/strl.h>
 
 #include "SaveState.h"
 
@@ -66,7 +67,7 @@ bool SaveStateBase::FreezeTag(const char *src)
 		return false;
 
 	memset(m_tagspace, 0, sizeof(m_tagspace));
-	strcpy( m_tagspace, src );
+	strlcpy( m_tagspace, src, sizeof(m_tagspace) );
 	Freeze( m_tagspace );
 
 	if(strcmp( m_tagspace, src ) != 0 )
