@@ -4198,7 +4198,7 @@ GSVector2i GSState::GSPCRTCRegs::GetResolution()
 	GSVector2i resolution;
 
 	const GSVector4i offsets = !GSConfig.PCRTCOverscan ? VideoModeOffsets[videomode] : VideoModeOffsetsOverscan[videomode];
-	const bool is_full_height = interlaced || (toggling_field && GSConfig.InterlaceMode != GSInterlaceMode::Off) || GSConfig.InterlaceMode == GSInterlaceMode::Off;
+	const bool is_full_height = interlaced || (toggling_field && GSConfig.InterlaceMode != GSInterlaceMode::Off);
 
 	if (!GSConfig.PCRTCOffsets)
 	{
@@ -4290,6 +4290,13 @@ GSVector2i GSState::GSPCRTCRegs::GetFramebufferSize(int display)
 
 		offset = (max_height / min_mag) - offset;
 		combined_rect.w = std::min(combined_rect.w, offset);
+
+		// For Off mode with non-interlaced content, ensure the framebuffer covers the full display height
+		// (avoids truncation when the video mode offset cap is smaller than the actual frame height).
+		if (GSConfig.InterlaceMode == GSInterlaceMode::Off && !interlaced)
+			combined_rect.w = std::max(combined_rect.w,
+				std::max(PCRTCDisplays[0].displayRect.w, PCRTCDisplays[1].displayRect.w));
+
 		return GSVector2i(combined_rect.z, combined_rect.w);
 	}
 	else
@@ -4313,6 +4320,10 @@ GSVector2i GSState::GSPCRTCRegs::GetFramebufferSize(int display)
 
 		offset = (max_height / min_mag) - offset;
 		out_rect.w = std::min(out_rect.w, offset);
+
+		// For Off mode, ensure the framebuffer covers the full display height.
+		if (GSConfig.InterlaceMode == GSInterlaceMode::Off)
+			out_rect.w = std::max(out_rect.w, PCRTCDisplays[display].displayRect.w);
 
 		return GSVector2i(out_rect.z, out_rect.w);
 	}

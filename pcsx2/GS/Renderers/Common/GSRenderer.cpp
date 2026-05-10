@@ -90,6 +90,15 @@ bool GSRenderer::Merge(int field)
 	PCRTCDisplays.CalculateDisplayOffset(m_scanmask_used);
 	PCRTCDisplays.CalculateFramebufferOffset(m_scanmask_used);
 
+	// For Off interlace with FFMD half-frame mode, both circuits should read from the same single
+	// field to avoid reading garbage past the valid field buffer when DBY offsets stack fields.
+	if (PCRTCDisplays.FFMD && PCRTCDisplays.interlaced && GSConfig.InterlaceMode == GSInterlaceMode::Off &&
+		PCRTCDisplays.PCRTCDisplays[0].enabled && PCRTCDisplays.PCRTCDisplays[1].enabled)
+	{
+		PCRTCDisplays.PCRTCDisplays[1].framebufferRect = PCRTCDisplays.PCRTCDisplays[0].framebufferRect;
+		PCRTCDisplays.PCRTCDisplays[1].framebufferOffsets = PCRTCDisplays.PCRTCDisplays[0].framebufferOffsets;
+	}
+
 	// Only need to check the right/bottom on software renderer, hardware always gets the full texture then cuts a bit out later.
 	if (PCRTCDisplays.FrameRectMatch() && !PCRTCDisplays.FrameWrap() && !feedback_merge)
 	{
