@@ -148,7 +148,10 @@ ThreadedFileReader::Buffer* ThreadedFileReader::GetBlockPtr(const Chunk& block)
 		u32 size = std::max(block.length, MINIMUM_SIZE);
 		if (buf.cap < size)
 		{
-			buf.ptr = realloc(buf.ptr, size);
+			void* new_ptr = realloc(buf.ptr, size);
+			if (!new_ptr)
+				return nullptr;
+			buf.ptr = new_ptr;
 			buf.cap = size;
 		}
 		buf.size.store(0, std::memory_order_relaxed);

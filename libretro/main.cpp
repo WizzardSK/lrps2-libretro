@@ -7,6 +7,7 @@
 #include <retro_miscellaneous.h>
 #include <file/file_path.h>
 #include <streams/file_stream.h>
+#include <compat/strl.h>
 #include <string>
 #include <vector>
 #include <type_traits>
@@ -1418,7 +1419,7 @@ static bool RETRO_CALLCONV get_image_path(unsigned index, char* path, size_t len
 	if (disk_images[index].empty())
 		return false;
 
-	strncpy(path, disk_images[index].c_str(), len);
+	strlcpy(path, disk_images[index].c_str(), len);
 	return true;
 }
 
@@ -1430,7 +1431,7 @@ static bool RETRO_CALLCONV get_image_label(unsigned index, char* label, size_t l
 	if (disk_images[index].empty())
 		return false;
 
-	strncpy(label, disk_images[index].c_str(), len);
+	strlcpy(label, disk_images[index].c_str(), len);
 	return true;
 }
 

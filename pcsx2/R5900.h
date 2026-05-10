@@ -15,6 +15,8 @@
 
 #pragma once
 
+#include <atomic>
+
 // --------------------------------------------------------------------------------------
 //  Recompiler Stuffs
 // --------------------------------------------------------------------------------------
@@ -226,7 +228,7 @@ alignas(16) extern cpuRegisters cpuRegs;
 alignas(16) extern fpuRegisters fpuRegs;
 alignas(16) extern tlbs tlb[48];
 
-extern bool eeEventTestIsActive;
+extern std::atomic<bool> eeEventTestIsActive;
 
 void intUpdateCPUCycles();
 void intSetBranch();

@@ -303,7 +303,7 @@ static __fi void _vifCode_MPG(int idx, u32 addr, const u32* data, int size)
 
 	if (idx && THREAD_VU1)
 	{
-		if ((addr + size * 4) > vuMemSize)
+		if ((static_cast<u64>(addr) + static_cast<u64>(size) * 4) > vuMemSize)
 		{
 			vu1Thread.WriteMicroMem(addr, (u8*)data, vuMemSize - addr);
 			size -= (vuMemSize - addr) / 4;
@@ -320,7 +320,7 @@ static __fi void _vifCode_MPG(int idx, u32 addr, const u32* data, int size)
 	}
 
 	// Don't forget the Unsigned designator for these checks
-	if ((addr + size * 4) > vuMemSize)
+	if ((static_cast<u64>(addr) + static_cast<u64>(size) * 4) > vuMemSize)
 	{
 		if (!idx)
 			CpuVU0->Clear(addr, vuMemSize - addr);

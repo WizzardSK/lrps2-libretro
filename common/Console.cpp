@@ -20,13 +20,13 @@
 extern retro_log_printf_t log_cb;
 #include <mutex>
 static ConsoleColors log_color = Color_Default;
-static std::mutex log_mtx;
+static std::recursive_mutex log_mtx;
 
 static void RetroLog_DoSetColor(ConsoleColors color)
 {
 	if (color != Color_Current)
 	{
-		std::lock_guard<std::mutex> lk(log_mtx);
+		std::lock_guard<std::recursive_mutex> lk(log_mtx);
 		log_color = color;
 	}
 }
@@ -36,7 +36,7 @@ static void RetroLog_DoWrite(const char* fmt)
 	retro_log_level level = RETRO_LOG_INFO;
 	ConsoleColors color;
 	{
-		std::lock_guard<std::mutex> lk(log_mtx);
+		std::lock_guard<std::recursive_mutex> lk(log_mtx);
 		color = log_color;
 	}
 	switch (color)

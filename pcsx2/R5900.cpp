@@ -53,7 +53,7 @@ bool g_GameLoading; // EELOAD has been called to load the game
 
 #define EE_WAIT_CYCLES 3072
 
-bool eeEventTestIsActive = false;
+std::atomic<bool> eeEventTestIsActive{false};
 static EE_intProcessStatus eeRunInterruptScan = INT_NOT_RUNNING;
 
 u32 g_eeloadMain = 0, g_eeloadExec = 0, g_osdsys_str = 0;

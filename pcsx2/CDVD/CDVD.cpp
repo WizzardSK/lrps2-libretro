@@ -110,7 +110,13 @@ static void cdvdSetIrq(uint id)
 static int mg_BIToffset(u8* buffer)
 {
 	int i, ofs = 0x20;
-	for (i = 0; i < *(u16*)&buffer[0x1A]; i++)
+	const int count = *(u16*)&buffer[0x1A];
+
+	// Prevent OOB read from unbounded loop on crafted MG data
+	if (count < 0 || count > ((65536 - 0x20) / 0x10))
+		return -1;
+
+	for (i = 0; i < count; i++)
 		ofs += 0x10;
 
 	if (*(u16*)&buffer[0x18] & 1)
@@ -2549,6 +2555,12 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 				}
 
 				bit_ofs = mg_BIToffset(&cdvd.mg_buffer[0]);
+
+				if (bit_ofs < 0)
+				{
+					cdvd.SCMDResultBuff[0] = 0x80;
+					break;
+				}
 
 				memcpy(&cdvd.mg_kbit[0], &cdvd.mg_buffer[bit_ofs - 0x20], 0x10);
 				memcpy(&cdvd.mg_kcon[0], &cdvd.mg_buffer[bit_ofs - 0x10], 0x10);

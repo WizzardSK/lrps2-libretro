@@ -240,6 +240,7 @@ public:
 	GSVector4i m_r = {};
 	GSVector4i m_r_no_scissor = {};
 
+	// NOTE: These are only accessed from the MTGS thread; no synchronization needed.
 	static int s_n;
 	static int s_last_transfer_draw_n;
 	static int s_transfer_n;
