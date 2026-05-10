@@ -1997,6 +1997,8 @@ bool retro_load_game(const struct retro_game_info* game)
 			else
 #endif
 			{
+				if (setting_renderer != "Software")
+					s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", (int)GSRendererType::VK);
 				{
 					static const struct retro_hw_render_context_negotiation_interface_vulkan iface = {
 						RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN,
