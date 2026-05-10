@@ -62,12 +62,8 @@ namespace MTGS
 	static std::atomic<unsigned int> s_ReadPos      = 0; // cur pos gs is reading from
 	static std::atomic<unsigned int> s_WritePos     = 0; // cur pos ee thread is writing to
 
-	static std::atomic<int>  s_QueuedFrameCount     = 0;
-	static std::atomic<bool> s_VsyncSignalListener  = false;
-
 	static std::mutex s_mtx_RingBufferBusy2; // Gets released on semaXGkick waiting...
 	static Threading::WorkSema s_sem_event;
-	static Threading::UserspaceSemaphore s_sem_Vsync;
 
 	static std::thread::id s_thread;
 	static std::atomic<bool> s_open_flag = false;
@@ -82,11 +78,7 @@ void MTGS::ResetGS(bool hardware_reset)
 	//  * Signal a reset.
 	//  * clear the path and byRegs structs (used by GIFtagDummy)
 	if (hardware_reset)
-	{
 		s_ReadPos             = s_WritePos.load();
-		s_QueuedFrameCount.store(0, std::memory_order_release);
-		s_VsyncSignalListener.store(false, std::memory_order_release);
-	}
 
 	const unsigned int writepos = s_WritePos.load(std::memory_order_relaxed);
 	PacketTagType& tag          = (PacketTagType&)m_Ring[writepos];
@@ -111,30 +103,16 @@ void MTGS::PostVsyncStart()
 	tag.command                       = GS_RINGTYPE_VSYNC;
 	tag.data[0]                       = 0;
 
-	s_VsyncSignalListener.store(true, std::memory_order_release);
 	s_WritePos.store((writepos + 1) & RINGBUFFERMASK, std::memory_order_release);
 
-	// Remove extra frame input lag
+	// Remove extra frame input lag. With VsyncQueueSize hard-locked to 0 in
+	// the libretro topology, this WaitGS IS the frame-pacing mechanism: it
+	// blocks cpu_thread until the libretro thread (= MTGS thread) drains
+	// the ring through this VSYNC packet.
 	WaitGS(false);
 
 	// Vsyncs should always start the GS thread, regardless of how little has actually be queued.
 	s_sem_event.NotifyOfWork();
-
-	// If the MTGS is allowed to queue a lot of frames in advance, it creates input lag.
-	// Use the Queued FrameCount to stall the EE if another vsync (or two) are already queued
-	// in the ringbuffer.  The queue limit is disabled when both FrameLimiting and Vsync are
-	// disabled, since the queue can have perverse effects on framerate benchmarking.
-
-	// Edit: It's possible that MTGS is that much faster than GS that it creates so much lag,
-	// a game becomes uncontrollable (software rendering for example).
-	// For that reason it's better to have the limit always in place, at the cost of a few max FPS in benchmarks.
-	// If those are needed back, it's better to increase the VsyncQueueSize via PCSX_vm.ini.
-	// (The Xenosaga engine is known to run into this, due to it throwing bulks of data in one frame followed by 2 empty frames.)
-
-	if (s_QueuedFrameCount.fetch_add(1) < EmuConfig.GS.VsyncQueueSize)
-		return;
-
-	s_sem_Vsync.Wait();
 }
 
 void MTGS::InitAndReadFIFO(u8* mem, u32 qwc)
@@ -238,10 +216,6 @@ void MTGS::MainLoop(bool flush_all)
 					if(!flush_all || std::this_thread::get_id() == s_thread)
 						GSvsync((((u32&)PS2MEM_GS[0x1000]) & 0x2000) ? 0 : 1, s_GSRegistersWritten);
 					s_GSRegistersWritten = false;
-
-					s_QueuedFrameCount.fetch_sub(1);
-					if (s_VsyncSignalListener.exchange(false))
-						s_sem_Vsync.Post();
 					break;
 				case GS_RINGTYPE_FREEZE:
 					{
@@ -279,8 +253,6 @@ void MTGS::MainLoop(bool flush_all)
 
 void MTGS::CloseGS(void)
 {
-	if (s_VsyncSignalListener.exchange(false))
-		s_sem_Vsync.Post();
 	GSclose();
 	s_open_flag.store(false, std::memory_order_release);
 }
