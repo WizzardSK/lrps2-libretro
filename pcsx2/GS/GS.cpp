@@ -134,7 +134,7 @@ static bool OpenGSDevice(GSRendererType renderer, bool clear_state_on_fail)
 		case RETRO_HW_CONTEXT_VULKAN:
 #ifdef ENABLE_VULKAN
 			// PGS fuses device and renderer together.
-			if (renderer == GSRendererType::VK)
+			if (renderer != GSRendererType::ParallelGS)
 			{
 				g_gs_device = std::make_unique<GSDeviceVK>();
 				if (!g_gs_device->Create())

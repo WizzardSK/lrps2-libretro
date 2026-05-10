@@ -1699,19 +1699,12 @@ static bool libretro_select_hw_render(void)
 {
 	if (setting_renderer == "Auto" || setting_renderer == "Software")
 	{
-#if defined(__APPLE__)
-		if (setting_renderer != "Software" && libretro_set_hw_render(RETRO_HW_CONTEXT_VULKAN))
-			return true;
-#else
 		retro_hw_context_type context_type = RETRO_HW_CONTEXT_NONE;
 		environ_cb(RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER, &context_type);
-		/* FIXME: Software with vulkan does not work */
-		if (setting_renderer == "Software" && context_type == RETRO_HW_CONTEXT_VULKAN)
-		{
-			log_cb(RETRO_LOG_WARN, "Software does not work with Vulkan. Using fallback...\n");
-			goto fallback;
-		}
 		if (context_type != RETRO_HW_CONTEXT_NONE && libretro_set_hw_render(context_type))
+			return true;
+#if defined(__APPLE__)
+		if (libretro_set_hw_render(RETRO_HW_CONTEXT_VULKAN))
 			return true;
 #endif
 	}
@@ -1973,59 +1966,60 @@ bool retro_load_game(const struct retro_game_info* game)
 
 	if (setting_renderer == "Software")
 		s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", (int)GSRendererType::SW);
-	else
+
+	switch (hw_render.context_type)
 	{
-		switch (hw_render.context_type)
-		{
-			case RETRO_HW_CONTEXT_D3D12:
+		case RETRO_HW_CONTEXT_D3D12:
+			if (setting_renderer != "Software")
 				s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", (int)GSRendererType::DX12);
-				break;
-			case RETRO_HW_CONTEXT_D3D11:
+			break;
+		case RETRO_HW_CONTEXT_D3D11:
+			if (setting_renderer != "Software")
 				s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", (int)GSRendererType::DX11);
-				break;
+			break;
 #ifdef ENABLE_VULKAN
-			case RETRO_HW_CONTEXT_VULKAN:
+		case RETRO_HW_CONTEXT_VULKAN:
 #ifdef HAVE_PARALLEL_GS
-				if (setting_renderer == "paraLLEl-GS")
+			if (setting_renderer == "paraLLEl-GS")
+			{
+				s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", (int)GSRendererType::ParallelGS);
+				static const struct retro_hw_render_context_negotiation_interface_vulkan iface = {
+					RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN,
+					RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN_VERSION,
+					pgs_get_application_info,
+					pgs_create_device,
+					nullptr,
+					pgs_create_instance,
+					pgs_create_device2,
+				};
+				environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE, (void*)&iface);
+			}
+			else
+#endif
+			{
 				{
-					s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", (int)GSRendererType::ParallelGS);
 					static const struct retro_hw_render_context_negotiation_interface_vulkan iface = {
 						RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN,
 						RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN_VERSION,
-						pgs_get_application_info,
-						pgs_create_device, // Legacy create device
+						get_application_info_vulkan,
+						create_device_vulkan,
 						nullptr,
-						pgs_create_instance,
-						pgs_create_device2,
 					};
 					environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE, (void*)&iface);
 				}
-				else
+				Vulkan::LoadVulkanLibrary();
+				vk_libretro_init_wraps();
+			}
+			break;
 #endif
-				{
-					s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", (int)GSRendererType::VK);
-					{
-						static const struct retro_hw_render_context_negotiation_interface_vulkan iface = {
-							RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN,
-							RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN_VERSION,
-							get_application_info_vulkan,
-							create_device_vulkan, // Callback above.
-							nullptr,
-						};
-						environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE, (void*)&iface);
-					}
-					Vulkan::LoadVulkanLibrary();
-					vk_libretro_init_wraps();
-				}
-				break;
-#endif
-			case RETRO_HW_CONTEXT_NONE:
+		case RETRO_HW_CONTEXT_NONE:
+			if (setting_renderer != "Software")
 				s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", (int)GSRendererType::SW);
-				break;
-			default:
+			break;
+		default:
+			if (setting_renderer != "Software")
 				s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", (int)GSRendererType::OGL);
-				break;
-		}
+			break;
 	}
 
 	libretro_content[0] = '\0';
