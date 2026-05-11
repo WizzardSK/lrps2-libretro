@@ -47,6 +47,8 @@ std::unique_ptr<GSRendererPGS> g_pgs_renderer;
 #include "Renderers/DX12/GSDevice12.h"
 #endif
 
+#include "Renderers/SW/GSDeviceSW.h"
+
 #include <libretro.h>
 
 extern retro_hw_render_callback hw_render;
@@ -162,6 +164,17 @@ static bool OpenGSDevice(GSRendererType renderer, bool clear_state_on_fail)
 #endif
 			break;
 		case RETRO_HW_CONTEXT_NONE:
+			/* No HW context available (e.g. SDL2 frontend). Only the
+			 * SW renderer can run in this configuration; HW renderers
+			 * have nowhere to draw. The caller is responsible for
+			 * having forced GSRendererType::SW before reaching here. */
+			g_gs_device = std::make_unique<GSDeviceSW>();
+			if (!g_gs_device->Create())
+			{
+				g_gs_device->Destroy();
+				g_gs_device.reset();
+				return false;
+			}
 			break;
 		default:
 			return false;

@@ -344,6 +344,7 @@ SOURCES_CXX += \
 
 # pcsx2/GS/Renderers/SW - software renderer (always on)
 SOURCES_CXX += \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSDeviceSW.cpp \
 	$(LRPS2_DIR)/GS/Renderers/SW/GSDrawScanline.cpp \
 	$(LRPS2_DIR)/GS/Renderers/SW/GSDrawScanlineCodeGenerator.all.cpp \
 	$(LRPS2_DIR)/GS/Renderers/SW/GSDrawScanlineCodeGenerator.cpp \
@@ -351,7 +352,8 @@ SOURCES_CXX += \
 	$(LRPS2_DIR)/GS/Renderers/SW/GSRendererSW.cpp \
 	$(LRPS2_DIR)/GS/Renderers/SW/GSSetupPrimCodeGenerator.all.cpp \
 	$(LRPS2_DIR)/GS/Renderers/SW/GSSetupPrimCodeGenerator.cpp \
-	$(LRPS2_DIR)/GS/Renderers/SW/GSTextureCacheSW.cpp
+	$(LRPS2_DIR)/GS/Renderers/SW/GSTextureCacheSW.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSTextureSW.cpp
 
 # pcsx2/GS/Renderers/OpenGL
 ifeq ($(HAVE_OPENGL), 1)

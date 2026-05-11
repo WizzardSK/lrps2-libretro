@@ -1707,6 +1707,13 @@ static bool libretro_select_hw_render(void)
 		if (libretro_set_hw_render(RETRO_HW_CONTEXT_VULKAN))
 			return true;
 #endif
+		/* Software renderer can run without any HW context (via
+		 * GSDeviceSW). Accept NONE here so frontends like SDL2 - which
+		 * don't expose D3D/GL/Vulkan to the core - still work. The HW
+		 * path stays first-preference so users on Vulkan/D3D/GL get
+		 * GPU-side scaling and shader integration as before. */
+		if (setting_renderer == "Software")
+			return libretro_set_hw_render(RETRO_HW_CONTEXT_NONE);
 	}
 #ifdef _WIN32
 	if (setting_renderer == "D3D11")

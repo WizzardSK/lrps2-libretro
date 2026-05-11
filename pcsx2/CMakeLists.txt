@@ -435,7 +435,9 @@ set(pcsx2GSSources
 	GS/Renderers/HW/GSTextureCache.cpp
 	GS/Renderers/HW/GSTextureReplacementLoaders.cpp
 	GS/Renderers/HW/GSTextureReplacements.cpp
+	GS/Renderers/SW/GSDeviceSW.cpp
 	GS/Renderers/SW/GSTextureCacheSW.cpp
+	GS/Renderers/SW/GSTextureSW.cpp
 	)
 
 # GS headers
@@ -473,6 +475,7 @@ set(pcsx2GSHeaders
 	GS/Renderers/HW/GSTextureCache.h
 	GS/Renderers/HW/GSTextureReplacements.h
 	GS/Renderers/HW/GSVertexHW.h
+	GS/Renderers/SW/GSDeviceSW.h
 	GS/Renderers/SW/GSDrawScanlineCodeGenerator.h
 	GS/Renderers/SW/GSDrawScanlineCodeGenerator.all.h
 	GS/Renderers/SW/GSDrawScanline.h
@@ -483,6 +486,7 @@ set(pcsx2GSHeaders
 	GS/Renderers/SW/GSSetupPrimCodeGenerator.h
 	GS/Renderers/SW/GSSetupPrimCodeGenerator.all.h
 	GS/Renderers/SW/GSTextureCacheSW.h
+	GS/Renderers/SW/GSTextureSW.h
 	GS/Renderers/SW/GSVertexSW.h
 	)
 
