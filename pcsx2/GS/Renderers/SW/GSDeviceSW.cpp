@@ -371,6 +371,228 @@ namespace
 			}
 		}
 	}
+
+	/* ====================================================================
+	 * FastMAD (Motion Adaptive Deinterlacing)
+	 *
+	 * Two-pass algorithm translated from interlace.glsl's ps_main3 +
+	 * ps_main4. m_mad is sized (frame_w, 2*frame_h) and split into
+	 * two banks (top half = bank 0, bottom half = bank 1), each
+	 * holding two interleaved PS2 fields. The reconstruct pass reads
+	 * across both banks to compute per-pixel motion against the
+	 * previous frame and chooses weave vs. linear interpolation.
+	 *
+	 * The four idx values 0..3 cycle through which bank holds the
+	 * newest/oldest data. GSDevice::Interlace manages the rotation
+	 * via a function-static bufIdx counter; we just read cb.ZrH.x
+	 * and decode bank = idx >> 1, field = idx & 1.
+	 * ==================================================================== */
+
+	/* MAD_BUFFER pass: store one field of the current source frame
+	 * (m_merge, height = frame_h) into one bank of m_mad (height =
+	 * 2*frame_h). Each call writes only the half of m_mad that
+	 * corresponds to the current bank, with a 1:1 source-to-dest
+	 * row mapping within that half. GSDevice::Interlace restricts
+	 * dRect to either the top half (bank 0) or bottom half (bank 1)
+	 * of m_mad before invoking this op; we honor those bounds.
+	 *
+	 * Half the rows of the bank's half are written (the rows whose
+	 * parity matches the current field); the other half are left
+	 * untouched so they hold previous frames' content. */
+	void MadBuffer(
+		const u8* src, int src_pitch, int src_w, int src_h,
+		u8* dst, int dst_pitch, int dst_w, int dst_h,
+		int dy_begin, int dy_end, int field, int bank, int vres)
+	{
+		const int copy_w = std::min(src_w, dst_w);
+
+		/* lofs corrects parity for odd vres in bank 1 (the shader's
+		 * standard formula). 0 in all other cases. */
+		const int lofs = (((((vres + 1) >> 1) << 1) - vres) & bank);
+
+		/* Within the bank's half: src row N maps to dst row
+		 * (dy_begin + N). Half of those rows pass the parity test
+		 * and get written. */
+		for (int n = 0; n < src_h; n++)
+		{
+			const int dst_y = dy_begin + n;
+			if (dst_y < 0 || dst_y >= dst_h || dst_y >= dy_end)
+				continue;
+
+			const int vpos = dst_y + lofs;
+			if ((vpos & 1) != field)
+				continue;
+
+			std::memcpy(
+				dst + (size_t)dst_y * dst_pitch,
+				src + (size_t)n * src_pitch,
+				(size_t)copy_w * 4);
+		}
+	}
+
+	/* Compute per-channel "motion" between two PS2-ABGR pixels:
+	 * abs(new - old) per channel, clamped to non-negative after
+	 * subtracting a sensitivity threshold. Returns the max of the
+	 * three RGB channel values (matches the GPU shader's #if 1
+	 * branch which evaluates each color separately). */
+	__fi int PixelMotion(u32 newer, u32 older, int threshold)
+	{
+		const int nr = (int)((newer      ) & 0xFFu);
+		const int ng = (int)((newer >>  8) & 0xFFu);
+		const int nb = (int)((newer >> 16) & 0xFFu);
+		const int or_ = (int)((older      ) & 0xFFu);
+		const int og = (int)((older >>  8) & 0xFFu);
+		const int ob = (int)((older >> 16) & 0xFFu);
+
+		int dr = nr - or_; if (dr < 0) dr = -dr;
+		int dg = ng - og;  if (dg < 0) dg = -dg;
+		int db = nb - ob;  if (db < 0) db = -db;
+
+		dr -= threshold;
+		dg -= threshold;
+		db -= threshold;
+
+		int m = dr;
+		if (dg > m) m = dg;
+		if (db > m) m = db;
+		return m;
+	}
+
+	/* Average two PS2-ABGR pixels per channel (alpha taken from
+	 * `a`'s alpha byte to keep things simple - alpha is unused
+	 * downstream of the reconstruct). */
+	__fi u32 AveragePixels(u32 a, u32 b)
+	{
+		const u32 ar = (a      ) & 0xFFu, ag = (a >>  8) & 0xFFu, ab_ = (a >> 16) & 0xFFu;
+		const u32 br = (b      ) & 0xFFu, bg = (b >>  8) & 0xFFu, bb_ = (b >> 16) & 0xFFu;
+		const u32 r = (ar + br + 1u) >> 1;
+		const u32 g = (ag + bg + 1u) >> 1;
+		const u32 bl= (ab_ + bb_ + 1u) >> 1;
+		return (a & 0xFF000000u) | (bl << 16) | (g << 8) | r;
+	}
+
+	/* MAD_RECONSTRUCT pass: read m_mad (height = 2*frame_h) and
+	 * write to m_weavebob (height = frame_h). For each output row
+	 * decide between three policies:
+	 *   - row parity matches current field: row exists in this
+	 *     frame, sample p_t0 (newest).
+	 *   - row at top or bottom edge: weave with p_t1 (no neighbors
+	 *     to interpolate from).
+	 *   - otherwise: compute motion against p_t2/p_t3 (previous
+	 *     frame). If any of three vertically-adjacent pixels has
+	 *     motion above the sensitivity threshold, interpolate
+	 *     (hn+ln)/2; otherwise weave with cn. */
+	void MadReconstruct(
+		const u8* src, int src_pitch, int /*src_w*/, int /*src_h*/,
+		u8* dst, int dst_pitch, int dst_w, int dst_h,
+		int idx, int sensitivity_u8)
+	{
+		const int field    = idx & 1;
+		const int frame_h  = dst_h;       /* = src_h / 2, the bank height */
+
+		/* p_t0..p_t3 each resolve to one of two bank-base offsets
+		 * in m_mad: 0 (bank 0, top half) or frame_h (bank 1, bottom
+		 * half). The four-case table directly mirrors the GPU
+		 * shader's switch(idx) block. */
+		int t0_base, t1_base, t2_base, t3_base;
+		switch (idx)
+		{
+			case 1:
+				t0_base = 0;
+				t1_base = 0;
+				t2_base = frame_h;
+				t3_base = frame_h;
+				break;
+			case 2:
+				t0_base = frame_h;
+				t1_base = 0;
+				t2_base = 0;
+				t3_base = frame_h;
+				break;
+			case 3:
+				t0_base = frame_h;
+				t1_base = frame_h;
+				t2_base = 0;
+				t3_base = 0;
+				break;
+			default:	/* case 0 */
+				t0_base = 0;
+				t1_base = frame_h;
+				t2_base = frame_h;
+				t3_base = 0;
+				break;
+		}
+
+		for (int dst_y = 0; dst_y < dst_h; dst_y++)
+		{
+			const int p_t0_row = dst_y + t0_base;
+			const int p_t1_row = dst_y + t1_base;
+			const int p_t2_row = dst_y + t2_base;
+			const int p_t3_row = dst_y + t3_base;
+
+			const u8* row_t0   = src + (size_t)p_t0_row * src_pitch;
+			const u8* row_t1   = src + (size_t)p_t1_row * src_pitch;
+			const u8* row_t3   = src + (size_t)p_t3_row * src_pitch;
+
+			/* For the +/- 1 neighbors of t0/t2, clamp to bank
+			 * boundaries: each bank is frame_h rows tall, so the
+			 * "above" of the top bank row stays in the same bank
+			 * (clamped). The shader doesn't explicitly clamp - it
+			 * relies on the texture's wrap mode - but since
+			 * neighbors are only consulted for non-edge rows
+			 * (vpos in (0, frame_h-1)) the clamping is moot
+			 * there anyway. We clamp defensively. */
+			const int t0_up_row   = std::max(t0_base, p_t0_row - 1);
+			const int t0_down_row = std::min(t0_base + frame_h - 1, p_t0_row + 1);
+			const int t2_up_row   = std::max(t2_base, p_t2_row - 1);
+			const int t2_down_row = std::min(t2_base + frame_h - 1, p_t2_row + 1);
+
+			const u8* row_t0_up   = src + (size_t)t0_up_row   * src_pitch;
+			const u8* row_t0_down = src + (size_t)t0_down_row * src_pitch;
+			const u8* row_t2_up   = src + (size_t)t2_up_row   * src_pitch;
+			const u8* row_t2_down = src + (size_t)t2_down_row * src_pitch;
+
+			u8* dst_row = dst + (size_t)dst_y * dst_pitch;
+
+			const bool current_field_row = ((dst_y & 1) == field);
+			const bool edge_row          = (dst_y == 0 || dst_y >= dst_h - 1);
+
+			if (current_field_row)
+			{
+				/* Row exists in current field - take it. */
+				std::memcpy(dst_row, row_t0, (size_t)dst_w * 4);
+				continue;
+			}
+
+			if (edge_row)
+			{
+				/* Top or bottom row - weave (no neighbors to
+				 * interpolate from). */
+				std::memcpy(dst_row, row_t1, (size_t)dst_w * 4);
+				continue;
+			}
+
+			/* Per-pixel motion-adaptive blend. */
+			for (int x = 0; x < dst_w; x++)
+			{
+				const u32 hn = LoadPx(row_t0_up,   x);
+				const u32 cn = LoadPx(row_t1,      x);
+				const u32 ln = LoadPx(row_t0_down, x);
+				const u32 ho = LoadPx(row_t2_up,   x);
+				const u32 co = LoadPx(row_t3,      x);
+				const u32 lo = LoadPx(row_t2_down, x);
+
+				const int mh = PixelMotion(hn, ho, sensitivity_u8);
+				const int mc = PixelMotion(cn, co, sensitivity_u8);
+				const int ml = PixelMotion(ln, lo, sensitivity_u8);
+
+				const u32 out = (mh > 0 || mc > 0 || ml > 0)
+					? AveragePixels(hn, ln)   /* motion -> interpolate */
+					: cn;                     /* still -> weave */
+				StorePx(dst_row, x, out);
+			}
+		}
+	}
 } // anonymous namespace
 
 /* CPU-backed GSDownloadTexture. The SW renderer doesn't actually
@@ -604,46 +826,43 @@ void GSDeviceSW::DoInterlace(GSTexture* sTex, const GSVector4& /*sRect*/, GSText
 
 		case ShaderInterlace::MAD_BUFFER:
 		{
-			/* FastMAD (Motion Adaptive Deinterlacing): a faithful CPU
-			 * port needs the four-bank rotation buffer, per-pixel
-			 * motion detection across frames, and the weave-vs-
-			 * interpolate decision logic that the GPU shader spreads
-			 * across two passes. Until that lands, fail SOFT rather
-			 * than HARD: pass the merged content through verbatim,
-			 * so the visible result equals InterlaceMode=Off (mild
-			 * combing) rather than a black screen.
+			/* FastMAD pass 1: store the current source frame into
+			 * one bank of m_mad. Source = m_merge (frame_h tall),
+			 * destination = m_mad (2*frame_h tall). cb.ZrH.x is
+			 * the bufIdx (0..3) which gives us bank and field.
 			 *
-			 * This pass writes the source (m_merge, height H) into
-			 * the destination (m_mad, height 2H). Copy into the top
-			 * half so that MAD_RECONSTRUCT can read it back from a
-			 * known offset. */
-			const int copy_w = std::min(src_w, dst_w);
-			const int copy_h = std::min(src_h, dst_h);
-			for (int y = 0; y < copy_h; y++)
-			{
-				std::memcpy(
-					dst_buf + (size_t)y * dst_p,
-					src_buf + (size_t)y * src_p,
-					(size_t)copy_w * 4);
-			}
+			 * GSDevice::Interlace restricts dRect to either the top
+			 * (bank 0) or bottom (bank 1) half of m_mad; the bank
+			 * choice and the dRect bounds carry equivalent info, but
+			 * we read dRect to learn the destination row range and
+			 * idx for bank/field. */
+			const int idx_int = static_cast<int>(cb.ZrH.x);
+			const int bank    = (idx_int >> 1) & 1;
+			const int vres    = static_cast<int>(cb.ZrH.z) >> 1;
+			const int dy_begin = static_cast<int>(std::floor(dRect.y + 0.5f));
+			const int dy_end   = static_cast<int>(std::floor(dRect.w + 0.5f));
+
+			MadBuffer(src_buf, src_p, src_w, src_h,
+				dst_buf, dst_p, dst_w, dst_h,
+				dy_begin, dy_end, field, bank, vres);
 			break;
 		}
 
 		case ShaderInterlace::MAD_RECONSTRUCT:
 		{
-			/* See MAD_BUFFER above. Read back the top half of m_mad
-			 * (which holds the verbatim m_merge content we just
-			 * stored) and write it into m_weavebob, the destination
-			 * GSRenderer::VSync will subsequently present. */
-			const int copy_w = std::min(src_w, dst_w);
-			const int copy_h = std::min(src_h, dst_h);
-			for (int y = 0; y < copy_h; y++)
-			{
-				std::memcpy(
-					dst_buf + (size_t)y * dst_p,
-					src_buf + (size_t)y * src_p,
-					(size_t)copy_w * 4);
-			}
+			/* FastMAD pass 2: read m_mad and produce m_weavebob.
+			 * Per-pixel motion detection across stored frames
+			 * chooses between weave (low motion -> use the field
+			 * we have) and linear vertical interpolation (high
+			 * motion -> average the two adjacent same-field
+			 * pixels of the current frame). */
+			const int idx_int       = static_cast<int>(cb.ZrH.x);
+			const int sensitivity_u8 =
+				static_cast<int>(cb.ZrH.w * 255.0f + 0.5f);
+
+			MadReconstruct(src_buf, src_p, src_w, src_h,
+				dst_buf, dst_p, dst_w, dst_h,
+				idx_int, sensitivity_u8);
 			break;
 		}
 
