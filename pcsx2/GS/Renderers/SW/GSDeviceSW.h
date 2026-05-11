@@ -43,8 +43,7 @@ class GSDeviceSW final : public GSDevice
 {
 private:
 	/* Backing buffer for the frame we hand to video_cb when the
-	 * frontend doesn't support direct rendering (or until stage 2
-	 * actually composites something into it). XRGB8888, pitch is
+	 * frontend doesn't support direct rendering. XRGB8888, pitch is
 	 * m_present_pitch. */
 	u8* m_present_buffer = nullptr;
 	int m_present_buffer_capacity = 0;   /* bytes */
@@ -52,13 +51,26 @@ private:
 	int m_present_width = 0;             /* logical width  */
 	int m_present_height = 0;            /* logical height */
 
-	/* Direct-rendering negotiation state. Updated once at startup
-	 * (or whenever geometry changes) - we don't query
-	 * GET_CURRENT_SOFTWARE_FRAMEBUFFER every frame. */
+	/* Direct-rendering negotiation state. Probed once at startup,
+	 * then re-probed on geometry change. */
 	bool m_direct_rendering_checked = false;
 	bool m_direct_rendering_supported = false;
 
+	/* Per-frame direct-rendering target. If non-null after
+	 * BeginPresent, PresentRect writes into the frontend's buffer
+	 * directly; EndPresent hands the same pointer to video_cb. */
+	u8* m_direct_render_buffer = nullptr;
+	size_t m_direct_render_pitch = 0;
+
+	/* Set by PresentRect, cleared by BeginPresent. Tracks whether a
+	 * present was actually produced this frame - VSync calls
+	 * EndPresent unconditionally on the non-skip path but may skip
+	 * the PresentRect call if g_gs_device->GetCurrent() is null
+	 * (very-early frames before any Merge has happened). */
+	bool m_present_pending = false;
+
 	void EnsurePresentBuffer(int width, int height);
+	bool AcquireDirectRenderBuffer(int width, int height);
 
 protected:
 	GSTexture* CreateSurface(GSTexture::Type type, int width, int height, int levels, GSTexture::Format format) final;
