@@ -374,7 +374,10 @@ int lrps2_ingame_patches(const char *serial,
 				for (i = 0; i < sizeof(patches) / sizeof((patches)[0]); i++)
 					LoadPatchesFromString(std::string(patches[i]));
 
-				if (!strcmp(renderer, "paraLLEl-GS") || !strcmp(renderer, "Software"))
+				if (   !strcmp(renderer, "paraLLEl-GS")
+				    || !strcmp(renderer, "Software")
+				    || !strcmp(renderer, "Software (HW)")
+				    || !strcmp(renderer, "Software (SW)"))
 				{
 					int i;
 					char *patches[] = {

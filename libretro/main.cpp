@@ -183,7 +183,9 @@ static bool update_option_visibility(void)
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
 	{
 		const bool parallel_renderer = !strcmp(var.value, "paraLLEl-GS");
-		const bool gsdx_sw_renderer  = !strcmp(var.value, "Software");
+		const bool gsdx_sw_renderer  = !strcmp(var.value, "Software") ||
+		                               !strcmp(var.value, "Software (HW)") ||
+		                               !strcmp(var.value, "Software (SW)");
 		const bool gsdx_hw_renderer  = !parallel_renderer && !gsdx_sw_renderer;
 		const bool gsdx_renderer     = gsdx_hw_renderer || gsdx_sw_renderer;
 
@@ -347,6 +349,31 @@ static void cpu_thread_resume(void)
 	cpu_thread_cv.notify_one();
 }
 
+/* Renderer-setting helpers. The "Renderer" menu has two SW entries
+ * that both run the PS2 GS in CPU rasterization (GSRendererSW) but
+ * differ in which GSDevice is used for the post-rasterization
+ * merge/interlace/present pipeline:
+ *
+ *   "Software (HW)" - uses the HW GSDevice (Vulkan/D3D11/D3D12/OpenGL)
+ *     that the frontend offers, so merge/interlace/present happen on
+ *     the GPU. Falls back to "Software (SW)" gracefully if no HW
+ *     context is available (e.g. SDL2 frontend).
+ *
+ *   "Software (SW)" - uses GSDeviceSW, the all-CPU device path. No HW
+ *     context is requested even when one is available.
+ *
+ * The legacy value "Software" is treated as "Software (HW)" so old
+ * configs still work. */
+static bool is_software_setting(const std::string& s)
+{
+	return s == "Software" || s == "Software (HW)" || s == "Software (SW)";
+}
+
+static bool is_software_sw_setting(const std::string& s)
+{
+	return s == "Software (SW)";
+}
+
 static void check_variables(bool first_run)
 {
 	struct retro_variable var;
@@ -360,7 +387,7 @@ static void check_variables(bool first_run)
 			setting_renderer = var.value;
 			if (setting_renderer == "paraLLEl-GS")
 				setting_plugin_type = PLUGIN_PGS;
-			else if (setting_renderer == "Software")
+			else if (is_software_setting(setting_renderer))
 				setting_plugin_type = PLUGIN_GSDX_SW;
 			else
 				setting_plugin_type = PLUGIN_GSDX_HW;
@@ -1484,7 +1511,7 @@ void retro_get_system_av_info(retro_system_av_info* info)
 	info->geometry.base_width  = 640;
 	info->geometry.base_height = (retro_get_region() == RETRO_REGION_NTSC) ? 448 : 512;
 
-	if (               (  setting_renderer != "Software" 
+	if (               (  !is_software_setting(setting_renderer)
 			   && setting_renderer != "paraLLEl-GS")
 			|| (  setting_renderer == "paraLLEl-GS" 
 			   && setting_pgs_high_res_scanout))
@@ -1697,7 +1724,13 @@ static bool libretro_set_hw_render(retro_hw_context_type type)
 
 static bool libretro_select_hw_render(void)
 {
-	if (setting_renderer == "Auto" || setting_renderer == "Software")
+	/* "Software (SW)" forces the all-CPU GSDeviceSW path even when a
+	 * HW context is available. Tell the frontend NONE up front so we
+	 * don't burn a Vulkan/D3D/GL context creation we won't use. */
+	if (is_software_sw_setting(setting_renderer))
+		return libretro_set_hw_render(RETRO_HW_CONTEXT_NONE);
+
+	if (setting_renderer == "Auto" || is_software_setting(setting_renderer))
 	{
 		retro_hw_context_type context_type = RETRO_HW_CONTEXT_NONE;
 		environ_cb(RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER, &context_type);
@@ -1707,12 +1740,11 @@ static bool libretro_select_hw_render(void)
 		if (libretro_set_hw_render(RETRO_HW_CONTEXT_VULKAN))
 			return true;
 #endif
-		/* Software renderer can run without any HW context (via
-		 * GSDeviceSW). Accept NONE here so frontends like SDL2 - which
-		 * don't expose D3D/GL/Vulkan to the core - still work. The HW
-		 * path stays first-preference so users on Vulkan/D3D/GL get
-		 * GPU-side scaling and shader integration as before. */
-		if (setting_renderer == "Software")
+		/* "Software (HW)" wanted a HW context but none was available
+		 * (e.g. SDL2 frontend). Fall back gracefully to GSDeviceSW.
+		 * "Auto" doesn't fall back here - it continues into the
+		 * default fallback chain below, mirroring previous behavior. */
+		if (is_software_setting(setting_renderer))
 			return libretro_set_hw_render(RETRO_HW_CONTEXT_NONE);
 	}
 #ifdef _WIN32
@@ -1971,17 +2003,17 @@ bool retro_load_game(const struct retro_game_info* game)
 	if (!libretro_select_hw_render())
 		return false;
 
-	if (setting_renderer == "Software")
+	if (is_software_setting(setting_renderer))
 		s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", (int)GSRendererType::SW);
 
 	switch (hw_render.context_type)
 	{
 		case RETRO_HW_CONTEXT_D3D12:
-			if (setting_renderer != "Software")
+			if (!is_software_setting(setting_renderer))
 				s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", (int)GSRendererType::DX12);
 			break;
 		case RETRO_HW_CONTEXT_D3D11:
-			if (setting_renderer != "Software")
+			if (!is_software_setting(setting_renderer))
 				s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", (int)GSRendererType::DX11);
 			break;
 #ifdef ENABLE_VULKAN
@@ -2004,7 +2036,7 @@ bool retro_load_game(const struct retro_game_info* game)
 			else
 #endif
 			{
-				if (setting_renderer != "Software")
+				if (!is_software_setting(setting_renderer))
 					s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", (int)GSRendererType::VK);
 				{
 					static const struct retro_hw_render_context_negotiation_interface_vulkan iface = {
@@ -2022,11 +2054,11 @@ bool retro_load_game(const struct retro_game_info* game)
 			break;
 #endif
 		case RETRO_HW_CONTEXT_NONE:
-			if (setting_renderer != "Software")
+			if (!is_software_setting(setting_renderer))
 				s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", (int)GSRendererType::SW);
 			break;
 		default:
-			if (setting_renderer != "Software")
+			if (!is_software_setting(setting_renderer))
 				s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", (int)GSRendererType::OGL);
 			break;
 	}

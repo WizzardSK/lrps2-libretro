@@ -216,7 +216,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
 #ifdef HAVE_PARALLEL_GS
          { "paraLLEl-GS", NULL },
 #endif
-         { "Software", NULL },
+         { "Software (HW)", NULL },
+         { "Software (SW)", NULL },
          { NULL, NULL },
       },
       "Auto"
