@@ -23,6 +23,7 @@
 
 #include "common/AlignedMalloc.h"
 #include "common/Console.h"
+#include "common/VectorIntrin.h"
 #include "GS/GSExtra.h"
 #include "GS/Renderers/SW/GSDeviceSW.h"
 
@@ -44,6 +45,15 @@ namespace
 	 * we keep the source byte order as-is - swizzling once, at present
 	 * time, is sufficient and cheapest.
 	 * ==================================================================== */
+
+#if _M_SSE >= 0x401	/* x86 SSE 4.1 - the de-facto baseline for PCSX2
+			 * (GSVector4i uses _mm_shuffle_epi8 unconditionally,
+			 * which is SSSE3, and the build system sets _M_SSE
+			 * to at least 0x401 in non-AVX2 configurations). */
+#define GSDEVICESW_HAVE_SIMD 1
+#else
+#define GSDEVICESW_HAVE_SIMD 0
+#endif
 
 	__fi u32 LoadPx(const u8* row, int x) { return *reinterpret_cast<const u32*>(row + x * 4); }
 	__fi void StorePx(u8* row, int x, u32 v) { *reinterpret_cast<u32*>(row + x * 4) = v; }
@@ -93,6 +103,12 @@ namespace
 		const float src_x_base  = sx0 * static_cast<float>(src_w);
 		const float src_y_base  = sy0 * static_cast<float>(src_h);
 
+		/* Fast path: x mapping is exact 1:1 and fully in bounds. The
+		 * inner loop is then just a memcpy of dst_w pixels. */
+		const bool x_is_identity =
+			(sx0 == 0.0f) && (sx1 == 1.0f) && (out_w == src_w) &&
+			(dx0 >= 0) && (dx1 <= dst_clip_w) && (dx1 <= src_w);
+
 		for (int y = 0; y < out_h; y++)
 		{
 			const int dy = dy0 + y;
@@ -105,6 +121,13 @@ namespace
 
 			const u8* src_row = src + (size_t)sy * src_pitch;
 			u8* dst_row       = dst + (size_t)dy * dst_pitch;
+
+			if (x_is_identity)
+			{
+				std::memcpy(dst_row + dx0 * 4, src_row + dx0 * 4,
+					(size_t)out_w * 4);
+				continue;
+			}
 
 			for (int x = 0; x < out_w; x++)
 			{
@@ -140,6 +163,10 @@ namespace
 		const float src_x_base  = sx0 * static_cast<float>(src_w);
 		const float src_y_base  = sy0 * static_cast<float>(src_h);
 
+		const bool x_is_identity =
+			(sx0 == 0.0f) && (sx1 == 1.0f) && (out_w == src_w) &&
+			(dx0 >= 0) && (dx1 <= dst_clip_w) && (dx1 <= src_w);
+
 		for (int y = 0; y < out_h; y++)
 		{
 			const int dy = dy0 + y;
@@ -152,6 +179,42 @@ namespace
 
 			const u8* src_row = src + (size_t)sy * src_pitch;
 			u8* dst_row       = dst + (size_t)dy * dst_pitch;
+
+#if GSDEVICESW_HAVE_SIMD
+			if (x_is_identity)
+			{
+				/* pshufb: each quad maps ABGR -> XRGB:
+				 *   out byte 0 = src byte 2 (B)
+				 *   out byte 1 = src byte 1 (G)
+				 *   out byte 2 = src byte 0 (R)
+				 *   out byte 3 = 0x80 = "output zero" in pshufb
+				 *                       semantics (high bit set).
+				 * The opaque alpha 0xFF is OR'd in after. */
+				const __m128i shuf = _mm_setr_epi8(
+					(char)2, (char)1, (char)0, (char)0x80,
+					(char)6, (char)5, (char)4, (char)0x80,
+					(char)10, (char)9, (char)8, (char)0x80,
+					(char)14, (char)13, (char)12, (char)0x80);
+				const __m128i alpha_or = _mm_set1_epi32((int)0xFF000000);
+
+				int x = 0;
+				for (; x + 4 <= out_w; x += 4)
+				{
+					__m128i src_q = _mm_loadu_si128(
+						reinterpret_cast<const __m128i*>(src_row + (dx0 + x) * 4));
+					__m128i out_q = _mm_or_si128(_mm_shuffle_epi8(src_q, shuf), alpha_or);
+					_mm_storeu_si128(
+						reinterpret_cast<__m128i*>(dst_row + (dx0 + x) * 4), out_q);
+				}
+				/* Tail. */
+				for (; x < out_w; x++)
+				{
+					const int dx = dx0 + x;
+					StorePx(dst_row, dx, PS2ToXRGB(LoadPx(src_row, dx)));
+				}
+				continue;
+			}
+#endif
 
 			for (int x = 0; x < out_w; x++)
 			{
@@ -181,6 +244,92 @@ namespace
 	 * pixel shader by computing alpha * 2 with saturation; we do
 	 * the same here. PMODE.ALP (constant alpha) follows the same
 	 * convention. */
+
+#if GSDEVICESW_HAVE_SIMD
+	/* Blend 4 PS2-ABGR pixels at a time. For each pixel:
+	 *   out_rgb = (src_rgb * a + dst_rgb * (255 - a) + 128) / 256
+	 *   out_a   = dst_a (preserved)
+	 *
+	 * `alpha_lo`/`alpha_hi` hold 8 u16 lanes each, with the same
+	 * alpha byte broadcast across the four channels of each pixel.
+	 * Caller is responsible for the doubling/saturation of PS2's
+	 * 0..0x80 alpha encoding before splatting into these vectors.
+	 * `inv_alpha_lo`/`inv_alpha_hi` = 255 - alpha. */
+	__fi __m128i BlendQuadSSE(__m128i src_q, __m128i dst_q,
+		__m128i alpha_lo, __m128i alpha_hi,
+		__m128i inv_alpha_lo, __m128i inv_alpha_hi)
+	{
+		const __m128i zero       = _mm_setzero_si128();
+		const __m128i bias       = _mm_set1_epi16(128);
+		const __m128i alpha_mask = _mm_set1_epi32(0xFF000000);
+
+		__m128i src_lo = _mm_unpacklo_epi8(src_q, zero);
+		__m128i src_hi = _mm_unpackhi_epi8(src_q, zero);
+		__m128i dst_lo = _mm_unpacklo_epi8(dst_q, zero);
+		__m128i dst_hi = _mm_unpackhi_epi8(dst_q, zero);
+
+		__m128i sa_lo = _mm_mullo_epi16(src_lo, alpha_lo);
+		__m128i sa_hi = _mm_mullo_epi16(src_hi, alpha_hi);
+		__m128i di_lo = _mm_mullo_epi16(dst_lo, inv_alpha_lo);
+		__m128i di_hi = _mm_mullo_epi16(dst_hi, inv_alpha_hi);
+
+		/* +128 then >>8 approximates /255 with at most 1-ulp error,
+		 * matching the scalar implementation's +127 then >>8. */
+		sa_lo = _mm_srli_epi16(_mm_add_epi16(sa_lo, bias), 8);
+		sa_hi = _mm_srli_epi16(_mm_add_epi16(sa_hi, bias), 8);
+		di_lo = _mm_srli_epi16(_mm_add_epi16(di_lo, bias), 8);
+		di_hi = _mm_srli_epi16(_mm_add_epi16(di_hi, bias), 8);
+
+		__m128i out_lo = _mm_add_epi16(sa_lo, di_lo);
+		__m128i out_hi = _mm_add_epi16(sa_hi, di_hi);
+		__m128i out    = _mm_packus_epi16(out_lo, out_hi);
+
+		/* Replace alpha with the dst's alpha byte. */
+		return _mm_or_si128(
+			_mm_andnot_si128(alpha_mask, out),
+			_mm_and_si128(alpha_mask, dst_q));
+	}
+
+	/* Build (alpha_lo, alpha_hi, inv_alpha_lo, inv_alpha_hi) for a
+	 * quad of constant-alpha pixels: every channel of every pixel
+	 * gets the same broadcast alpha (already doubled / saturated by
+	 * the caller). */
+	__fi void BuildConstantAlphaVectors(u8 alpha_doubled,
+		__m128i& alpha_lo, __m128i& alpha_hi,
+		__m128i& inv_alpha_lo, __m128i& inv_alpha_hi)
+	{
+		alpha_lo = alpha_hi = _mm_set1_epi16((short)alpha_doubled);
+		const u16 inv = (u16)(255u - alpha_doubled);
+		inv_alpha_lo = inv_alpha_hi = _mm_set1_epi16((short)inv);
+	}
+
+	/* Build the same four vectors for per-pixel alpha taken from
+	 * the source quad. PS2 alpha 0..0x80 -> 0..0xFF via saturated
+	 * self-add (_mm_adds_epu8). */
+	__fi void BuildPerPixelAlphaVectors(__m128i src_q,
+		__m128i& alpha_lo, __m128i& alpha_hi,
+		__m128i& inv_alpha_lo, __m128i& inv_alpha_hi)
+	{
+		/* Splat each pixel's alpha byte (positions 3,7,11,15) into
+		 * all four channels of that pixel. */
+		const __m128i splat_mask = _mm_setr_epi8(
+			3, 3, 3, 3,
+			7, 7, 7, 7,
+			11, 11, 11, 11,
+			15, 15, 15, 15);
+
+		__m128i a8  = _mm_shuffle_epi8(src_q, splat_mask);
+		a8          = _mm_adds_epu8(a8, a8);   /* x2 with saturation */
+		__m128i ia8 = _mm_sub_epi8(_mm_set1_epi8((char)255), a8);
+
+		const __m128i zero = _mm_setzero_si128();
+		alpha_lo     = _mm_unpacklo_epi8(a8,  zero);
+		alpha_hi     = _mm_unpackhi_epi8(a8,  zero);
+		inv_alpha_lo = _mm_unpacklo_epi8(ia8, zero);
+		inv_alpha_hi = _mm_unpackhi_epi8(ia8, zero);
+	}
+#endif
+
 	void BlendOverPS2(
 		const u8* src, int src_pitch, int src_w, int src_h,
 		float sx0, float sy0, float sx1, float sy1,
@@ -202,6 +351,15 @@ namespace
 		/* Pre-compute the doubled constant alpha (clamped to 255). */
 		const u32 const_a2 = std::min<u32>(static_cast<u32>(alpha8) * 2u, 255u);
 
+		/* Fast-path condition: x mapping is exactly 1:1 src->dst with
+		 * no horizontal stretch, output range fully inside both src
+		 * and dst clip rects. Every DoMerge call from the SW renderer
+		 * hits this in practice (sRect=(0,0,1,1) and dRect matches the
+		 * merge target's full extent). */
+		const bool x_is_identity =
+			(sx0 == 0.0f) && (sx1 == 1.0f) && (out_w == src_w) &&
+			(dx0 >= 0) && (dx1 <= dst_clip_w) && (dx1 <= src_w);
+
 		for (int y = 0; y < out_h; y++)
 		{
 			const int dy = dy0 + y;
@@ -215,6 +373,81 @@ namespace
 			const u8* src_row = src + (size_t)sy * src_pitch;
 			u8* dst_row       = dst + (size_t)dy * dst_pitch;
 
+#if GSDEVICESW_HAVE_SIMD
+			if (x_is_identity)
+			{
+				int x = 0;
+
+				if (mode_constant_alpha)
+				{
+					__m128i alpha_lo, alpha_hi, inv_alpha_lo, inv_alpha_hi;
+					BuildConstantAlphaVectors((u8)const_a2,
+						alpha_lo, alpha_hi, inv_alpha_lo, inv_alpha_hi);
+
+					for (; x + 4 <= out_w; x += 4)
+					{
+						__m128i src_q = _mm_loadu_si128(
+							reinterpret_cast<const __m128i*>(src_row + (dx0 + x) * 4));
+						__m128i dst_q = _mm_loadu_si128(
+							reinterpret_cast<const __m128i*>(dst_row + (dx0 + x) * 4));
+						__m128i out_q = BlendQuadSSE(src_q, dst_q,
+							alpha_lo, alpha_hi, inv_alpha_lo, inv_alpha_hi);
+						_mm_storeu_si128(
+							reinterpret_cast<__m128i*>(dst_row + (dx0 + x) * 4), out_q);
+					}
+				}
+				else
+				{
+					for (; x + 4 <= out_w; x += 4)
+					{
+						__m128i src_q = _mm_loadu_si128(
+							reinterpret_cast<const __m128i*>(src_row + (dx0 + x) * 4));
+						__m128i dst_q = _mm_loadu_si128(
+							reinterpret_cast<const __m128i*>(dst_row + (dx0 + x) * 4));
+						__m128i alpha_lo, alpha_hi, inv_alpha_lo, inv_alpha_hi;
+						BuildPerPixelAlphaVectors(src_q,
+							alpha_lo, alpha_hi, inv_alpha_lo, inv_alpha_hi);
+						__m128i out_q = BlendQuadSSE(src_q, dst_q,
+							alpha_lo, alpha_hi, inv_alpha_lo, inv_alpha_hi);
+						_mm_storeu_si128(
+							reinterpret_cast<__m128i*>(dst_row + (dx0 + x) * 4), out_q);
+					}
+				}
+
+				/* Scalar tail for the < 4 leftover pixels. */
+				for (; x < out_w; x++)
+				{
+					const int dx = dx0 + x;
+					const u32 s = LoadPx(src_row, dx);
+					const u32 d = LoadPx(dst_row, dx);
+					u32 a;
+					if (mode_constant_alpha)
+						a = const_a2;
+					else
+					{
+						const u32 raw = (s >> 24) & 0xFFu;
+						a = std::min<u32>(raw * 2u, 255u);
+					}
+					const u32 ia = 255u - a;
+
+					const u32 sr = (s      ) & 0xFFu;
+					const u32 sg = (s >>  8) & 0xFFu;
+					const u32 sb = (s >> 16) & 0xFFu;
+					const u32 dr = (d      ) & 0xFFu;
+					const u32 dg = (d >>  8) & 0xFFu;
+					const u32 db = (d >> 16) & 0xFFu;
+
+					const u32 r = ((sr * a + dr * ia + 127u) >> 8) & 0xFFu;
+					const u32 g = ((sg * a + dg * ia + 127u) >> 8) & 0xFFu;
+					const u32 b = ((sb * a + db * ia + 127u) >> 8) & 0xFFu;
+
+					StorePx(dst_row, dx, (d & 0xFF000000u) | (b << 16) | (g << 8) | r);
+				}
+				continue;
+			}
+#endif
+
+			/* Scalar / stretched / clipped fallback. */
 			for (int x = 0; x < out_w; x++)
 			{
 				const int dx = dx0 + x;
@@ -352,7 +585,57 @@ namespace
 			const u8* row_below = src + (size_t)y_below * src_pitch;
 			u8* dst_row         = dst + (size_t)y       * dst_pitch;
 
-			for (int x = 0; x < copy_w; x++)
+			int x = 0;
+#if GSDEVICESW_HAVE_SIMD
+			/* 4-pixel SSE2 inner loop. Unpack to u16 per channel,
+			 * compute (a + 2c + b + 2) >> 2, repack. Alpha goes
+			 * through the same math but is then overwritten with
+			 * the center row's alpha (matches the scalar path:
+			 * "(c & 0xFF000000u) | (...)"). */
+			const __m128i zero       = _mm_setzero_si128();
+			const __m128i two        = _mm_set1_epi16(2);
+			const __m128i alpha_mask = _mm_set1_epi32((int)0xFF000000);
+
+			for (; x + 4 <= copy_w; x += 4)
+			{
+				__m128i a = _mm_loadu_si128(
+					reinterpret_cast<const __m128i*>(row_above + x * 4));
+				__m128i c = _mm_loadu_si128(
+					reinterpret_cast<const __m128i*>(row_cent  + x * 4));
+				__m128i b = _mm_loadu_si128(
+					reinterpret_cast<const __m128i*>(row_below + x * 4));
+
+				__m128i a_lo = _mm_unpacklo_epi8(a, zero);
+				__m128i a_hi = _mm_unpackhi_epi8(a, zero);
+				__m128i c_lo = _mm_unpacklo_epi8(c, zero);
+				__m128i c_hi = _mm_unpackhi_epi8(c, zero);
+				__m128i b_lo = _mm_unpacklo_epi8(b, zero);
+				__m128i b_hi = _mm_unpackhi_epi8(b, zero);
+
+				/* sum_lo = a + 2c + b + 2; max value per lane ~=
+				 * 255 + 510 + 255 + 2 = 1022, fits in 16 bits. */
+				__m128i s_lo = _mm_add_epi16(
+					_mm_add_epi16(a_lo, b_lo),
+					_mm_add_epi16(_mm_slli_epi16(c_lo, 1), two));
+				__m128i s_hi = _mm_add_epi16(
+					_mm_add_epi16(a_hi, b_hi),
+					_mm_add_epi16(_mm_slli_epi16(c_hi, 1), two));
+
+				s_lo = _mm_srli_epi16(s_lo, 2);
+				s_hi = _mm_srli_epi16(s_hi, 2);
+
+				__m128i out = _mm_packus_epi16(s_lo, s_hi);
+
+				/* Replace alpha with the center row's alpha. */
+				out = _mm_or_si128(
+					_mm_andnot_si128(alpha_mask, out),
+					_mm_and_si128(alpha_mask, c));
+
+				_mm_storeu_si128(
+					reinterpret_cast<__m128i*>(dst_row + x * 4), out);
+			}
+#endif
+			for (; x < copy_w; x++)
 			{
 				const u32 a = LoadPx(row_above, x);
 				const u32 c = LoadPx(row_cent,  x);
@@ -573,7 +856,60 @@ namespace
 			}
 
 			/* Per-pixel motion-adaptive blend. */
-			for (int x = 0; x < dst_w; x++)
+			int x = 0;
+#if GSDEVICESW_HAVE_SIMD
+			/* 4-pixel SSE2 inner loop. Saturated unsigned ops let us
+			 * compute abs(a-b) without sign tracking:
+			 *   absdiff = max(subs(a,b), subs(b,a))   (both saturated)
+			 *   motion  = subs(absdiff, threshold)    (>0 = motion)
+			 * Then OR the three motion vectors (alpha byte masked
+			 * out so we test only RGB) and per-pixel cmpeq with zero
+			 * gives us "no motion" mask. Final select between
+			 * avg(hn,ln) and cn using that mask. */
+			const __m128i thr_v   = _mm_set1_epi8((char)sensitivity_u8);
+			const __m128i rgb_msk = _mm_set1_epi32(0x00FFFFFF);
+			const __m128i zero_v  = _mm_setzero_si128();
+
+			for (; x + 4 <= dst_w; x += 4)
+			{
+				__m128i hn = _mm_loadu_si128(
+					reinterpret_cast<const __m128i*>(row_t0_up   + x * 4));
+				__m128i cn = _mm_loadu_si128(
+					reinterpret_cast<const __m128i*>(row_t1      + x * 4));
+				__m128i ln = _mm_loadu_si128(
+					reinterpret_cast<const __m128i*>(row_t0_down + x * 4));
+				__m128i ho = _mm_loadu_si128(
+					reinterpret_cast<const __m128i*>(row_t2_up   + x * 4));
+				__m128i co = _mm_loadu_si128(
+					reinterpret_cast<const __m128i*>(row_t3      + x * 4));
+				__m128i lo = _mm_loadu_si128(
+					reinterpret_cast<const __m128i*>(row_t2_down + x * 4));
+
+				__m128i dh = _mm_or_si128(_mm_subs_epu8(hn, ho), _mm_subs_epu8(ho, hn));
+				__m128i dc = _mm_or_si128(_mm_subs_epu8(cn, co), _mm_subs_epu8(co, cn));
+				__m128i dl = _mm_or_si128(_mm_subs_epu8(ln, lo), _mm_subs_epu8(lo, ln));
+
+				__m128i mh = _mm_subs_epu8(dh, thr_v);
+				__m128i mc = _mm_subs_epu8(dc, thr_v);
+				__m128i ml = _mm_subs_epu8(dl, thr_v);
+
+				/* Combine and mask alpha so the cmpeq is RGB-only. */
+				__m128i motion = _mm_and_si128(
+					_mm_or_si128(_mm_or_si128(mh, mc), ml),
+					rgb_msk);
+				/* 0xFFFFFFFF per pixel where no RGB motion. */
+				__m128i still = _mm_cmpeq_epi32(motion, zero_v);
+
+				__m128i avg = _mm_avg_epu8(hn, ln);
+				__m128i out = _mm_or_si128(
+					_mm_and_si128(still, cn),
+					_mm_andnot_si128(still, avg));
+
+				_mm_storeu_si128(
+					reinterpret_cast<__m128i*>(dst_row + x * 4), out);
+			}
+#endif
+			for (; x < dst_w; x++)
 			{
 				const u32 hn = LoadPx(row_t0_up,   x);
 				const u32 cn = LoadPx(row_t1,      x);
