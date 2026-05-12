@@ -38,7 +38,7 @@ private:
 	std::function<void()> m_startup;
 	std::function<void(T&)> m_func;
 	std::function<void()> m_shutdown;
-	bool m_exit;
+	std::atomic<bool> m_exit;
 	ringbuffer_base<T, CAPACITY> m_queue;
 
 	Threading::WorkSema m_sema;
@@ -51,7 +51,7 @@ private:
 		for (;;)
 		{
 			m_sema.WaitForWork();
-			if (m_exit)
+			if (m_exit.load(std::memory_order_acquire))
 				break;
 			while (m_queue.consume_one(*this))
 				;
@@ -73,7 +73,7 @@ public:
 
 	~GSJobQueue()
 	{
-		m_exit = true;
+		m_exit.store(true, std::memory_order_release);
 		m_sema.NotifyOfWork();
 		m_thread.join();
 	}
