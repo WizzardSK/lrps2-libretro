@@ -62,7 +62,12 @@ namespace MTGS
 	static std::atomic<unsigned int> s_ReadPos      = 0; // cur pos gs is reading from
 	static std::atomic<unsigned int> s_WritePos     = 0; // cur pos ee thread is writing to
 
-	static std::mutex s_mtx_RingBufferBusy2; // Gets released on semaXGkick waiting...
+	// Held by MTGS while MainLoop is actively draining the ring; dropped
+	// only when MainLoop parks waiting for MTVU's semaXGkick post. MTVU's
+	// WaitGS(isMTVU=true) busy-spins lock/unlock on this to confirm that
+	// MTGS has reached a "waiting for me" state at least once. Dead weight
+	// when MTVU isn't running.
+	static std::mutex s_mtvu_handoff_mutex;
 	static Threading::WorkSema s_sem_event;
 
 	static std::thread::id s_thread;
@@ -152,7 +157,7 @@ void MTGS::MainLoop(bool flush_all)
 	// Threading info: run in MTGS thread
 	// s_ReadPos is only update by the MTGS thread so it is safe to load it with a relaxed atomic
 
-	std::unique_lock mtvu_lock(s_mtx_RingBufferBusy2);
+	std::unique_lock mtvu_lock(s_mtvu_handoff_mutex);
 
 	for (;;)
 	{
@@ -291,8 +296,8 @@ void MTGS::WaitGS(bool isMTVU)
 		{
 			for (;;)
 			{
-				s_mtx_RingBufferBusy2.lock();
-				s_mtx_RingBufferBusy2.unlock();
+				s_mtvu_handoff_mutex.lock();
+				s_mtvu_handoff_mutex.unlock();
 				if (path.GetPendingGSPackets() != startP1Packs)
 					break;
 			}
