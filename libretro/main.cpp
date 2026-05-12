@@ -1768,7 +1768,6 @@ static bool libretro_select_hw_render(void)
 			return true;
 	}
 
-fallback:
 #ifdef _WIN32
 	if (libretro_set_hw_render(RETRO_HW_CONTEXT_D3D12))
 		return true;
