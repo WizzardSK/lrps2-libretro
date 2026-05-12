@@ -51,7 +51,14 @@ void ADSR_UpdateCache(V_ADSR &v)
 
 bool ADSR_Calculate(V_ADSR &v)
 {
-	auto& p = v.CachedPhases.at(v.Phase);
+	/* v.Phase is by construction always in [PHASE_STOPPED .. PHASE_RELEASE]
+	 * (range 0..4), bounded by every site that writes to it: ADSR_Release
+	 * sets PHASE_RELEASE, the KeyOn path sets PHASE_ATTACK, the v.Phase++
+	 * below is gated by the PHASE_RELEASE termination check, and the
+	 * scattered PHASE_STOPPED/PHASE_SUSTAIN assignments are also in range.
+	 * Use unchecked indexing to skip the .at() bounds check on every call;
+	 * this function runs per-active-voice per-sample at 48 kHz. */
+	auto& p = v.CachedPhases[v.Phase];
 
 	// maybe not correct for the "infinite" settings
 	u32 counter_inc = 0x8000 >> std::max(0, p.Shift - 11);
