@@ -59,8 +59,15 @@ namespace MTGS
 {
 	// note: when s_ReadPos == s_WritePos, the fifo is empty
 	// Threading info: s_ReadPos is updated by the MTGS thread. s_WritePos is updated by the EE thread
-	static std::atomic<unsigned int> s_ReadPos      = 0; // cur pos gs is reading from
-	static std::atomic<unsigned int> s_WritePos     = 0; // cur pos ee thread is writing to
+
+	// s_WritePos and s_ReadPos sit on separate cache lines to avoid
+	// false sharing between producer (cpu_thread writes WritePos, reads
+	// ReadPos) and consumer (libretro thread writes ReadPos, reads
+	// WritePos). Without the padding, every ring push from one side
+	// invalidates the cached counter on the other side's core, forcing a
+	// coherence transaction on the next access.
+	alignas(__cachelinesize) static std::atomic<unsigned int> s_WritePos = 0; // cur pos ee thread is writing to
+	alignas(__cachelinesize) static std::atomic<unsigned int> s_ReadPos  = 0; // cur pos gs is reading from
 
 	// Held by MTGS while MainLoop is actively draining the ring; dropped
 	// only when MainLoop parks waiting for MTVU's semaXGkick post. MTVU's
