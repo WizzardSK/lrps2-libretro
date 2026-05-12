@@ -41,7 +41,7 @@ static std::unique_ptr<ThreadedFileReader> GetFileReader(const char *path)
 	}
 	else if (ext_length == 2)
 	{
-		if (Strncasecmp(extension, "gz", 2))
+		if (Strncasecmp(extension, "gz", 2) == 0)
 			return std::make_unique<GzippedFileReader>();
 	}
 
