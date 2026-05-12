@@ -157,7 +157,19 @@ void MTGS::MainLoop(bool flush_all)
 	// Threading info: run in MTGS thread
 	// s_ReadPos is only update by the MTGS thread so it is safe to load it with a relaxed atomic
 
-	std::unique_lock mtvu_lock(s_mtvu_handoff_mutex);
+	// The handoff mutex coordinates with MTVU's WaitGS(isMTVU=true)
+	// spinner. When MTVU isn't running, the mutex is dead weight - the
+	// MTVU_GSPACKET case below cannot fire (Gif_AddCompletedGSPacket
+	// only emits it from the fakePacket path, which is MTVU-only) and
+	// MTVU's WaitGS path is unreachable. Skip the acquisition entirely
+	// and the unlock/lock around WaitForWork below. THREAD_VU1 is
+	// stable across a MainLoop invocation because configuration
+	// changes go through cpu_thread_pause, which drains via
+	// MainLoop(true) before flipping the toggle.
+	const bool mtvu_mode = THREAD_VU1;
+	std::unique_lock<std::mutex> mtvu_lock;
+	if (mtvu_mode)
+		mtvu_lock = std::unique_lock<std::mutex>(s_mtvu_handoff_mutex);
 
 	for (;;)
 	{
@@ -168,9 +180,11 @@ void MTGS::MainLoop(bool flush_all)
 		}
 		else
 		{
-			mtvu_lock.unlock();
+			if (mtvu_mode)
+				mtvu_lock.unlock();
 			s_sem_event.WaitForWork();
-			mtvu_lock.lock();
+			if (mtvu_mode)
+				mtvu_lock.lock();
 		}
 
 		if (!s_open_flag.load(std::memory_order_acquire))
@@ -198,6 +212,8 @@ void MTGS::MainLoop(bool flush_all)
 
 				case GS_RINGTYPE_MTVU_GSPACKET:
 				{
+					// MTVU_GSPACKET only enqueued in MTVU mode, so
+					// mtvu_lock is held here (mtvu_mode == true).
 					if (!vu1Thread.semaXGkick.TryWait())
 					{
 						mtvu_lock.unlock();
