@@ -341,7 +341,12 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 		}
 	}
 
-	PerformanceMetrics::Update(registers_written, fb_sprite_frame);
+	/* PerformanceMetrics::Update is only consulted by the
+	 * SkipDuplicateFrames code path above; if that feature is off, its
+	 * result is never read. Skip the per-frame call (and the wall-clock
+	 * read inside it) when not needed. */
+	if (GSConfig.SkipDuplicateFrames)
+		PerformanceMetrics::Update(registers_written, fb_sprite_frame);
 }
 
 GSTexture* GSRenderer::LookupPaletteSource(u32 CBP, u32 CPSM, u32 CBW, GSVector2i& offset, float* scale, const GSVector2i& size)
