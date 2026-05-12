@@ -21,7 +21,6 @@
 
 #include "../GS/MultiISA.h"
 
-#include <algorithm>
 #include <array>
 
 struct V_SPDIF
@@ -219,8 +218,10 @@ static __fi bool ADSR_Calculate(V_ADSR &v)
 	auto& p = v.CachedPhases[v.Phase];
 
 	// maybe not correct for the "infinite" settings
-	u32 counter_inc = 0x8000 >> std::max(0, p.Shift - 11);
-	s32 level_inc   = p.Step << std::max(0, 11 - p.Shift);
+	s32 counter_shift = p.Shift - 11;
+	s32 level_shift   = 11 - p.Shift;
+	u32 counter_inc = 0x8000 >> (counter_shift > 0 ? counter_shift : 0);
+	s32 level_inc   = p.Step  << (level_shift   > 0 ? level_shift   : 0);
 
 	if (p.Exp)
 	{
@@ -233,13 +234,16 @@ static __fi bool ADSR_Calculate(V_ADSR &v)
 		}
 	}
 
-	counter_inc = std::max<u32>(1, counter_inc);
+	if (counter_inc == 0) counter_inc = 1;
 	v.Counter  += counter_inc;
 
 	if (v.Counter >= 0x8000)
 	{
-		v.Counter = 0;
-		v.Value   = std::clamp<s32>(v.Value + level_inc, 0, INT16_MAX);
+		s32 next   = v.Value + level_inc;
+		if (next < 0)         next = 0;
+		if (next > INT16_MAX) next = INT16_MAX;
+		v.Counter  = 0;
+		v.Value    = next;
 	}
 
 	// Stay in sustain until key off or silence
