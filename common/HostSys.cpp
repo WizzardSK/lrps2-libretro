@@ -81,9 +81,9 @@ long __stdcall SysPageFaultExceptionFilter(EXCEPTION_POINTERS* eps)
 		/* Only interested in page faults. */
 		if (eps->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION)
 		{
-#if defined(_M_AMD64)
+#if defined(_M_AMD64) || defined(__x86_64__)
 			void* const exception_pc = reinterpret_cast<void*>(eps->ContextRecord->Rip);
-#elif defined(_M_ARM64)
+#elif defined(_M_ARM64) || defined(__aarch64__)
 			void* const exception_pc = reinterpret_cast<void*>(eps->ContextRecord->Pc);
 #else
 			void* const exception_pc = nullptr;
@@ -302,7 +302,7 @@ void* HostSys::Mmap(void* base, size_t size, const PageProtectionMode mode)
 	if (base)
 		flags |= MAP_FIXED;
 
-#if defined(__APPLE__) && defined(_M_ARM64)
+#if defined(__APPLE__) && (defined(_M_ARM64) || defined(__aarch64__))
 	if (mode.m_read && mode.m_exec)
 		flags |= MAP_JIT;
 #endif
@@ -633,7 +633,7 @@ bool SharedMemoryMappingArea::Unmap(void* map_base, size_t map_size)
 	return true;
 }
 
-#ifdef _M_ARM64
+#if defined(_M_ARM64) || defined(__aarch64__)
 void HostSys::FlushInstructionCache(void* address, u32 size)
 {
 #ifdef _WIN32
