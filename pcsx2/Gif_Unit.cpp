@@ -97,7 +97,37 @@ void Gif_HandlerAD_MTVU(u8* pMem)
 
 	if (reg == GIF_A_D_REG_SIGNAL)
 	{ // SIGNAL
-		if (vu1Thread.mtvuInterrupts.load(std::memory_order_acquire) & VU_Thread::InterruptFlagSignal) { }
+		/* gsSignal is single-producer (this MTVU thread) /
+		 * single-consumer (cpu_thread). If the consumer hasn't
+		 * cleared InterruptFlagSignal yet, the previous signal
+		 * value still belongs to it - overwriting would drop the
+		 * pending signal entirely (the consumer's fetch_and would
+		 * succeed against our new flag-set, but our gsSignal
+		 * value would be lost since the consumer already captured
+		 * the prior value).
+		 *
+		 * Bounded spin to give the consumer time to drain. If
+		 * cpu_thread is actively running EE between VU dispatches
+		 * it will hit one of the polling Get_MTVUChanges sites
+		 * within a few yields and clear the flag. The bound is
+		 * critical: if cpu_thread is asleep in WaitVU /
+		 * WaitForEmpty, it cannot drain the flag until MTVU
+		 * thread fully completes its current ring-buffer item -
+		 * spinning forever here while cpu_thread waits there
+		 * would deadlock. Falling out of the bound restores the
+		 * upstream behavior of losing the second SIGNAL, which
+		 * is rare and at worst recovers via the game's own
+		 * timeout/poll paths.
+		 *
+		 * Upstream PCSX2 logged "Double SIGNAL Not Handled" here
+		 * instead of waiting; this closes the race in the common
+		 * case while keeping liveness for the deadlock case. */
+		for (int spin = 0; spin < 16; spin++)
+		{
+			if (!(vu1Thread.mtvuInterrupts.load(std::memory_order_acquire) & VU_Thread::InterruptFlagSignal))
+				break;
+			std::this_thread::yield();
+		}
 		vu1Thread.gsSignal.store(((u64)data[1] << 32) | data[0], std::memory_order_relaxed);
 		vu1Thread.mtvuInterrupts.fetch_or(VU_Thread::InterruptFlagSignal, std::memory_order_release);
 	}

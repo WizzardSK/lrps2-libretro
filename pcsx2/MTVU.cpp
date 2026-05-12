@@ -346,29 +346,52 @@ void VU_Thread::Get_MTVUChanges()
 
 	if (interrupts & InterruptFlagSignal)
 	{
-		std::atomic_thread_fence(std::memory_order_acquire);
-		const u64 signal = gsSignal.load(std::memory_order_relaxed);
-		// If load of signal was moved after clearing the flag, the other thread could write a new value before we load without noticing the double signal
-		// Prevent that with release semantics
-		mtvuInterrupts.fetch_and(~InterruptFlagSignal, std::memory_order_release);
-		/* Signal firing */
-		const u32 signalMsk = (u32)(signal >> 32);
-		const u32 signalData = (u32)signal;
-		if (CSRreg.SIGNAL)
+		/* Clear the flag with acquire FIRST (Label-style), then
+		 * atomically take ownership of gsSignal by exchanging it
+		 * to zero. acquire on the flag-clear synchronizes with the
+		 * producer's release fetch_or, so the gsSignal value we
+		 * read below is the one the producer wrote before setting
+		 * the flag.
+		 *
+		 * Order matters: if we read gsSignal first and then cleared
+		 * the flag (the previous design), the producer could
+		 * overwrite gsSignal between our read and our clear, and
+		 * we'd silently drop the second value. With clear-then-
+		 * exchange the producer-side spin-wait (Gif_Unit.cpp) sees
+		 * the cleared flag and is free to publish a new value; if
+		 * it raced into the gap before our exchange, our exchange
+		 * picks up the new value and the spurious flag re-set is
+		 * handled by the signal==0 guard below on a subsequent
+		 * Get_MTVUChanges call. */
+		mtvuInterrupts.fetch_and(~InterruptFlagSignal, std::memory_order_acquire);
+		const u64 signal = gsSignal.exchange(0, std::memory_order_relaxed);
+		if (signal != 0)
 		{
-			/* Queue signal */
-			gifUnit.gsSIGNAL.queued = true;
-			gifUnit.gsSIGNAL.data[0] = signalData;
-			gifUnit.gsSIGNAL.data[1] = signalMsk;
-		}
-		else
-		{
-			CSRreg.SIGNAL    = true;
-			GSSIGLBLID.SIGID = (GSSIGLBLID.SIGID & ~signalMsk) | (signalData & signalMsk);
+			const u32 signalMsk = (u32)(signal >> 32);
+			const u32 signalData = (u32)signal;
+			if (CSRreg.SIGNAL)
+			{
+				/* Queue signal */
+				gifUnit.gsSIGNAL.queued = true;
+				gifUnit.gsSIGNAL.data[0] = signalData;
+				gifUnit.gsSIGNAL.data[1] = signalMsk;
+			}
+			else
+			{
+				CSRreg.SIGNAL    = true;
+				GSSIGLBLID.SIGID = (GSSIGLBLID.SIGID & ~signalMsk) | (signalData & signalMsk);
 
-			if (!GSIMR.SIGMSK)
-				hwIntcIrq(INTC_GS);
+				if (!GSIMR.SIGMSK)
+					hwIntcIrq(INTC_GS);
+			}
 		}
+		/* signal == 0: flag was re-set by the producer after we
+		 * cleared it but before its gsSignal store was visible to
+		 * us, OR a previous Get_MTVUChanges already drained the
+		 * value. The producer will set the flag again once its
+		 * store is visible; the next Get_MTVUChanges call will
+		 * process it. Treating zero as a no-op also prevents a
+		 * spurious IRQ with stale SIGID bits. */
 	}
 	if (interrupts & InterruptFlagFinish)
 	{
