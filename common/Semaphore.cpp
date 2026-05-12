@@ -39,11 +39,22 @@ bool Threading::WorkSema::CheckForWork()
 {
 	s32 value = m_state.load(std::memory_order_relaxed);
 
+	// Dead semas stay dead: don't let the CAS below silently rewrite
+	// INT_MIN to STATE_RUNNING_0 and resurrect a killed worker.
+	if (value < STATE_SPINNING)
+		return false;
+
 	// we want to switch to the running state, but preserve the waiting empty bit for RUNNING_N -> RUNNING_0
 	// otherwise, we clear the waiting flag (since we're notifying the waiter that we're empty below)
 	while (!m_state.compare_exchange_weak(value,
 		((value & (STATE_FLAG_WAITING_EMPTY - 1)) == STATE_RUNNING_0) ? STATE_RUNNING_0 : (value & STATE_FLAG_WAITING_EMPTY),
-		std::memory_order_acq_rel, std::memory_order_relaxed)) { }
+		std::memory_order_acq_rel, std::memory_order_relaxed))
+	{
+		// Re-check the death sentinel after a failed CAS in case Kill()
+		// raced with us: same reasoning as above for the initial load.
+		if (value < STATE_SPINNING)
+			return false;
+	}
 
 	// if we're not empty, we have work to do
 	s32 waiting_empty_cleared = value & (STATE_FLAG_WAITING_EMPTY - 1);
@@ -62,11 +73,18 @@ void Threading::WorkSema::WaitForWork()
 {
 	// State change:
 	// SLEEPING, SPINNING: This is the worker thread and it's clearly not asleep or spinning, so these states should be impossible
+	// DEAD (any value < STATE_SPINNING): also impossible if invariants hold, but guard so a stray call after Kill()
+	//   doesn't silently resurrect us to STATE_RUNNING_0 and then sleep forever on m_sema.
 	// RUNNING_0: Change state to SLEEPING, wake up thread if WAITING_EMPTY
 	// RUNNING_N: Change state to RUNNING_0 (and preserve WAITING_EMPTY flag)
 	s32 value = m_state.load(std::memory_order_relaxed);
+	if (value < STATE_SPINNING)
+		return;
 	while (!m_state.compare_exchange_weak(value, NextStateWaitForWork(value), std::memory_order_acq_rel, std::memory_order_relaxed))
-		;
+	{
+		if (value < STATE_SPINNING)
+			return;
+	}
 
 	s32 waiting_empty_cleared = value & (STATE_FLAG_WAITING_EMPTY - 1);
 	if (waiting_empty_cleared == STATE_RUNNING_0)
