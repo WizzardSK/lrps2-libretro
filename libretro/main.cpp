@@ -1816,6 +1816,21 @@ static void cpu_thread_entry(VMBootParameters boot_params)
 #endif
 						return;
 
+					case VMState::Shutdown:
+						/* VMManager::Shutdown() flips s_state to Stopping
+						 * and then to Shutdown internally before returning.
+						 * The cv.notify_one in retro_unload_game fires
+						 * AFTER VMManager::Shutdown() has returned, so by
+						 * the time cpu_thread wakes from its cv wait, state
+						 * is already Shutdown - never Stopping. Without an
+						 * explicit case here, cpu_thread would fall to
+						 * 'default: continue;' and spin forever, hanging
+						 * cpu_thread.join(). The 100 ms wait_for timeout
+						 * masks this only when the libretro thread spends
+						 * over 100 ms in VMManager::Shutdown - any faster
+						 * and the join hangs. */
+						return;
+
 					case VMState::Paused:
 					{
 						/* Sleep on cpu_thread_cv until libretro thread
