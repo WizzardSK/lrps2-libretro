@@ -445,9 +445,57 @@ SharedMemoryMappingArea::~SharedMemoryMappingArea()
 std::unique_ptr<SharedMemoryMappingArea> SharedMemoryMappingArea::Create(size_t size)
 {
 #ifdef _WIN32
-	void* alloc = VirtualAlloc2(GetCurrentProcess(), nullptr, size, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0);
+	/* Ask for a base above 4 GB. Below that, the 4 GB fastmem region
+	 * either crosses the 32-bit boundary (so it overlaps Windows' system
+	 * reservations around KUSER_SHARED_DATA at 0x7FFE0000) or - on a
+	 * fragmented address space - actually starts at a low VA and aliases
+	 * into mapped DLL/heap pages.
+	 *
+	 * Observed under MinGW: VirtualAlloc2(nullptr) returned 0x7FFF0000;
+	 * the 4 GB span [0x7FFF0000, 0x17FFF0000) immediately overlaps system
+	 * pages and the JIT crashes on the first fastmem load with no
+	 * possibility of recovery (the page-fault handler can't distinguish
+	 * a real system-page fault from a legitimate fastmem miss, because
+	 * fastmem_end = fastmem_start + 0xFFFFFFFF puts both in range).
+	 *
+	 * MEM_ADDRESS_REQUIREMENTS + MEM_EXTENDED_PARAMETER were added in
+	 * Win10 1803, same release that introduced the placeholder flags we
+	 * already use, so this does not narrow the supported Windows range. */
+	MEM_ADDRESS_REQUIREMENTS req = {};
+	req.LowestStartingAddress = reinterpret_cast<void*>(static_cast<uintptr_t>(0x100000000ULL));
+
+	MEM_EXTENDED_PARAMETER param = {};
+	param.Type = MemExtendedParameterAddressRequirements;
+	param.Pointer = &req;
+
+	void* alloc = VirtualAlloc2(GetCurrentProcess(), nullptr, size,
+		MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS,
+		&param, 1);
+
+	/* If the constrained request failed, fall back to an unconstrained
+	 * one and sanity-check the result. A returned base below 4 GB on a
+	 * 4 GB allocation is unusable for fastmem - reject it and let the
+	 * caller fall back to no-fastmem mode. */
+	if (!alloc)
+	{
+		alloc = VirtualAlloc2(GetCurrentProcess(), nullptr, size,
+			MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS,
+			nullptr, 0);
+	}
 	if (!alloc)
 		return nullptr;
+	if (reinterpret_cast<uintptr_t>(alloc) < 0x100000000ULL)
+	{
+		Console.Error("VirtualAlloc2 placed the fastmem region at %p, below the 4 GB "
+			"boundary - rejecting. The 4 GB span would overlap KUSER_SHARED_DATA "
+			"and other Windows system reservations, and the page-fault handler "
+			"cannot distinguish those faults from genuine fastmem misses. This "
+			"usually indicates a fragmented address space (custom CRT, antivirus "
+			"injection, unusual DLL load order). Continuing with fastmem disabled.",
+			alloc);
+		VirtualFreeEx(GetCurrentProcess(), alloc, 0, MEM_RELEASE);
+		return nullptr;
+	}
 #else
 	void* alloc = mmap(nullptr, size, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
 	if (alloc == MAP_FAILED)

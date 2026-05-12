@@ -714,6 +714,12 @@ static void vtlb_CreateFastmemMapping(u32 vaddr, u32 mainmem_offset, const PageP
 
 static void vtlb_RemoveFastmemMapping(u32 vaddr)
 {
+	/* Fastmem not initialized (allocation failed at init time). The
+	 * VMap/VMapUnmap callers do not all gate on CHECK_FASTMEM, so
+	 * defend here against indexing an empty vector. */
+	if (s_fastmem_virtual_mapping.empty())
+		return;
+
 	const u32 page = vaddr / VTLB_PAGE_SIZE;
 	if (s_fastmem_virtual_mapping[page] == NO_FASTMEM_MAPPING)
 		return;
@@ -1040,14 +1046,22 @@ bool vtlb_Core_Alloc(void)
 		s_fastmem_area = SharedMemoryMappingArea::Create(FASTMEM_AREA_SIZE);
 		if (!s_fastmem_area)
 		{
-			Console.Error("Failed to allocate fastmem area");
-			return false;
+			/* Fastmem could not be allocated (Win10 placeholder APIs
+			 * missing, or address space too fragmented to place a 4 GB
+			 * region above the 4 GB boundary). Don't fail the whole
+			 * init - disable fastmem and let the recompiler emit
+			 * slowpath load/stores for every memory access. Slower but
+			 * functional. */
+			Console.Error("Failed to allocate fastmem area, disabling fastmem.");
+			EmuConfig.Cpu.Recompiler.EnableFastmem = false;
 		}
-
-		s_fastmem_virtual_mapping.resize(FASTMEM_PAGE_COUNT, NO_FASTMEM_MAPPING);
-		vtlbdata.fastmem_base = (uptr)s_fastmem_area->BasePointer();
-		Console.WriteLn(Color_StrongGreen, "Fastmem area: %p - %p",
-			vtlbdata.fastmem_base, vtlbdata.fastmem_base + (FASTMEM_AREA_SIZE - 1));
+		else
+		{
+			s_fastmem_virtual_mapping.resize(FASTMEM_PAGE_COUNT, NO_FASTMEM_MAPPING);
+			vtlbdata.fastmem_base = (uptr)s_fastmem_area->BasePointer();
+			Console.WriteLn(Color_StrongGreen, "Fastmem area: %p - %p",
+				vtlbdata.fastmem_base, vtlbdata.fastmem_base + (FASTMEM_AREA_SIZE - 1));
+		}
 	}
 
 	if (!HostSys::InstallPageFaultHandler(&vtlb_private::PageFaultHandler))
