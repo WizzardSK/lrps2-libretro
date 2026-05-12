@@ -206,7 +206,8 @@ enum MTGS_RingCommand
 	GS_RINGTYPE_RESET, // issues a GSreset() command.
 	GS_RINGTYPE_GSPACKET,
 	GS_RINGTYPE_MTVU_GSPACKET,
-	GS_RINGTYPE_INIT_AND_READ_FIFO
+	GS_RINGTYPE_INIT_AND_READ_FIFO,
+	GS_RINGTYPE_AUDIO // request a sub-frame audio flush via the libretro thread
 };
 
 
@@ -230,6 +231,7 @@ namespace MTGS
 	void Freeze(FreezeAction mode, MTGS_FreezeData& data);
 
 	void PostVsyncStart();
+	void PostAudioFlush();
 	void InitAndReadFIFO(u8* mem, u32 qwc);
 
 	void MainLoop(bool flush_all);

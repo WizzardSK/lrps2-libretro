@@ -1278,67 +1278,106 @@ void retro_set_audio_sample(retro_audio_sample_t /*cb*/) { }
 /* Audio output buffer.
  *
  * SPU2 writes stereo int16 samples directly into this buffer during
- * retro_run() via the reserve/commit pair below. One bulk batch_cb()
- * upload happens at the end of retro_run().
+ * retro_run() via the reserve/commit pair below. To minimise audio
+ * latency we submit accumulated samples to batch_cb() at sub-frame
+ * granularity: cpu_thread enqueues a GS_RINGTYPE_AUDIO packet through
+ * MTGS after each ~AUDIO_FLUSH_THRESHOLD_INT16S samples, and the
+ * libretro thread picks it up during MainLoop drain to call batch_cb
+ * with the new samples. A final flush + reset happens at end-of-retro_run.
  *
- * Threading: the buffer is touched by SPU2 (cpu_thread) and by
- * upload_output_audio_buffer (libretro thread). They are implicitly
- * serialized by the MTGS ring barrier: cpu_thread blocks in
- * MTGS::WaitGS(false) at PostVsyncStart immediately after queueing the
- * VSYNC packet, and cannot resume - and therefore cannot append more
- * audio - until libretro thread fully drains the ring and the next
- * retro_run wakes it. We read+reset the buffer at end-of-retro_run,
- * before letting cpu_thread make progress, so no concurrent writes
- * race with the upload. */
+ * Threading:
+ *   - cpu_thread writes samples and advances write_pos (release).
+ *   - libretro thread reads samples [submitted_pos, write_pos] (acquire
+ *     on write_pos provides the happens-before for the sample data) and
+ *     advances submitted_pos.
+ *   - submitted_pos is touched only by the libretro thread, so it's a
+ *     plain int.
+ *   - The reset at end-of-retro_run runs while cpu_thread is parked at
+ *     PostVsyncStart's WaitForEmpty (the MTGS VSYNC barrier), so it is
+ *     safe to zero both positions without cpu_thread observing partial
+ *     state. cpu_thread sees write_pos == 0 on its first write of the
+ *     next frame.
+ *   - The data buffer is allocated once at init and never grown. This
+ *     avoids a realloc-vs-batch_cb race: if growth could happen during
+ *     a frame, cpu_thread reallocating could free the pointer that the
+ *     libretro thread is concurrently reading inside batch_cb. The fixed
+ *     capacity is sized for the worst-case per-frame sample count, with
+ *     comfortable headroom for the SANITYINTERVAL clamp in SPU2
+ *     TimeUpdate. retro_audio_reserve returns NULL on insufficient
+ *     capacity (SPU2 already tolerates this by skipping the samples). */
+
+#define AUDIO_FLUSH_THRESHOLD_INT16S 512 /* 256 stereo frames @ 48 kHz ~ 5.3 ms */
+
+/* Per-frame nominal:
+ *   PAL  ~960 stereo samples ~ 1920 int16s
+ *   NTSC ~801 stereo samples ~ 1602 int16s
+ * Per-TimeUpdate worst case is SANITYINTERVAL = 4800 stereo = 9600 int16s
+ * (only hits when dClocks > SAMPLECOUNT, e.g. emulator startup). The
+ * 16384-int16 bound (~170 ms of audio) fits both the nominal frame and
+ * one outlier TimeUpdate on top with room to spare. */
+#define AUDIO_BUFFER_CAPACITY_INT16S 16384
+
 static struct {
    int16_t *data;
-   int32_t size;     /* number of int16s currently filled (left+right interleaved) */
-   int32_t capacity; /* allocated int16s */
-} output_audio_buffer = {NULL, 0, 0};
+   int32_t  capacity;                         /* allocated int16s */
+   std::atomic<int32_t> write_pos;            /* int16s written by cpu_thread, reset at end-of-frame */
+   int32_t  submitted_pos;                    /* int16s already batched out; libretro-thread only */
+} output_audio_buffer = {NULL, 0, {0}, 0};
 
-static void ensure_output_audio_buffer_capacity(int32_t capacity)
-{
-   if (capacity <= output_audio_buffer.capacity)
-      return;
-
-   const int32_t old_capacity = output_audio_buffer.capacity;
-   int16_t* new_data = (int16_t*)realloc(output_audio_buffer.data, capacity * sizeof(*output_audio_buffer.data));
-   if (!new_data)
-      return;
-   output_audio_buffer.data = new_data;
-   output_audio_buffer.capacity = capacity;
-   if (old_capacity != 0)
-      log_cb(RETRO_LOG_DEBUG, "Output audio buffer capacity set to %d\n", capacity);
-}
+/* cpu_thread-local: int16s written since the last AUDIO ring packet
+ * was enqueued. Resets when we enqueue. Frame-boundary reset of
+ * write_pos to 0 does not affect this counter (it's a delta, not an
+ * absolute position), so no special handling is needed at frame end. */
+static int32_t cpu_thread_samples_since_flush = 0;
 
 static void init_output_audio_buffer(int32_t capacity)
 {
-   output_audio_buffer.data = NULL;
-   output_audio_buffer.size = 0;
-   output_audio_buffer.capacity = 0;
-   ensure_output_audio_buffer_capacity(capacity);
+   output_audio_buffer.data = (int16_t*)malloc(capacity * sizeof(*output_audio_buffer.data));
+   output_audio_buffer.capacity = output_audio_buffer.data ? capacity : 0;
+   output_audio_buffer.write_pos.store(0, std::memory_order_relaxed);
+   output_audio_buffer.submitted_pos = 0;
+   cpu_thread_samples_since_flush = 0;
 }
 
 static void free_output_audio_buffer(void)
 {
    free(output_audio_buffer.data);
    output_audio_buffer.data = NULL;
-   output_audio_buffer.size = 0;
    output_audio_buffer.capacity = 0;
+   output_audio_buffer.write_pos.store(0, std::memory_order_relaxed);
+   output_audio_buffer.submitted_pos = 0;
+   cpu_thread_samples_since_flush = 0;
+}
+
+/* Submit any samples produced since the last call to batch_cb(). Called
+ * from MTGS::MainLoop when a GS_RINGTYPE_AUDIO packet is drained (sub-
+ * frame flush) and from upload_output_audio_buffer at end-of-retro_run
+ * (tail flush). Must run on the libretro thread. */
+void retro_audio_submit_pending(void)
+{
+   /* Acquire on write_pos pairs with the release in retro_audio_commit
+    * so that sample data written to the buffer before write_pos was
+    * advanced is observable here. */
+   const int32_t wp = output_audio_buffer.write_pos.load(std::memory_order_acquire);
+   const int32_t sp = output_audio_buffer.submitted_pos;
+   if (wp > sp)
+   {
+      /* batch_cb takes stereo frames; the buffer holds interleaved
+       * left/right int16s, so frames = (count int16s) / 2. */
+      batch_cb(output_audio_buffer.data + sp, (wp - sp) / 2);
+      output_audio_buffer.submitted_pos = wp;
+   }
 }
 
 static void upload_output_audio_buffer(void)
 {
-   /* output_audio_buffer.size counts int16s (left+right interleaved);
-    * batch_cb takes stereo frames, hence /2. An empty frame (0 samples)
-    * is legitimate and must not be padded with synthetic silence:
-    * silence padding decouples the audio stream from SPU2's actual
-    * output and breaks both determinism and the 48 kHz contract. */
-   if (output_audio_buffer.size > 0)
-   {
-      batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);
-      output_audio_buffer.size = 0;
-   }
+   /* Submit anything still pending since the last AUDIO ring packet
+    * (the tail after cpu_thread's last sub-frame flush). cpu_thread is
+    * parked at PostVsyncStart's WaitForEmpty at this point, so the
+    * reset to zero below cannot race with a producer write. */
+   retro_audio_submit_pending();
+   output_audio_buffer.write_pos.store(0, std::memory_order_relaxed);
+   output_audio_buffer.submitted_pos = 0;
 }
 
 /* Reserve room for `max_samples` int16s past the current write position
@@ -1350,22 +1389,38 @@ static void upload_output_audio_buffer(void)
  * always_inline, called from many sites; a 4800-stereo stack array
  * would balloon every caller's frame) and the intermediate memcpy
  * the previous push-style API required - SPU2's Mix() now writes
- * straight into the persistent buffer. */
+ * straight into the persistent buffer.
+ *
+ * Returns NULL if the buffer cannot satisfy the reservation. SPU2's
+ * TimeUpdate handles NULL by skipping the samples; the bound is sized
+ * to make this never happen in normal play. */
 int16_t *retro_audio_reserve(int32_t max_samples)
 {
-   if (output_audio_buffer.capacity - output_audio_buffer.size < max_samples)
-   {
-      const int32_t old_capacity = output_audio_buffer.capacity;
-      ensure_output_audio_buffer_capacity(static_cast<int32_t>((output_audio_buffer.capacity + max_samples) * 1.5));
-      if (output_audio_buffer.capacity == old_capacity)
-         return NULL;
-   }
-   return output_audio_buffer.data + output_audio_buffer.size;
+   const int32_t wp = output_audio_buffer.write_pos.load(std::memory_order_relaxed);
+   if (output_audio_buffer.capacity - wp < max_samples)
+      return NULL;
+   return output_audio_buffer.data + wp;
 }
 
 void retro_audio_commit(int32_t samples)
 {
-   output_audio_buffer.size += samples;
+   /* Release store on write_pos pairs with the acquire in
+    * retro_audio_submit_pending; samples written before this store are
+    * observable on the consumer side once the consumer sees the new
+    * write_pos. */
+   const int32_t wp = output_audio_buffer.write_pos.load(std::memory_order_relaxed);
+   output_audio_buffer.write_pos.store(wp + samples, std::memory_order_release);
+
+   /* Latency-bounding sub-frame flush: enqueue an MTGS AUDIO packet
+    * when accumulated unflushed samples reach the threshold. cpu_thread
+    * is the only writer here, so the counter is private and needs no
+    * synchronisation. */
+   cpu_thread_samples_since_flush += samples;
+   if (cpu_thread_samples_since_flush >= AUDIO_FLUSH_THRESHOLD_INT16S)
+   {
+      MTGS::PostAudioFlush();
+      cpu_thread_samples_since_flush = 0;
+   }
 }
 
 void retro_set_environment(retro_environment_t cb)
@@ -1576,7 +1631,9 @@ void retro_reset(void)
 	/* Discard any audio buffered before the reset; carrying pre-reset
 	 * samples into the post-reset stream causes audible glitches and
 	 * leaves the buffer in a non-deterministic starting state. */
-	output_audio_buffer.size = 0;
+	output_audio_buffer.write_pos.store(0, std::memory_order_relaxed);
+	output_audio_buffer.submitted_pos = 0;
+	cpu_thread_samples_since_flush = 0;
 	cpu_thread_resume();
 }
 
@@ -1950,11 +2007,7 @@ void retro_init(void)
 
 	environ_cb(RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, &disk_control);
 
-	/* PAL: ~960 stereo samples/frame -> 1920 int16. NTSC: ~801 stereo
-	 * samples/frame -> 1602 int16. 4096 int16 (2048 stereo) gives us
-	 * headroom past the steady-state nominal so we don't realloc on
-	 * the first frame. */
-	init_output_audio_buffer(4096);
+	init_output_audio_buffer(AUDIO_BUFFER_CAPACITY_INT16S);
 }
 
 static void get_first_track_from_cue(std::string &path)
@@ -2429,7 +2482,9 @@ bool retro_unserialize(const void* data, size_t size)
 
 	/* Discard buffered audio: any pre-load samples in the buffer no
 	 * longer match the SPU2 state we just restored. */
-	output_audio_buffer.size = 0;
+	output_audio_buffer.write_pos.store(0, std::memory_order_relaxed);
+	output_audio_buffer.submitted_pos = 0;
+	cpu_thread_samples_since_flush = 0;
 
 	cpu_thread_resume();
 	if (!loadme.IsOkay())

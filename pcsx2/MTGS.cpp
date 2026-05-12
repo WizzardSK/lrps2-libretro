@@ -29,6 +29,11 @@
 
 #include "Host.h"
 
+// Defined in libretro/main.cpp. Called from MainLoop when an audio
+// flush ring packet is processed; submits accumulated samples to the
+// frontend via batch_cb. Safe to call only from the libretro thread.
+extern void retro_audio_submit_pending(void);
+
 // Mask to apply to ring buffer indices to wrap the pointer from end to
 // start (the wrapping is what makes it a ringbuffer, yo!)
 static const unsigned int RINGBUFFERMASK = MTGS_RINGBUFFERSIZE - 1;
@@ -125,6 +130,26 @@ void MTGS::PostVsyncStart()
 	WaitGS(false);
 
 	// Vsyncs should always start the GS thread, regardless of how little has actually be queued.
+	s_sem_event.NotifyOfWork();
+}
+
+// Enqueue a sub-frame audio flush request. cpu_thread calls this when
+// it has accumulated enough new samples that delaying delivery to
+// frontend until end-of-retro_run would add audible latency. The
+// libretro thread picks the packet up during MainLoop drain and reads
+// output_audio_buffer's atomic write_pos to find the new samples - no
+// payload data is needed in the ring slot itself.
+void MTGS::PostAudioFlush()
+{
+	const unsigned int writepos = s_WritePos.load(std::memory_order_relaxed);
+	PacketTagType& tag          = (PacketTagType&)m_Ring[writepos];
+
+	tag.command                 = GS_RINGTYPE_AUDIO;
+	tag.data[0]                 = 0;
+	tag.data[1]                 = 0;
+	tag.data[2]                 = 0;
+
+	s_WritePos.store((writepos + 1) & RINGBUFFERMASK, std::memory_order_release);
 	s_sem_event.NotifyOfWork();
 }
 
@@ -264,6 +289,9 @@ void MTGS::MainLoop(bool flush_all)
 					break;
 				case GS_RINGTYPE_INIT_AND_READ_FIFO:
 					GSInitAndReadFIFO((u8*)tag.pointer, tag.data[0]);
+					break;
+				case GS_RINGTYPE_AUDIO:
+					retro_audio_submit_pending();
 					break;
 				// Optimized performance in non-Dev builds.
 				default:

@@ -301,8 +301,21 @@ __fi void TimeUpdate(u32 cClocks)
 				Cores[c].KeyOn = 0;
 			}
 		}
-		Mix(&snd_buffer[snd_count], &snd_buffer[snd_count + 1]);
-		snd_count += 2;
+		/* snd_buffer == NULL means retro_audio_reserve refused to
+		 * allocate space (buffer full); drop the sample but keep
+		 * advancing clock state so the rest of SPU2 emulation
+		 * doesn't drift. Should never happen in normal play with
+		 * the current buffer capacity sized for worst-case bursts. */
+		if (snd_buffer)
+		{
+			Mix(&snd_buffer[snd_count], &snd_buffer[snd_count + 1]);
+			snd_count += 2;
+		}
+		else
+		{
+			int16_t discard_l, discard_r;
+			Mix(&discard_l, &discard_r);
+		}
 	}
 
 	if (snd_count)
