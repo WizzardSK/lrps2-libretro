@@ -88,8 +88,8 @@ namespace Threading
 		Thread(EntryPoint func);
 		~Thread();
 
-		ThreadHandle& operator=(Thread&& thread);
-		ThreadHandle& operator=(const Thread& handle) = delete;
+		Thread& operator=(Thread&& thread);
+		Thread& operator=(const Thread& handle) = delete;
 
 		__fi bool Joinable() const { return (m_native_handle != nullptr); }
 

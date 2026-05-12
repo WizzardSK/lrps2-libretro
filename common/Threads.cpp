@@ -122,9 +122,9 @@ Threading::ThreadHandle Threading::ThreadHandle::GetForCallingThread()
 	return ret;
 }
 
-Threading::ThreadHandle& Threading::Thread::operator=(Thread&& thread)
+Threading::Thread& Threading::Thread::operator=(Thread&& thread)
 {
-	ThreadHandle::operator=(thread);
+	ThreadHandle::operator=(std::move(thread));
 	m_stack_size           = thread.m_stack_size;
 	thread.m_stack_size    = 0;
 	return *this;
@@ -213,7 +213,7 @@ bool Threading::ThreadHandle::SetAffinity(u64 processor_mask) const
 Threading::Thread::Thread() = default;
 
 Threading::Thread::Thread(Thread&& thread)
-	: ThreadHandle(thread)
+	: ThreadHandle(std::move(thread))
 	, m_stack_size(thread.m_stack_size)
 {
 	thread.m_stack_size = 0;
@@ -338,6 +338,8 @@ bool Threading::Thread::Start(EntryPoint func)
 
 void Threading::Thread::Detach()
 {
+	if (!m_native_handle)
+		return;
 #ifdef _WIN32
 	CloseHandle((HANDLE)m_native_handle);
 #else
@@ -351,6 +353,8 @@ void Threading::Thread::Detach()
 
 void Threading::Thread::Join()
 {
+	if (!m_native_handle)
+		return;
 #ifdef _WIN32
 	WaitForSingleObject((HANDLE)m_native_handle, INFINITE);
 	CloseHandle((HANDLE)m_native_handle);
