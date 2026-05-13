@@ -218,6 +218,11 @@ void vk_libretro_shutdown(void)
 enum : u32
 {
 	MAX_DRAW_CALLS_PER_FRAME = 8192,
+	MAX_COMBINED_IMAGE_SAMPLER_DESCRIPTORS_PER_FRAME = 2 * MAX_DRAW_CALLS_PER_FRAME,
+	MAX_SAMPLED_IMAGE_DESCRIPTORS_PER_FRAME = MAX_DRAW_CALLS_PER_FRAME, // assume at least half our draws aren't going to be shuffle/blending
+	MAX_STORAGE_IMAGE_DESCRIPTORS_PER_FRAME = 4, // Currently used by CAS only
+	MAX_INPUT_ATTACHMENT_IMAGE_DESCRIPTORS_PER_FRAME = MAX_DRAW_CALLS_PER_FRAME,
+	MAX_DESCRIPTOR_SETS_PER_FRAME = MAX_DRAW_CALLS_PER_FRAME * 2
 };
 
 static void SafeDestroyShaderModule(VkDevice dev, VkShaderModule& sm)
@@ -331,7 +336,10 @@ static void SafeDestroyDescriptorSetLayout(VkDevice dev, VkDescriptorSetLayout& 
 
 		// Required extensions.
 		if (!SupportsExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, true))
-			return false;
+		{
+			Console.WriteLn("Does not support VK_KHR_push_descriptor extension");
+			//return false;
+		}
 
 		m_optional_extensions.vk_ext_provoking_vertex =
 			SupportsExtension(VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME, false);
@@ -527,13 +535,17 @@ static void SafeDestroyDescriptorSetLayout(VkDevice dev, VkDescriptorSetLayout& 
 		vkGetPhysicalDeviceProperties2(vk_init_info.gpu, &properties2);
 
 		// confirm we actually support push descriptor extension
-		if (push_descriptor_properties.maxPushDescriptors < NUM_TFX_TEXTURES)
+		if (push_descriptor_properties.maxPushDescriptors < 4 /*NUM_TFX_TEXTURES */)
 		{
 			Console.Error("maxPushDescriptors (%u) is below required (%u)", push_descriptor_properties.maxPushDescriptors,
 					NUM_TFX_TEXTURES);
-			return false;
+			Console.WriteLn("VK_KHR_push_descriptor is NOT supported");
+			//return false;
 		}
-		Console.WriteLn("VK_KHR_push_descriptor is supported");
+		else
+		{
+			Console.WriteLn("VK_KHR_push_descriptor is supported");
+		}
 
 
 		Console.WriteLn("VK_EXT_provoking_vertex is %s",
@@ -592,6 +604,20 @@ static void SafeDestroyDescriptorSetLayout(VkDevice dev, VkDescriptorSetLayout& 
 			res = vkCreateFence(m_device, &fence_info, nullptr, &resources.fence);
 			if (res != VK_SUCCESS)
 				return false;
+			// TODO: A better way to choose the number of descriptors.
+			VkDescriptorPoolSize pool_sizes[] = {
+				{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,	MAX_COMBINED_IMAGE_SAMPLER_DESCRIPTORS_PER_FRAME},
+				{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 		MAX_SAMPLED_IMAGE_DESCRIPTORS_PER_FRAME},
+				{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,		MAX_STORAGE_IMAGE_DESCRIPTORS_PER_FRAME},
+				{VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,		MAX_INPUT_ATTACHMENT_IMAGE_DESCRIPTORS_PER_FRAME},
+			};
+
+			VkDescriptorPoolCreateInfo pool_create_info = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0,
+				MAX_DESCRIPTOR_SETS_PER_FRAME, static_cast<u32>(std::size(pool_sizes)), pool_sizes};
+
+			res = vkCreateDescriptorPool(m_device, &pool_create_info, nullptr, &resources.descriptor_pool);
+			if (res != VK_SUCCESS)
+				return false;
 
 			++frame_index;
 		}
@@ -616,6 +642,11 @@ static void SafeDestroyDescriptorSetLayout(VkDevice dev, VkDescriptorSetLayout& 
 			{
 				vkDestroyFence(m_device, resources.fence, nullptr);
 				resources.fence = VK_NULL_HANDLE;
+			}
+			if (resources.descriptor_pool != VK_NULL_HANDLE)
+			{
+				vkDestroyDescriptorPool(m_device, resources.descriptor_pool, nullptr);
+				resources.descriptor_pool = VK_NULL_HANDLE;
 			}
 			if (resources.command_buffers[0] != VK_NULL_HANDLE)
 			{
@@ -734,6 +765,23 @@ static void SafeDestroyDescriptorSetLayout(VkDevice dev, VkDescriptorSetLayout& 
 		vkBeginCommandBuffer(buf, &bi);
 		res.init_buffer_used = true;
 		return buf;
+	}
+
+	VkDescriptorSet GSDeviceVK::AllocateDescriptorSet(VkDescriptorSetLayout set_layout)
+	{
+		VkDescriptorSetAllocateInfo allocate_info = 	{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+								 nullptr,
+								 m_frame_resources[m_current_frame].descriptor_pool,
+								 1,
+								 &set_layout};
+
+		VkDescriptorSet descriptor_set;
+		VkResult res = vkAllocateDescriptorSets(vk_init_info.device, &allocate_info, &descriptor_set);
+		// Failing to allocate a descriptor set is not a fatal error, we can
+		// recover by moving to the next command buffer.
+		if (res != VK_SUCCESS)
+			return VK_NULL_HANDLE;
+		return descriptor_set;
 	}
 
 	VkDescriptorSet GSDeviceVK::AllocatePersistentDescriptorSet(VkDescriptorSetLayout set_layout)
@@ -889,6 +937,9 @@ static void SafeDestroyDescriptorSetLayout(VkDevice dev, VkDescriptorSetLayout& 
 		VkCommandBufferBeginInfo begin_info = {
 			VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, nullptr};
 		vkBeginCommandBuffer(resources.command_buffers[1], &begin_info);
+
+		// Also can do the same for the descriptor pools
+		vkResetDescriptorPool(m_device, resources.descriptor_pool, 0);
 
 		resources.fence_counter = m_next_fence_counter++;
 		resources.init_buffer_used = false;
@@ -2177,7 +2228,7 @@ void GSDeviceVK::OMSetRenderTargets(GSTexture* rt, GSTexture* ds, const GSVector
 				if (vkRt->GetLayout() != GSTextureVK::Layout::FeedbackLoop)
 				{
 					// need to update descriptors to reflect the new layout
-					m_dirty_flags |= DIRTY_FLAG_TFX_TEXTURE_RT;
+					m_dirty_flags |= DIRTY_FLAG_TFX_SAMPLERS_DS;
 					vkRt->TransitionToLayout(GSTextureVK::Layout::FeedbackLoop);
 				}
 			}
@@ -2193,7 +2244,7 @@ void GSDeviceVK::OMSetRenderTargets(GSTexture* rt, GSTexture* ds, const GSVector
 			{
 				if (vkDs->GetLayout() != GSTextureVK::Layout::FeedbackLoop)
 				{
-					m_dirty_flags |= DIRTY_FLAG_TFX_TEXTURE_TEX;
+					m_dirty_flags |= DIRTY_FLAG_TFX_SAMPLERS_DS;
 					vkDs->TransitionToLayout(GSTextureVK::Layout::FeedbackLoop);
 				}
 			}
@@ -2427,8 +2478,7 @@ bool GSDeviceVK::CreatePipelineLayouts()
 	// Convert Pipeline Layout
 	//////////////////////////////////////////////////////////////////////////
 
-	dslb.SetPushFlag();
-	dslb.AddBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, NUM_UTILITY_SAMPLERS, VK_SHADER_STAGE_FRAGMENT_BIT);
+	dslb.AddBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, NUM_CONVERT_SAMPLERS, VK_SHADER_STAGE_FRAGMENT_BIT);
 	if ((m_utility_ds_layout = dslb.Create(dev)) == VK_NULL_HANDLE)
 		return false;
 
@@ -2447,18 +2497,22 @@ bool GSDeviceVK::CreatePipelineLayouts()
 		dslb.AddBinding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT);
 	if ((m_tfx_ubo_ds_layout = dslb.Create(dev)) == VK_NULL_HANDLE)
 		return false;
-	dslb.SetPushFlag();
-	dslb.AddBinding(TFX_TEXTURE_TEXTURE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
-	dslb.AddBinding(TFX_TEXTURE_PALETTE, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
-	dslb.AddBinding(TFX_TEXTURE_RT,
-		m_features.texture_barrier ? VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+	dslb.AddBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
+	dslb.AddBinding(1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
+	if ((m_tfx_sampler_ds_layout = dslb.Create(dev)) == VK_NULL_HANDLE)
+		return false;
+	dslb.AddBinding(0,
+		m_features.texture_barrier
+		? VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT 
+		: VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
 		1, VK_SHADER_STAGE_FRAGMENT_BIT);
-	dslb.AddBinding(TFX_TEXTURE_PRIMID, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
-	if ((m_tfx_texture_ds_layout = dslb.Create(dev)) == VK_NULL_HANDLE)
+	dslb.AddBinding(1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
+	if ((m_tfx_rt_texture_ds_layout = dslb.Create(dev)) == VK_NULL_HANDLE)
 		return false;
 
 	plb.AddDescriptorSet(m_tfx_ubo_ds_layout);
-	plb.AddDescriptorSet(m_tfx_texture_ds_layout);
+	plb.AddDescriptorSet(m_tfx_sampler_ds_layout);
+	plb.AddDescriptorSet(m_tfx_rt_texture_ds_layout);
 	if ((m_tfx_pipeline_layout = plb.Create(dev)) == VK_NULL_HANDLE)
 		return false;
 	return true;
@@ -2983,7 +3037,8 @@ void GSDeviceVK::DestroyResources()
 	}
 
 	SafeDestroyPipelineLayout(m_device, m_tfx_pipeline_layout);
-	SafeDestroyDescriptorSetLayout(m_device, m_tfx_texture_ds_layout);
+	SafeDestroyDescriptorSetLayout(m_device, m_tfx_rt_texture_ds_layout);
+	SafeDestroyDescriptorSetLayout(m_device, m_tfx_sampler_ds_layout);
 	SafeDestroyDescriptorSetLayout(m_device, m_tfx_ubo_ds_layout);
 	SafeDestroyPipelineLayout(m_device, m_utility_pipeline_layout);
 	SafeDestroyDescriptorSetLayout(m_device, m_utility_ds_layout);
@@ -3309,7 +3364,7 @@ void GSDeviceVK::ExecuteCommandBufferAndRestartRenderPass(bool wait_for_completi
 
 void GSDeviceVK::InvalidateCachedState()
 {
-	m_dirty_flags = ALL_DIRTY_STATE;
+	m_dirty_flags |= ALL_DIRTY_STATE;
 
 	for (u32 i = 0; i < NUM_TFX_TEXTURES; i++)
 		m_tfx_textures[i] = m_null_texture.get();
@@ -3319,7 +3374,10 @@ void GSDeviceVK::InvalidateCachedState()
 	m_current_depth_target = nullptr;
 	m_current_framebuffer_feedback_loop = FeedbackLoopFlag_None;
 
-	m_current_pipeline_layout = PipelineLayout::Undefined;
+	m_current_pipeline_layout    = PipelineLayout::Undefined;
+	m_tfx_texture_descriptor_set = VK_NULL_HANDLE;
+	m_tfx_rt_descriptor_set      = VK_NULL_HANDLE;
+	m_utility_descriptor_set     = VK_NULL_HANDLE;
 }
 
 void GSDeviceVK::SetIndexBuffer(VkBuffer buffer)
@@ -3372,7 +3430,7 @@ void GSDeviceVK::PSSetShaderResource(int i, GSTexture* sr, bool check_state)
 
 	m_tfx_textures[i] = vkTex;
 
-	m_dirty_flags |= (DIRTY_FLAG_TFX_TEXTURE_0 << i);
+	m_dirty_flags |= (i < 2) ? DIRTY_FLAG_TFX_SAMPLERS_DS : DIRTY_FLAG_TFX_RT_TEXTURE_DS;
 }
 
 void GSDeviceVK::PSSetSampler(GSHWDrawConfig::SamplerSelector sel)
@@ -3382,7 +3440,7 @@ void GSDeviceVK::PSSetSampler(GSHWDrawConfig::SamplerSelector sel)
 
 	m_tfx_sampler_sel = sel.key;
 	m_tfx_sampler = GetSampler(sel);
-	m_dirty_flags |= DIRTY_FLAG_TFX_TEXTURE_TEX;
+	m_dirty_flags |= DIRTY_FLAG_TFX_SAMPLERS_DS;
 }
 
 void GSDeviceVK::SetUtilityTexture(GSTexture* tex, VkSampler sampler)
@@ -3418,7 +3476,7 @@ void GSDeviceVK::UnbindTexture(GSTextureVK* tex)
 		if (m_tfx_textures[i] == tex)
 		{
 			m_tfx_textures[i] = m_null_texture.get();
-			m_dirty_flags |= (DIRTY_FLAG_TFX_TEXTURE_0 << i);
+			m_dirty_flags |= (i < 2) ? DIRTY_FLAG_TFX_SAMPLERS_DS : DIRTY_FLAG_TFX_RT_TEXTURE_DS;
 		}
 	}
 	if (m_utility_texture == tex)
@@ -3607,55 +3665,117 @@ bool GSDeviceVK::ApplyTFXState(bool already_execed)
 		flags |= DIRTY_FLAG_TFX_UBO;
 	}
 
-	if (m_current_pipeline_layout != PipelineLayout::TFX)
+	Vulkan::DescriptorSetUpdateBuilder dsub;
+
+	VkDescriptorSet dsets[NUM_TFX_DESCRIPTOR_SETS];
+	u32 num_dsets = 0;
+	u32 start_dset = 0;
+	const bool layout_changed = (m_current_pipeline_layout != PipelineLayout::TFX);
+
+	if (!layout_changed && flags & DIRTY_FLAG_TFX_UBO)
+		dsets[num_dsets++] = m_tfx_ubo_descriptor_set;
+
+	if ((flags & DIRTY_FLAG_TFX_SAMPLERS_DS) || m_tfx_texture_descriptor_set == VK_NULL_HANDLE)
+	{
+		m_tfx_texture_descriptor_set = AllocateDescriptorSet(m_tfx_sampler_ds_layout);
+		if (m_tfx_texture_descriptor_set == VK_NULL_HANDLE)
+		{
+			if (already_execed)
+			{
+				Console.Error("Failed to allocate TFX texture descriptors");
+				return false;
+			}
+
+			/* Ran out of TFX texture descriptors */
+			ExecuteCommandBufferAndRestartRenderPass(false);
+			return ApplyTFXState(true);
+		}
+
+		dsub.AddCombinedImageSamplerDescriptorWrite(
+			m_tfx_texture_descriptor_set, 0, m_tfx_textures[0]->GetView(), m_tfx_sampler, m_tfx_textures[0]->GetVkLayout());
+		dsub.AddImageDescriptorWrite(m_tfx_texture_descriptor_set, 1, m_tfx_textures[1]->GetView(), m_tfx_textures[1]->GetVkLayout());
+		dsub.Update(vk_init_info.device);
+
+		if (!layout_changed)
+		{
+			start_dset = (num_dsets == 0) ?
+				TFX_DESCRIPTOR_SET_TEXTURES : start_dset;
+			dsets[num_dsets++] = m_tfx_texture_descriptor_set;
+		}
+	}
+
+	if ((flags & DIRTY_FLAG_TFX_RT_TEXTURE_DS) || m_tfx_rt_descriptor_set == VK_NULL_HANDLE)
+	{
+		m_tfx_rt_descriptor_set = AllocateDescriptorSet(m_tfx_rt_texture_ds_layout);
+		if (m_tfx_rt_descriptor_set == VK_NULL_HANDLE)
+		{
+			if (already_execed)
+			{
+				Console.Error("Failed to allocate TFX sampler descriptors");
+				return false;
+			}
+
+			/* Ran out of TFX sampler descriptors */
+			ExecuteCommandBufferAndRestartRenderPass(false);
+			return ApplyTFXState(true);
+		}
+
+		if (m_features.texture_barrier)
+		{
+			dsub.AddInputAttachmentDescriptorWrite(
+				m_tfx_rt_descriptor_set, 0, m_tfx_textures[NUM_TFX_DRAW_TEXTURES]->GetView(), VK_IMAGE_LAYOUT_GENERAL);
+		}
+		else
+		{
+			dsub.AddImageDescriptorWrite(m_tfx_rt_descriptor_set, 0, m_tfx_textures[NUM_TFX_DRAW_TEXTURES]->GetView(),
+				m_tfx_textures[NUM_TFX_DRAW_TEXTURES]->GetVkLayout());
+		}
+		dsub.AddImageDescriptorWrite(m_tfx_rt_descriptor_set, 1, m_tfx_textures[NUM_TFX_DRAW_TEXTURES + 1]->GetView(),
+			m_tfx_textures[NUM_TFX_DRAW_TEXTURES + 1]->GetVkLayout());
+		dsub.Update(vk_init_info.device);
+
+		if (!layout_changed)
+		{
+			// need to add textures in, can't leave a gap
+			if (start_dset == TFX_DESCRIPTOR_SET_UBO && num_dsets == 1)
+				dsets[num_dsets++] = m_tfx_texture_descriptor_set;
+			else
+				start_dset = (num_dsets == 0) ? TFX_DESCRIPTOR_SET_RT : start_dset;
+
+			dsets[num_dsets++] = m_tfx_rt_descriptor_set;
+		}
+	}
+
+	if (layout_changed)
 	{
 		m_current_pipeline_layout = PipelineLayout::TFX;
-		flags |= DIRTY_FLAG_TFX_UBO | DIRTY_FLAG_TFX_TEXTURES;
 
-		// Clear out the RT binding if feedback loop isn't on, because it'll be in the wrong state and make
-		// the validation layer cranky. Not a big deal since we need to write it anyway.
-		const GSTextureVK::Layout rt_tex_layout = m_tfx_textures[TFX_TEXTURE_RT]->GetLayout();
-		if (rt_tex_layout != GSTextureVK::Layout::FeedbackLoop && rt_tex_layout != GSTextureVK::Layout::ShaderReadOnly)
-			m_tfx_textures[TFX_TEXTURE_RT] = m_null_texture.get();
+		dsets[0] = m_tfx_ubo_descriptor_set;
+		dsets[1] = m_tfx_texture_descriptor_set;
+		dsets[2] = m_tfx_rt_descriptor_set;
+
+		vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tfx_pipeline_layout, 0,
+			NUM_TFX_DESCRIPTOR_SETS, dsets, NUM_TFX_DYNAMIC_OFFSETS,
+			m_tfx_dynamic_offsets.data());
 	}
-
-	if (flags & DIRTY_FLAG_TFX_UBO)
+	else if (num_dsets > 0)
 	{
-		vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tfx_pipeline_layout, 0, 1,
-			&m_tfx_ubo_descriptor_set, NUM_TFX_DYNAMIC_OFFSETS, m_tfx_dynamic_offsets.data());
-	}
-
-	if (flags & DIRTY_FLAG_TFX_TEXTURES)
-	{
-		Vulkan::DescriptorSetUpdateBuilder dsub;
-
-		if (flags & DIRTY_FLAG_TFX_TEXTURE_TEX)
+		u32 dynamic_count;
+		const u32* dynamic_offsets;
+		if (start_dset == TFX_DESCRIPTOR_SET_UBO)
 		{
-			dsub.AddCombinedImageSamplerDescriptorWrite(VK_NULL_HANDLE, TFX_TEXTURE_TEXTURE,
-				m_tfx_textures[TFX_TEXTURE_TEXTURE]->GetView(), m_tfx_sampler,
-				m_tfx_textures[TFX_TEXTURE_TEXTURE]->GetVkLayout());
+			dynamic_count   = NUM_TFX_DYNAMIC_OFFSETS;
+			dynamic_offsets = m_tfx_dynamic_offsets.data();
 		}
-		if (flags & DIRTY_FLAG_TFX_TEXTURE_PALETTE)
+		else
 		{
-			dsub.AddImageDescriptorWrite(VK_NULL_HANDLE, TFX_TEXTURE_PALETTE,
-				m_tfx_textures[TFX_TEXTURE_PALETTE]->GetView(), m_tfx_textures[TFX_TEXTURE_PALETTE]->GetVkLayout());
-		}
-		if (flags & DIRTY_FLAG_TFX_TEXTURE_RT)
-		{
-			if (m_features.texture_barrier)
-				dsub.AddInputAttachmentDescriptorWrite(VK_NULL_HANDLE, TFX_TEXTURE_RT,
-					m_tfx_textures[TFX_TEXTURE_RT]->GetView(), VK_IMAGE_LAYOUT_GENERAL);
-			else
-				dsub.AddImageDescriptorWrite(VK_NULL_HANDLE, TFX_TEXTURE_RT,
-					m_tfx_textures[TFX_TEXTURE_RT]->GetView(), m_tfx_textures[TFX_TEXTURE_RT]->GetVkLayout());
-		}
-		if (flags & DIRTY_FLAG_TFX_TEXTURE_PRIMID)
-		{
-			dsub.AddImageDescriptorWrite(VK_NULL_HANDLE, TFX_TEXTURE_PRIMID,
-				m_tfx_textures[TFX_TEXTURE_PRIMID]->GetView(), m_tfx_textures[TFX_TEXTURE_PRIMID]->GetVkLayout());
+			dynamic_count = 0;
+			dynamic_offsets = nullptr;
 		}
 
-		dsub.PushUpdate(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tfx_pipeline_layout, TFX_DESCRIPTOR_SET_TEXTURES);
+		vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tfx_pipeline_layout, start_dset, num_dsets,
+			dsets, dynamic_count,
+			dynamic_offsets);
 	}
 
 
@@ -3668,19 +3788,43 @@ bool GSDeviceVK::ApplyUtilityState(bool already_execed)
 	if (m_current_pipeline_layout == PipelineLayout::Utility && m_dirty_flags == 0)
 		return true;
 
+	const VkDevice dev           = vk_init_info.device;
 	const VkCommandBuffer cmdbuf = GetCurrentCommandBuffer();
 	u32 flags                    = m_dirty_flags;
 	m_dirty_flags               &= ~DIRTY_UTILITY_STATE;
 
-	if (m_current_pipeline_layout != PipelineLayout::Utility || flags & DIRTY_FLAG_UTILITY_TEXTURE)
+	bool rebind                  = (m_current_pipeline_layout != PipelineLayout::Utility);
+
+	if ((flags & DIRTY_FLAG_UTILITY_TEXTURE) || m_utility_descriptor_set == VK_NULL_HANDLE)
 	{
-		m_current_pipeline_layout = PipelineLayout::Utility;
+		m_utility_descriptor_set = AllocateDescriptorSet(m_utility_ds_layout);
+		if (m_utility_descriptor_set == VK_NULL_HANDLE)
+		{
+			if (already_execed)
+			{
+				Console.Error("Failed to allocate utility descriptors");
+				return false;
+			}
+
+			/* Ran out of utility descriptors */
+			ExecuteCommandBufferAndRestartRenderPass(false);
+			return ApplyUtilityState(true);
+		}
 
 		Vulkan::DescriptorSetUpdateBuilder dsub;
-		dsub.AddCombinedImageSamplerDescriptorWrite(VK_NULL_HANDLE, 0, m_utility_texture->GetView(),
+		dsub.AddCombinedImageSamplerDescriptorWrite(m_utility_descriptor_set, 0, m_utility_texture->GetView(),
 			m_utility_sampler, m_utility_texture->GetVkLayout());
-		dsub.PushUpdate(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_utility_pipeline_layout, 0, false);
+		dsub.Update(dev);
+		rebind = true;
 	}
+
+	if (rebind)
+	{
+		vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_utility_pipeline_layout, 0, 1,
+			&m_utility_descriptor_set, 0, nullptr);
+	}
+
+	m_current_pipeline_layout = PipelineLayout::Utility;
 
 	ApplyBaseState(flags, cmdbuf);
 	return true;
@@ -3970,7 +4114,7 @@ void GSDeviceVK::RenderHW(GSHWDrawConfig& config)
 
 		// If this is the first draw to the target as a feedback loop, make sure we re-generate the texture descriptor.
 		// Otherwise, we might have a previous descriptor left over, that has the RT in a different state.
-		m_dirty_flags |= (skip_first_barrier ? static_cast<u32>(DIRTY_FLAG_TFX_TEXTURE_RT) : 0);
+		m_dirty_flags |= (skip_first_barrier ? DIRTY_FLAG_TFX_RT_TEXTURE_DS : 0);
 	}
 
 	// Begin render pass if new target or out of the area.
