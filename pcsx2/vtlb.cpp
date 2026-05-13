@@ -28,9 +28,9 @@
 	vtlb/vmap supports mapping to either of these locations, or some other (externaly) specified address.
 */
 
+#include <algorithm>
 #include <cstring> /* memset */
 #include <map>
-#include <unordered_set>
 #include <unordered_map>
 
 #include "../common/Align.h"
@@ -87,7 +87,7 @@ static std::unique_ptr<SharedMemoryMappingArea> s_fastmem_area;
 static std::vector<u32> s_fastmem_virtual_mapping; // maps vaddr -> mainmem offset
 static std::unordered_multimap<u32, u32> s_fastmem_physical_mapping; // maps mainmem offset -> vaddr
 static std::unordered_map<uptr, LoadstoreBackpatchInfo> s_fastmem_backpatch_info;
-static std::unordered_set<u32> s_fastmem_faulting_pcs;
+static std::vector<u32> s_fastmem_faulting_pcs;
 
 vtlb_private::VTLBPhysical vtlb_private::VTLBPhysical::fromPointer(sptr ptr)
 {
@@ -859,14 +859,16 @@ static bool vtlb_BackpatchLoadStore(uptr code_address, uptr fault_address)
 	Cpu->Clear(info.guest_pc, 1);
 
 	// and store the pc in the faulting list, so that we don't emit another fastmem loadstore
-	s_fastmem_faulting_pcs.insert(info.guest_pc);
+	std::vector<u32>::iterator it = std::lower_bound(s_fastmem_faulting_pcs.begin(), s_fastmem_faulting_pcs.end(), info.guest_pc);
+	if (it == s_fastmem_faulting_pcs.end() || *it != info.guest_pc)
+		s_fastmem_faulting_pcs.insert(it, info.guest_pc);
 	s_fastmem_backpatch_info.erase(iter);
 	return true;
 }
 
 bool vtlb_IsFaultingPC(u32 guest_pc)
 {
-	return (s_fastmem_faulting_pcs.find(guest_pc) != s_fastmem_faulting_pcs.end());
+	return std::binary_search(s_fastmem_faulting_pcs.begin(), s_fastmem_faulting_pcs.end(), guest_pc);
 }
 
 //virtual mappings
