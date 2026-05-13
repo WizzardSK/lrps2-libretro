@@ -334,11 +334,12 @@ static void SafeDestroyDescriptorSetLayout(VkDevice dev, VkDescriptorSetLayout& 
 			return false;
 		};
 
-		// Optional. If present we use push descriptors for the per-draw TFX/utility
-		// texture sets and skip the per-frame descriptor pool allocation; otherwise
-		// we fall back to the pool path.
-		m_optional_extensions.vk_khr_push_descriptor =
-			SupportsExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, false);
+		// Required extensions.
+		if (!SupportsExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, true))
+		{
+			Console.WriteLn("Does not support VK_KHR_push_descriptor extension");
+			//return false;
+		}
 
 		m_optional_extensions.vk_ext_provoking_vertex =
 			SupportsExtension(VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME, false);
@@ -528,24 +529,23 @@ static void SafeDestroyDescriptorSetLayout(VkDevice dev, VkDescriptorSetLayout& 
 
 		VkPhysicalDevicePushDescriptorPropertiesKHR push_descriptor_properties = {
 			VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR};
-		if (m_optional_extensions.vk_khr_push_descriptor)
-			Vulkan::AddPointerToChain(&properties2, &push_descriptor_properties);
+		Vulkan::AddPointerToChain(&properties2, &push_descriptor_properties);
 
 		// query
 		vkGetPhysicalDeviceProperties2(vk_init_info.gpu, &properties2);
 
-		// Even if the extension is advertised, the driver must support enough
-		// push descriptors for our largest set (4 TFX textures).  If it can't,
-		// clear the bit and use the pool path instead.
-		if (m_optional_extensions.vk_khr_push_descriptor &&
-			push_descriptor_properties.maxPushDescriptors < NUM_TFX_TEXTURES)
+		// confirm we actually support push descriptor extension
+		if (push_descriptor_properties.maxPushDescriptors < 4 /*NUM_TFX_TEXTURES */)
 		{
-			Console.Warning("VK_KHR_push_descriptor advertised but maxPushDescriptors (%u) < %u; falling back to descriptor pool",
-				push_descriptor_properties.maxPushDescriptors, NUM_TFX_TEXTURES);
-			m_optional_extensions.vk_khr_push_descriptor = false;
+			Console.Error("maxPushDescriptors (%u) is below required (%u)", push_descriptor_properties.maxPushDescriptors,
+					NUM_TFX_TEXTURES);
+			Console.WriteLn("VK_KHR_push_descriptor is NOT supported");
+			//return false;
 		}
-		Console.WriteLn("VK_KHR_push_descriptor is %s",
-			m_optional_extensions.vk_khr_push_descriptor ? "supported" : "NOT supported");
+		else
+		{
+			Console.WriteLn("VK_KHR_push_descriptor is supported");
+		}
 
 
 		Console.WriteLn("VK_EXT_provoking_vertex is %s",
@@ -2478,8 +2478,6 @@ bool GSDeviceVK::CreatePipelineLayouts()
 	// Convert Pipeline Layout
 	//////////////////////////////////////////////////////////////////////////
 
-	if (m_optional_extensions.vk_khr_push_descriptor)
-		dslb.SetPushFlag();
 	dslb.AddBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, NUM_CONVERT_SAMPLERS, VK_SHADER_STAGE_FRAGMENT_BIT);
 	if ((m_utility_ds_layout = dslb.Create(dev)) == VK_NULL_HANDLE)
 		return false;
@@ -2492,8 +2490,6 @@ bool GSDeviceVK::CreatePipelineLayouts()
 	//////////////////////////////////////////////////////////////////////////
 	// Draw/TFX Pipeline Layout
 	//////////////////////////////////////////////////////////////////////////
-	// UBO set stays non-push; it's allocated persistently and bound with
-	// dynamic offsets.  Only the per-draw texture sets benefit from push.
 	dslb.AddBinding(
 		0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_GEOMETRY_BIT);
 	dslb.AddBinding(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -2501,14 +2497,10 @@ bool GSDeviceVK::CreatePipelineLayouts()
 		dslb.AddBinding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT);
 	if ((m_tfx_ubo_ds_layout = dslb.Create(dev)) == VK_NULL_HANDLE)
 		return false;
-	if (m_optional_extensions.vk_khr_push_descriptor)
-		dslb.SetPushFlag();
 	dslb.AddBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
 	dslb.AddBinding(1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
 	if ((m_tfx_sampler_ds_layout = dslb.Create(dev)) == VK_NULL_HANDLE)
 		return false;
-	if (m_optional_extensions.vk_khr_push_descriptor)
-		dslb.SetPushFlag();
 	dslb.AddBinding(0,
 		m_features.texture_barrier
 		? VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT 
@@ -3679,116 +3671,78 @@ bool GSDeviceVK::ApplyTFXState(bool already_execed)
 	u32 num_dsets = 0;
 	u32 start_dset = 0;
 	const bool layout_changed = (m_current_pipeline_layout != PipelineLayout::TFX);
-	const bool use_push = m_optional_extensions.vk_khr_push_descriptor;
-
-	// Push descriptor bindings don't survive a pipeline-layout switch, so
-	// when the layout changes we must re-push both texture sets even if
-	// the dirty flags aren't set.  The pool path handles this naturally via
-	// the bind-all-three-sets branch below.
-	if (use_push && layout_changed)
-		flags |= DIRTY_FLAG_TFX_SAMPLERS_DS | DIRTY_FLAG_TFX_RT_TEXTURE_DS;
 
 	if (!layout_changed && flags & DIRTY_FLAG_TFX_UBO)
 		dsets[num_dsets++] = m_tfx_ubo_descriptor_set;
 
-	if ((flags & DIRTY_FLAG_TFX_SAMPLERS_DS) || (!use_push && m_tfx_texture_descriptor_set == VK_NULL_HANDLE))
+	if ((flags & DIRTY_FLAG_TFX_SAMPLERS_DS) || m_tfx_texture_descriptor_set == VK_NULL_HANDLE)
 	{
-		if (use_push)
+		m_tfx_texture_descriptor_set = AllocateDescriptorSet(m_tfx_sampler_ds_layout);
+		if (m_tfx_texture_descriptor_set == VK_NULL_HANDLE)
 		{
-			// Push path: dstSet is ignored by vkCmdPushDescriptorSetKHR.
-			dsub.AddCombinedImageSamplerDescriptorWrite(
-				VK_NULL_HANDLE, 0, m_tfx_textures[0]->GetView(), m_tfx_sampler, m_tfx_textures[0]->GetVkLayout());
-			dsub.AddImageDescriptorWrite(VK_NULL_HANDLE, 1, m_tfx_textures[1]->GetView(), m_tfx_textures[1]->GetVkLayout());
-			dsub.PushUpdate(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tfx_pipeline_layout, TFX_DESCRIPTOR_SET_TEXTURES);
+			if (already_execed)
+			{
+				Console.Error("Failed to allocate TFX texture descriptors");
+				return false;
+			}
+
+			/* Ran out of TFX texture descriptors */
+			ExecuteCommandBufferAndRestartRenderPass(false);
+			return ApplyTFXState(true);
 		}
-		else
+
+		dsub.AddCombinedImageSamplerDescriptorWrite(
+			m_tfx_texture_descriptor_set, 0, m_tfx_textures[0]->GetView(), m_tfx_sampler, m_tfx_textures[0]->GetVkLayout());
+		dsub.AddImageDescriptorWrite(m_tfx_texture_descriptor_set, 1, m_tfx_textures[1]->GetView(), m_tfx_textures[1]->GetVkLayout());
+		dsub.Update(vk_init_info.device);
+
+		if (!layout_changed)
 		{
-			m_tfx_texture_descriptor_set = AllocateDescriptorSet(m_tfx_sampler_ds_layout);
-			if (m_tfx_texture_descriptor_set == VK_NULL_HANDLE)
-			{
-				if (already_execed)
-				{
-					Console.Error("Failed to allocate TFX texture descriptors");
-					return false;
-				}
-
-				/* Ran out of TFX texture descriptors */
-				ExecuteCommandBufferAndRestartRenderPass(false);
-				return ApplyTFXState(true);
-			}
-
-			dsub.AddCombinedImageSamplerDescriptorWrite(
-				m_tfx_texture_descriptor_set, 0, m_tfx_textures[0]->GetView(), m_tfx_sampler, m_tfx_textures[0]->GetVkLayout());
-			dsub.AddImageDescriptorWrite(m_tfx_texture_descriptor_set, 1, m_tfx_textures[1]->GetView(), m_tfx_textures[1]->GetVkLayout());
-			dsub.Update(vk_init_info.device);
-
-			if (!layout_changed)
-			{
-				start_dset = (num_dsets == 0) ?
-					TFX_DESCRIPTOR_SET_TEXTURES : start_dset;
-				dsets[num_dsets++] = m_tfx_texture_descriptor_set;
-			}
+			start_dset = (num_dsets == 0) ?
+				TFX_DESCRIPTOR_SET_TEXTURES : start_dset;
+			dsets[num_dsets++] = m_tfx_texture_descriptor_set;
 		}
 	}
 
-	if ((flags & DIRTY_FLAG_TFX_RT_TEXTURE_DS) || (!use_push && m_tfx_rt_descriptor_set == VK_NULL_HANDLE))
+	if ((flags & DIRTY_FLAG_TFX_RT_TEXTURE_DS) || m_tfx_rt_descriptor_set == VK_NULL_HANDLE)
 	{
-		if (use_push)
+		m_tfx_rt_descriptor_set = AllocateDescriptorSet(m_tfx_rt_texture_ds_layout);
+		if (m_tfx_rt_descriptor_set == VK_NULL_HANDLE)
 		{
-			if (m_features.texture_barrier)
+			if (already_execed)
 			{
-				dsub.AddInputAttachmentDescriptorWrite(
-					VK_NULL_HANDLE, 0, m_tfx_textures[NUM_TFX_DRAW_TEXTURES]->GetView(), VK_IMAGE_LAYOUT_GENERAL);
+				Console.Error("Failed to allocate TFX sampler descriptors");
+				return false;
 			}
-			else
-			{
-				dsub.AddImageDescriptorWrite(VK_NULL_HANDLE, 0, m_tfx_textures[NUM_TFX_DRAW_TEXTURES]->GetView(),
-					m_tfx_textures[NUM_TFX_DRAW_TEXTURES]->GetVkLayout());
-			}
-			dsub.AddImageDescriptorWrite(VK_NULL_HANDLE, 1, m_tfx_textures[NUM_TFX_DRAW_TEXTURES + 1]->GetView(),
-				m_tfx_textures[NUM_TFX_DRAW_TEXTURES + 1]->GetVkLayout());
-			dsub.PushUpdate(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tfx_pipeline_layout, TFX_DESCRIPTOR_SET_RT);
+
+			/* Ran out of TFX sampler descriptors */
+			ExecuteCommandBufferAndRestartRenderPass(false);
+			return ApplyTFXState(true);
+		}
+
+		if (m_features.texture_barrier)
+		{
+			dsub.AddInputAttachmentDescriptorWrite(
+				m_tfx_rt_descriptor_set, 0, m_tfx_textures[NUM_TFX_DRAW_TEXTURES]->GetView(), VK_IMAGE_LAYOUT_GENERAL);
 		}
 		else
 		{
-			m_tfx_rt_descriptor_set = AllocateDescriptorSet(m_tfx_rt_texture_ds_layout);
-			if (m_tfx_rt_descriptor_set == VK_NULL_HANDLE)
-			{
-				if (already_execed)
-				{
-					Console.Error("Failed to allocate TFX sampler descriptors");
-					return false;
-				}
+			dsub.AddImageDescriptorWrite(m_tfx_rt_descriptor_set, 0, m_tfx_textures[NUM_TFX_DRAW_TEXTURES]->GetView(),
+				m_tfx_textures[NUM_TFX_DRAW_TEXTURES]->GetVkLayout());
+		}
+		dsub.AddImageDescriptorWrite(m_tfx_rt_descriptor_set, 1, m_tfx_textures[NUM_TFX_DRAW_TEXTURES + 1]->GetView(),
+			m_tfx_textures[NUM_TFX_DRAW_TEXTURES + 1]->GetVkLayout());
+		dsub.Update(vk_init_info.device);
 
-				/* Ran out of TFX sampler descriptors */
-				ExecuteCommandBufferAndRestartRenderPass(false);
-				return ApplyTFXState(true);
-			}
-
-			if (m_features.texture_barrier)
-			{
-				dsub.AddInputAttachmentDescriptorWrite(
-					m_tfx_rt_descriptor_set, 0, m_tfx_textures[NUM_TFX_DRAW_TEXTURES]->GetView(), VK_IMAGE_LAYOUT_GENERAL);
-			}
+		if (!layout_changed)
+		{
+			// need to add textures in, can't leave a gap
+			if (start_dset == TFX_DESCRIPTOR_SET_UBO && num_dsets == 1)
+				dsets[num_dsets++] = m_tfx_texture_descriptor_set;
 			else
-			{
-				dsub.AddImageDescriptorWrite(m_tfx_rt_descriptor_set, 0, m_tfx_textures[NUM_TFX_DRAW_TEXTURES]->GetView(),
-					m_tfx_textures[NUM_TFX_DRAW_TEXTURES]->GetVkLayout());
-			}
-			dsub.AddImageDescriptorWrite(m_tfx_rt_descriptor_set, 1, m_tfx_textures[NUM_TFX_DRAW_TEXTURES + 1]->GetView(),
-				m_tfx_textures[NUM_TFX_DRAW_TEXTURES + 1]->GetVkLayout());
-			dsub.Update(vk_init_info.device);
+				start_dset = (num_dsets == 0) ? TFX_DESCRIPTOR_SET_RT : start_dset;
 
-			if (!layout_changed)
-			{
-				// need to add textures in, can't leave a gap
-				if (start_dset == TFX_DESCRIPTOR_SET_UBO && num_dsets == 1)
-					dsets[num_dsets++] = m_tfx_texture_descriptor_set;
-				else
-					start_dset = (num_dsets == 0) ? TFX_DESCRIPTOR_SET_RT : start_dset;
-
-				dsets[num_dsets++] = m_tfx_rt_descriptor_set;
-			}
+			dsets[num_dsets++] = m_tfx_rt_descriptor_set;
 		}
 	}
 
@@ -3796,27 +3750,16 @@ bool GSDeviceVK::ApplyTFXState(bool already_execed)
 	{
 		m_current_pipeline_layout = PipelineLayout::TFX;
 
-		if (use_push)
-		{
-			// Texture sets were already pushed above; only UBO needs a real bind.
-			vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tfx_pipeline_layout, TFX_DESCRIPTOR_SET_UBO,
-				1, &m_tfx_ubo_descriptor_set, NUM_TFX_DYNAMIC_OFFSETS, m_tfx_dynamic_offsets.data());
-		}
-		else
-		{
-			dsets[0] = m_tfx_ubo_descriptor_set;
-			dsets[1] = m_tfx_texture_descriptor_set;
-			dsets[2] = m_tfx_rt_descriptor_set;
+		dsets[0] = m_tfx_ubo_descriptor_set;
+		dsets[1] = m_tfx_texture_descriptor_set;
+		dsets[2] = m_tfx_rt_descriptor_set;
 
-			vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tfx_pipeline_layout, 0,
-				NUM_TFX_DESCRIPTOR_SETS, dsets, NUM_TFX_DYNAMIC_OFFSETS,
-				m_tfx_dynamic_offsets.data());
-		}
+		vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tfx_pipeline_layout, 0,
+			NUM_TFX_DESCRIPTOR_SETS, dsets, NUM_TFX_DYNAMIC_OFFSETS,
+			m_tfx_dynamic_offsets.data());
 	}
 	else if (num_dsets > 0)
 	{
-		// In push mode num_dsets only reaches here for the UBO set; textures
-		// are already pushed.  UBO is set 0 with dynamic offsets.
 		u32 dynamic_count;
 		const u32* dynamic_offsets;
 		if (start_dset == TFX_DESCRIPTOR_SET_UBO)
@@ -3850,48 +3793,32 @@ bool GSDeviceVK::ApplyUtilityState(bool already_execed)
 	u32 flags                    = m_dirty_flags;
 	m_dirty_flags               &= ~DIRTY_UTILITY_STATE;
 
-	const bool layout_changed    = (m_current_pipeline_layout != PipelineLayout::Utility);
-	const bool use_push          = m_optional_extensions.vk_khr_push_descriptor;
-	bool rebind                  = layout_changed;
+	bool rebind                  = (m_current_pipeline_layout != PipelineLayout::Utility);
 
-	// Layout change invalidates the previously-pushed binding.
-	if (use_push && layout_changed)
-		flags |= DIRTY_FLAG_UTILITY_TEXTURE;
-
-	if ((flags & DIRTY_FLAG_UTILITY_TEXTURE) || (!use_push && m_utility_descriptor_set == VK_NULL_HANDLE))
+	if ((flags & DIRTY_FLAG_UTILITY_TEXTURE) || m_utility_descriptor_set == VK_NULL_HANDLE)
 	{
-		if (use_push)
+		m_utility_descriptor_set = AllocateDescriptorSet(m_utility_ds_layout);
+		if (m_utility_descriptor_set == VK_NULL_HANDLE)
 		{
-			Vulkan::DescriptorSetUpdateBuilder dsub;
-			dsub.AddCombinedImageSamplerDescriptorWrite(VK_NULL_HANDLE, 0, m_utility_texture->GetView(),
-				m_utility_sampler, m_utility_texture->GetVkLayout());
-			dsub.PushUpdate(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_utility_pipeline_layout, 0);
-		}
-		else
-		{
-			m_utility_descriptor_set = AllocateDescriptorSet(m_utility_ds_layout);
-			if (m_utility_descriptor_set == VK_NULL_HANDLE)
+			if (already_execed)
 			{
-				if (already_execed)
-				{
-					Console.Error("Failed to allocate utility descriptors");
-					return false;
-				}
-
-				/* Ran out of utility descriptors */
-				ExecuteCommandBufferAndRestartRenderPass(false);
-				return ApplyUtilityState(true);
+				Console.Error("Failed to allocate utility descriptors");
+				return false;
 			}
 
-			Vulkan::DescriptorSetUpdateBuilder dsub;
-			dsub.AddCombinedImageSamplerDescriptorWrite(m_utility_descriptor_set, 0, m_utility_texture->GetView(),
-				m_utility_sampler, m_utility_texture->GetVkLayout());
-			dsub.Update(dev);
-			rebind = true;
+			/* Ran out of utility descriptors */
+			ExecuteCommandBufferAndRestartRenderPass(false);
+			return ApplyUtilityState(true);
 		}
+
+		Vulkan::DescriptorSetUpdateBuilder dsub;
+		dsub.AddCombinedImageSamplerDescriptorWrite(m_utility_descriptor_set, 0, m_utility_texture->GetView(),
+			m_utility_sampler, m_utility_texture->GetVkLayout());
+		dsub.Update(dev);
+		rebind = true;
 	}
 
-	if (rebind && !use_push)
+	if (rebind)
 	{
 		vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_utility_pipeline_layout, 0, 1,
 			&m_utility_descriptor_set, 0, nullptr);

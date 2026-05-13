@@ -69,7 +69,6 @@ public:
 		bool vk_khr_driver_properties : 1;
 		bool vk_khr_fragment_shader_barycentric : 1;
 		bool vk_khr_shader_draw_parameters : 1;
-		bool vk_khr_push_descriptor : 1;
 	};
 
 	struct alignas(8) PipelineSelector
