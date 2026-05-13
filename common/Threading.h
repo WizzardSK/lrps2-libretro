@@ -208,7 +208,12 @@ namespace Threading
 	/// A semaphore that definitely has a fast userspace path
 	class UserspaceSemaphore
 	{
+#if !defined(__aarch64__)
+		// On aarch64 we use WFE/SEV-based parking via m_counter alone;
+		// the kernel semaphore is unreachable and would just waste space
+		// + run a destructor on every UserspaceSemaphore teardown.
 		KernelSemaphore m_sema;
+#endif
 		std::atomic<int32_t> m_counter{0};
 
 	public:
