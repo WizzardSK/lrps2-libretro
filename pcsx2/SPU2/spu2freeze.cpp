@@ -24,7 +24,7 @@ namespace SPU2Savestate
 
 	// versioning for saves.
 	// Increment this when changes to the savestate system are made.
-	static constexpr u32 SAVE_VERSION = 0x000e;
+	static constexpr u32 SAVE_VERSION = 0x000f;
 } // namespace SPU2Savestate
 
 struct SPU2Savestate::DataBlock

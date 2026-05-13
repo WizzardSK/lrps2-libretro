@@ -263,51 +263,43 @@ static __fi bool ADSR_Calculate(V_ADSR &v)
 
 void ADSR_UpdateCache(V_ADSR &v);
 
+// V_Voice field layout is optimized for cache line access in the mixer 
+// hot path.
+// With alignas(64) on Voices[] and sizeof == 192 (3 x 64), each voice occupies
+// exactly 3 cache lines:
+//   CL0 (0-63):   ADSR + SBuffer - ADSR_Calculate stays within one cache line
+//   CL1 (64-127): pitch, interpolation, volume - all remaining per-sample fields
+//   CL2 (128-191): cold - block boundary (every 28 samples) and KeyOn only
 struct V_Voice
 {
-	V_VolumeSlideLR Volume;
+	V_ADSR ADSR;        // 56 bytes: Phase(+52) checked first for stopped-voice early exit
+	s16* SBuffer;        // ADPCM cache entry pointer
 
-	// Envelope
-	V_ADSR ADSR;
-	// Pitch (also Reg_PITCH)
-	u16 Pitch;
-	// Loop Start address (also Reg_LSAH/L)
-	u32 LoopStartA;
-	// Sound Start address (also Reg_SSAH/L)
-	u32 StartA;
-	// Next Read Data address (also Reg_NAXH/L)
-	u32 NextA;
-	// Voice Decoding State
-	s32 Prev1;
-	s32 Prev2;
+	// --- Cache line 1: per-sample mixer fields ---
 
-	// Pitch Modulated by previous voice
-	bool Modulated;
-	// Source (Wave/Noise)
-	bool Noise;
-
-	s8 LoopMode;
+	s32 SP;              // Sample pointer (19:12 bit fixed point)
+	u16 Pitch;           // also Reg_PITCH
+	bool Modulated;      // Pitch modulated by previous voice
+	bool Noise;          // Source (Wave/Noise)
+	s32 OutX;            // Last output, used for voice modulation of next voice
+	s32 SCurrent;        // Sample position within current decoded packet
+	u32 NextA;           // Next Read Data address (also Reg_NAXH/L)
 	s8 LoopFlags;
 
-	// Sample pointer (19:12 bit fixed point)
-	s32 SP;
-
-	// Previous sample values - used for interpolation
-	// Inverted order of these members to match the access order in the
-	//   code (might improve cache hits).
-	s32 PV4;
-	s32 PV3;
+	s8 LoopMode;
+	u16 _pad0;
+	s32 PV1;             // Previous sample values for interpolation
 	s32 PV2;
-	s32 PV1;
+	s32 PV3;
+	s32 PV4;
+	V_VolumeSlideLR Volume; // 24 bytes: Left.Value(+112) Right.Value(+124)
 
-	// Last outputted audio value, used for voice modulation.
-	s32 OutX;
-
-	// SBuffer now points directly to an ADPCM cache entry.
-	s16* SBuffer;
-
-	// sample position within the current decoded packet.
-	s32 SCurrent;
+	// --- Cache line 2: cold - accessed on block boundary or KeyOn ---
+	u32 LoopStartA;      // Loop Start address (also Reg_LSAH/L)
+	u32 StartA;          // Sound Start address (also Reg_SSAH/L)
+	s32 Prev1;           // Voice Decoding State (ADPCM predictor)
+	s32 Prev2;
+	u8 _pad1[48];
 };
 
 struct V_Reverb
@@ -371,7 +363,7 @@ struct V_Core
 	V_VolumeLR InpVol; // Volume for Sound Data Input
 	V_VolumeLR FxVol; // Volume for Output from Effects
 
-	V_Voice Voices[SPU2_NUM_VOICES];
+	alignas(64) V_Voice Voices[SPU2_NUM_VOICES];
 
 	u32 IRQA; // Interrupt Address
 	u32 TSA; // DMA Transfer Start Address
