@@ -29,6 +29,7 @@
 */
 
 #include <algorithm>
+#include <cstdlib> /* bsearch, realloc, free */
 #include <cstring> /* memset */
 #include <map>
 #include <unordered_map>
@@ -87,7 +88,29 @@ static std::unique_ptr<SharedMemoryMappingArea> s_fastmem_area;
 static std::vector<u32> s_fastmem_virtual_mapping; // maps vaddr -> mainmem offset
 static std::unordered_multimap<u32, u32> s_fastmem_physical_mapping; // maps mainmem offset -> vaddr
 static std::unordered_map<uptr, LoadstoreBackpatchInfo> s_fastmem_backpatch_info;
-static std::vector<u32> s_fastmem_faulting_pcs;
+
+// Sorted, unique list of guest PCs that have faulted out of fastmem.
+// Raw buffer + realloc growth; bsearch for lookup.  Insert keeps the
+// array sorted by shifting tail entries (rare path - one append per
+// distinct faulting PC discovered, never reaches more than a few k).
+static u32*   s_fastmem_faulting_pcs       = NULL;
+static size_t s_fastmem_faulting_pcs_count = 0;
+static size_t s_fastmem_faulting_pcs_cap   = 0;
+
+static int u32_compare(const void* a, const void* b)
+{
+	u32 av = *(const u32*)a;
+	u32 bv = *(const u32*)b;
+	return (av > bv) - (av < bv);
+}
+
+static void s_fastmem_faulting_pcs_free(void)
+{
+	free(s_fastmem_faulting_pcs);
+	s_fastmem_faulting_pcs       = NULL;
+	s_fastmem_faulting_pcs_count = 0;
+	s_fastmem_faulting_pcs_cap   = 0;
+}
 
 vtlb_private::VTLBPhysical vtlb_private::VTLBPhysical::fromPointer(sptr ptr)
 {
@@ -825,7 +848,7 @@ static void vtlb_UpdateFastmemProtection(u32 paddr, u32 size, const PageProtecti
 void vtlb_ClearLoadStoreInfo(void)
 {
 	s_fastmem_backpatch_info.clear();
-	s_fastmem_faulting_pcs.clear();
+	s_fastmem_faulting_pcs_count = 0;
 }
 
 void vtlb_AddLoadStoreInfo(uptr code_address, u32 code_size, u32 guest_pc, u32 gpr_bitmask, u32 fpr_bitmask, u8 address_register, u8 data_register, u8 size_in_bits, bool is_signed, bool is_load, bool is_fpr)
@@ -859,16 +882,39 @@ static bool vtlb_BackpatchLoadStore(uptr code_address, uptr fault_address)
 	Cpu->Clear(info.guest_pc, 1);
 
 	// and store the pc in the faulting list, so that we don't emit another fastmem loadstore
-	std::vector<u32>::iterator it = std::lower_bound(s_fastmem_faulting_pcs.begin(), s_fastmem_faulting_pcs.end(), info.guest_pc);
-	if (it == s_fastmem_faulting_pcs.end() || *it != info.guest_pc)
-		s_fastmem_faulting_pcs.insert(it, info.guest_pc);
+	{
+		size_t lo = 0;
+		size_t hi = s_fastmem_faulting_pcs_count;
+		while (lo < hi)
+		{
+			size_t mid = lo + ((hi - lo) >> 1);
+			if (s_fastmem_faulting_pcs[mid] < info.guest_pc)
+				lo = mid + 1;
+			else
+				hi = mid;
+		}
+		if (lo == s_fastmem_faulting_pcs_count || s_fastmem_faulting_pcs[lo] != info.guest_pc)
+		{
+			if (s_fastmem_faulting_pcs_count == s_fastmem_faulting_pcs_cap)
+			{
+				size_t newcap = s_fastmem_faulting_pcs_cap ?
+					s_fastmem_faulting_pcs_cap + (s_fastmem_faulting_pcs_cap >> 1) : 16;
+				s_fastmem_faulting_pcs     = (u32*)realloc(s_fastmem_faulting_pcs, newcap * sizeof(u32));
+				s_fastmem_faulting_pcs_cap = newcap;
+			}
+			memmove(&s_fastmem_faulting_pcs[lo + 1], &s_fastmem_faulting_pcs[lo],
+				(s_fastmem_faulting_pcs_count - lo) * sizeof(u32));
+			s_fastmem_faulting_pcs[lo] = info.guest_pc;
+			s_fastmem_faulting_pcs_count++;
+		}
+	}
 	s_fastmem_backpatch_info.erase(iter);
 	return true;
 }
 
 bool vtlb_IsFaultingPC(u32 guest_pc)
 {
-	return std::binary_search(s_fastmem_faulting_pcs.begin(), s_fastmem_faulting_pcs.end(), guest_pc);
+	return bsearch(&guest_pc, s_fastmem_faulting_pcs, s_fastmem_faulting_pcs_count, sizeof(u32), u32_compare) != NULL;
 }
 
 //virtual mappings
@@ -1006,14 +1052,14 @@ void vtlb_Shutdown(void)
 {
 	vtlb_RemoveFastmemMappings();
 	s_fastmem_backpatch_info.clear();
-	s_fastmem_faulting_pcs.clear();
+	s_fastmem_faulting_pcs_free();
 }
 
 void vtlb_ResetFastmem(void)
 {
 	vtlb_RemoveFastmemMappings();
 	s_fastmem_backpatch_info.clear();
-	s_fastmem_faulting_pcs.clear();
+	s_fastmem_faulting_pcs_count = 0;
 
 	if (!CHECK_FASTMEM || !CHECK_EEREC || !vtlbdata.vmap)
 		return;
