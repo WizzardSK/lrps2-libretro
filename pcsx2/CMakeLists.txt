@@ -671,20 +671,6 @@ else()
 	list(APPEND pcsx2IPUSources ${pcsx2IPUSourcesUnshared})
 endif()
 
-# DebugTools sources
-set(pcsx2DebugToolsSources
-	DebugTools/DebugInterface.cpp
-	DebugTools/MIPSAnalyst.cpp
-	DebugTools/SymbolMap.cpp
-	)
-
-# DebugTools headers
-set(pcsx2DebugToolsHeaders
-	DebugTools/DebugInterface.h
-	DebugTools/MIPSAnalyst.h
-	DebugTools/SymbolMap.h
-	)
-
 list(APPEND pcsx2FrontendSources
 	Frontend/HostSettings.cpp
 	Frontend/LayeredSettingsInterface.cpp
@@ -838,8 +824,6 @@ target_sources(PCSX2 PRIVATE
 	${pcsx2DEV9Headers}
 	${pcsx2PADHeaders}
 	${pcsx2PADSources}
-	${pcsx2DebugToolsSources}
-	${pcsx2DebugToolsHeaders}
 	${pcsx2FrontendSources}
 	${pcsx2FrontendHeaders}
 	${pcsx2ps2Sources}

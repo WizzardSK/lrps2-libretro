@@ -23,7 +23,6 @@
 
 #include "GS.h"			// for sending game crc to mtgs
 #include "Elfheader.h"
-#include "DebugTools/SymbolMap.h"
 
 #pragma pack(push, 1)
 struct PSXEXEHeader
@@ -44,8 +43,6 @@ struct PSXEXEHeader
 	char marker[0x7B4]; // 0x04C-0x7FF
 };
 #pragma pack(pop)
-
-#define ELF32_ST_TYPE(i) ((i) & 0xf)
 
 u32 ElfCRC;
 u32 ElfEntry;
@@ -187,40 +184,3 @@ u32 ElfObject::GetCRC() const
 	return CRC;
 }
 
-void ElfObject::LoadSectionHeaders()
-{
-	const ELF_HEADER& header = GetHeader();
-	if (!secthead || header.e_shoff > data.size())
-		return;
-
-	int i_st = -1, i_dt = -1;
-
-	for( int i = 0 ; i < header.e_shnum ; i++ )
-	{
-		// dump symbol table
-
-		if (secthead[ i ].sh_type == 0x02)
-		{
-			i_st = i;
-			i_dt = secthead[i].sh_link;
-		}
-	}
-
-	if ((i_st >= 0) && (i_dt >= 0))
-	{
-		const char *SymNames = (char*)(data.data() + secthead[i_dt].sh_offset);
-		Elf32_Sym *eS = (Elf32_Sym*)(data.data() + secthead[i_st].sh_offset);
-		Console.WriteLn("found %d symbols", secthead[i_st].sh_size / sizeof(Elf32_Sym));
-
-		R5900SymbolMap.Clear();
-		for(uint i = 1; i < (secthead[i_st].sh_size / sizeof(Elf32_Sym)); i++) {
-			if ((eS[i].st_value != 0) && (ELF32_ST_TYPE(eS[i].st_info) == 2))
-				R5900SymbolMap.AddLabel(&SymNames[eS[i].st_name],eS[i].st_value);
-		}
-	}
-}
-
-void ElfObject::LoadHeaders()
-{
-	LoadSectionHeaders();
-}

@@ -57,8 +57,6 @@
 #include "Sio.h"
 #include "ps2/BiosTools.h"
 
-#include "DebugTools/MIPSAnalyst.h"
-
 #ifdef _WIN32
 #include "common/RedtapeWindows.h"
 #include <objbase.h>
@@ -461,10 +459,6 @@ void VMManager::UpdateRunningGame(bool resetting, bool game_starting, bool swapp
 		// Check this here, for two cases: dynarec on, and when enable cheats is set per-game.
 		if (s_patches_crc != s_game_crc)
 			ReloadPatches();
-
-		MIPSAnalyst::ScanForFunctions(R5900SymbolMap, ElfTextRange.first, ElfTextRange.first + ElfTextRange.second, true);
-		R5900SymbolMap.UpdateActiveSymbols();
-		R3000SymbolMap.UpdateActiveSymbols();
 	}
 
 	MTGS::GameChanged();

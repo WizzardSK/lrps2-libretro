@@ -236,12 +236,6 @@ SOURCES_CXX += \
 	$(LRPS2_DIR)/CDVD/IsoFS/IsoFS.cpp \
 	$(LRPS2_DIR)/CDVD/IsoFS/IsoFSCDVD.cpp
 
-# pcsx2/DebugTools
-SOURCES_CXX += \
-	$(LRPS2_DIR)/DebugTools/DebugInterface.cpp \
-	$(LRPS2_DIR)/DebugTools/MIPSAnalyst.cpp \
-	$(LRPS2_DIR)/DebugTools/SymbolMap.cpp
-
 # pcsx2/Frontend
 SOURCES_CXX += \
 	$(LRPS2_DIR)/Frontend/HostSettings.cpp \

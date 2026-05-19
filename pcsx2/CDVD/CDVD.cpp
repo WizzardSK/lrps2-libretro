@@ -396,7 +396,6 @@ static __fi void _reloadElfInfo(std::string elfpath)
 	if (!cdvdLoadElf(&elfo, elfpath, false))
 		return;
 
-	elfo.LoadHeaders();
 	ElfCRC       = elfo.GetCRC();
 	ElfEntry     = elfo.GetHeader().e_entry;
 	ElfTextRange = elfo.GetTextRange();

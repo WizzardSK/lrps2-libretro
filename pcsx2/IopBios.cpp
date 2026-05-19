@@ -39,7 +39,6 @@
 #include "IopMem.h"
 #include "iR3000A.h"
 #include "ps2/BiosTools.h"
-#include "DebugTools/SymbolMap.h"
 
 #if !defined(S_ISREG) && defined(S_IFMT) && defined(S_IFREG)
 #define S_ISREG(m) (((m)&S_IFMT) == S_IFREG)

@@ -102,15 +102,6 @@ Section Flags:  (1 bit, you may combine them like 3 = alloc & write permission)
 0xf0000000=Mask bits processor-specific
 */
 
-struct Elf32_Sym {
-	u32	st_name;
-	u32	st_value;
-	u32	st_size;
-	u8	st_info;
-	u8	st_other;
-	u16	st_shndx;
-};
-
 class ElfObject final
 {
 	public:
@@ -123,8 +114,6 @@ class ElfObject final
 
 		bool OpenFile(std::string srcfile, bool isPSXElf_);
 		bool OpenIsoFile(std::string srcfile, IsoFile& isofile, bool isPSXElf_);
-
-		void LoadHeaders();
 
 		bool HasProgramHeaders() const;
 		bool HasSectionHeaders() const;
@@ -145,7 +134,6 @@ class ElfObject final
 		bool CheckElfSize(s64 size);
 
 		void InitElfHeaders();
-		void LoadSectionHeaders();
 
 		bool HasValidPSXHeader() const;
 };
