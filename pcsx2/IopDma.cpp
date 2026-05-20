@@ -88,24 +88,9 @@ void psxDma4(u32 madr, u32 bcr, u32 chcr) // SPU2's Core 0
 	psxDmaGeneric(madr, bcr, chcr, 0);
 }
 
-int psxDma4Interrupt(void)
-{
-	HW_DMA4_CHCR &= ~0x01000000;
-	psxDmaInterrupt(4);
-	iopIntcIrq(9);
-	return 1;
-}
-
 void psxDma7(u32 madr, u32 bcr, u32 chcr) // SPU2's Core 1
 {
 	psxDmaGeneric(madr, bcr, chcr, 1);
-}
-
-int psxDma7Interrupt(void)
-{
-	HW_DMA7_CHCR &= ~0x01000000;
-	psxDmaInterrupt2(0);
-	return 1;
 }
 
 #ifndef DISABLE_PSX_GPU_DMAS

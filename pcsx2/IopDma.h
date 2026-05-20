@@ -28,14 +28,11 @@ extern void psxDma10(u32 madr, u32 bcr, u32 chcr);
 extern void psxDma11(u32 madr, u32 bcr, u32 chcr);
 extern void psxDma12(u32 madr, u32 bcr, u32 chcr);
 
-extern int  psxDma4Interrupt();
-extern int  psxDma7Interrupt();
 extern void psxDMA11Interrupt();
 extern void psxDMA12Interrupt();
 extern void dev9Interrupt();
 extern void dev9Irq(int cycles);
 extern void usbInterrupt();
-extern void usbIrq(int cycles);
 extern void fwIrq();
 extern void spu2Irq();
 

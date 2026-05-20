@@ -182,7 +182,6 @@ extern void dmaSIF2();
 
 extern void EEsif0Interrupt();
 extern void EEsif1Interrupt();
-extern void EEsif2Interrupt();
 
 extern void sif0Interrupt();
 extern void sif1Interrupt();

@@ -289,12 +289,6 @@ __fi void  sif2Interrupt(void)
 	psxDmaInterrupt2(2);
 }
 
-__fi void  EEsif2Interrupt(void)
-{
-	hwDmacIrq(DMAC_SIF2);
-	sif2dma.chcr.STR = false;
-}
-
 __fi void dmaSIF2(void)
 {
 	psHu32(SBUS_F240) |= 0x8000;
