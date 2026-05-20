@@ -18,7 +18,7 @@
 #include "IPUdma.h"
 #include "IPU_MultiISA.h"
 
-IPUDMAStatus IPU1Status;
+static IPUDMAStatus IPU1Status;
 
 void ipuDmaReset(void)
 {

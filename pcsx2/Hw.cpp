@@ -30,8 +30,8 @@
 #include "ps2/HwInternal.h"
 #include "ps2/pgif.h"
 
-const int rdram_devices = 2;	// put 8 for TOOL and 2 for PS2 and PSX
-int rdram_sdevid = 0;
+static const int rdram_devices = 2;	// put 8 for TOOL and 2 for PS2 and PSX
+static int rdram_sdevid = 0;
 
 void hwReset(void)
 {

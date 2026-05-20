@@ -32,7 +32,6 @@ static const int psxInstCycles_Load = 0;
 #define PSX_HI XMMGPR_HI
 #define PSX_LO XMMGPR_LO
 
-extern uptr psxRecLUT[];
 
 void _psxFlushConstReg(int reg);
 void _psxFlushConstRegs();
@@ -47,7 +46,6 @@ void _psxMoveGPRtoR(const x86Emitter::xRegister32& to, int fromgpr);
 void _psxMoveGPRtoM(uptr to, int fromgpr);
 
 extern u32 psxpc; // recompiler pc
-extern int psxbranch; // set for branch
 extern u32 g_iopCyclePenalty;
 
 void psxSaveBranchState();

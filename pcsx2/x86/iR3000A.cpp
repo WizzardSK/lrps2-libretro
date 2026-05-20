@@ -44,7 +44,7 @@ extern void psxBREAK();
 
 u32 g_psxMaxRecMem = 0;
 
-uptr psxRecLUT[0x10000];
+static uptr psxRecLUT[0x10000];
 u32 psxhwLUT[0x10000];
 
 static __fi u32 HWADDR(u32 mem) { return psxhwLUT[mem >> 16] + mem; }
@@ -58,7 +58,7 @@ static BASEBLOCK* recROM2 = NULL; // also here
 static BaseBlocks recBlocks;
 static u8* recPtr = NULL;
 u32 psxpc; // recompiler psxpc
-int psxbranch; // set for branch
+static int psxbranch; // set for branch
 u32 g_iopCyclePenalty;
 
 static EEINST* s_pInstCache = NULL;

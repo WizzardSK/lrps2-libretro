@@ -22,8 +22,8 @@
 #include "DEV9/DEV9.h"
 #include "IopHw.h"
 
-uptr *psxMemWLUT = NULL;
-const uptr *psxMemRLUT = NULL;
+static uptr *psxMemWLUT = NULL;
+static const uptr *psxMemRLUT = NULL;
 
 IopVM_MemoryAllocMess* iopMem = NULL;
 

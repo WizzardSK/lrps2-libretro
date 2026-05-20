@@ -19,8 +19,6 @@
 
 #include <string>
 
-extern uptr *psxMemWLUT;
-extern const uptr *psxMemRLUT;
 
 #define psxSs8(mem)	iopMem->Sif[(mem) & 0x00ff]
 #define psxSs16(mem)	(*(s16*)&iopMem->Sif[(mem) & 0x00ff])

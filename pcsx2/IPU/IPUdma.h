@@ -37,5 +37,4 @@ extern void IPU0dma();
 extern void IPU1dma();
 
 extern void ipuDmaReset();
-extern IPUDMAStatus IPU1Status;
 extern IPUStatus IPUCoreStatus;

@@ -140,4 +140,3 @@ struct PadSettings
 	u16 button_deadzone;
 };
 
-extern PadSettings pad_settings[2];

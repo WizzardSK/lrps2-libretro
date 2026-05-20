@@ -365,5 +365,3 @@ enum GSRegisterAddresses
 
 void hwReset(void);
 
-extern const int rdram_devices;
-extern int rdram_sdevid;
