@@ -58,10 +58,6 @@ struct NetPacket
 	int size;
 	char buffer[2048 - sizeof(int)]; //1536 is realy needed, just pad up to 2048 bytes :)
 };
-/*
-extern mtfifo<NetPacket*> rx_fifo;
-extern mtfifo<NetPacket*> tx_fifo;
-*/
 
 struct AdapterEntry
 {

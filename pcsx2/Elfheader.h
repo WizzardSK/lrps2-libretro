@@ -37,71 +37,6 @@ struct ELF_HEADER {
 	u16	e_shstrndx;	 //Section header stringtable index
 };
 
-struct ELF_PHR {
-	u32 p_type;		 //see notes1
-	u32 p_offset;	   //Offset from file start to program segment.
-	u32 p_vaddr;		//Virtual address of the segment
-	u32 p_paddr;		//Physical address of the segment
-	u32 p_filesz;	   //Number of bytes in the file image of the segment
-	u32 p_memsz;		//Number of bytes in the memory image of the segment
-	u32 p_flags;		//Flags for segment
-	u32 p_align;		//Alignment. The address of 0x08 and 0x0C must fit this alignment. 0=no alignment
-};
-
-/*
-notes1
-------
-0=Inactive
-1=Load the segment into memory, no. of bytes specified by 0x10 and 0x14
-2=Dynamic linking
-3=Interpreter. The array element must specify a path name
-4=Note. The array element must specify the location and size of aux. info
-5=reserved
-6=The array element must specify location and size of the program header table.
-*/
-
-struct ELF_SHR {
-	u32	sh_name;		//No. to the index of the Section header stringtable index
-	u32	sh_type;		//See notes2
-	u32	sh_flags;	   //see notes3
-	u32	sh_addr;		//Section start address
-	u32	sh_offset;	  //Offset from start of file to section
-	u32	sh_size;		//Size of section
-	u32	sh_link;		//Section header table index link
-	u32	sh_info;		//Info
-	u32	sh_addralign;   //Alignment. The adress of 0x0C must fit this alignment. 0=no alignment.
-	u32	sh_entsize;	 //Fixed size entries.
-};
-
-/*
-notes 2
--------
-Type:
-0=Inactive
-1=PROGBITS
-2=SYMTAB symbol table
-3=STRTAB string table
-4=RELA relocation entries
-5=HASH hash table
-6=DYNAMIC dynamic linking information
-7=NOTE
-8=NOBITS
-9=REL relocation entries
-10=SHLIB
-0x70000000=LOPROC processor specifc
-0x7fffffff=HIPROC
-0x80000000=LOUSER lower bound
-0xffffffff=HIUSER upper bound
-
-notes 3
--------
-Section Flags:  (1 bit, you may combine them like 3 = alloc & write permission)
-1=Write section contains data the is be writeable during execution.
-2=Alloc section occupies memory during execution
-4=Exec section contains executable instructions
-0xf0000000=Mask bits processor-specific
-*/
-
 class ElfObject final
 {
 	public:
@@ -112,33 +47,18 @@ class ElfObject final
 		__fi const ELF_HEADER& GetHeader() const { return *reinterpret_cast<const ELF_HEADER*>(data.data()); }
 		__fi u32 GetSize() const { return static_cast<u32>(data.size()); }
 
-		bool OpenFile(std::string srcfile, bool isPSXElf_);
-		bool OpenIsoFile(std::string srcfile, IsoFile& isofile, bool isPSXElf_);
+		bool OpenFile(std::string srcfile);
+		bool OpenIsoFile(IsoFile& isofile);
 
-		bool HasProgramHeaders() const;
-		bool HasSectionHeaders() const;
-		bool HasHeaders() const;
-
-		std::pair<u32,u32> GetTextRange() const;
-		u32 GetEntryPoint() const;
 		u32 GetCRC() const;
 
 	private:
 
 		std::vector<u8> data;
-		ELF_PHR* proghead = nullptr;
-		ELF_SHR* secthead = nullptr;
-		std::string filename;
-		bool isPSXElf;
 
 		bool CheckElfSize(s64 size);
-
-		void InitElfHeaders();
-
-		bool HasValidPSXHeader() const;
 };
 
 extern u32 ElfCRC;
 extern u32 ElfEntry;
-extern std::pair<u32,u32> ElfTextRange;
 extern std::string LastELF;

@@ -479,7 +479,7 @@ std::string VMManager::GetDiscOverrideFromGameSettings(const std::string& elf_pa
 {
 	std::string iso_path;
 	ElfObject elfo;
-	if (!elfo.OpenFile(elf_path, false))
+	if (!elfo.OpenFile(elf_path))
 		return iso_path;
 
 	return iso_path;
@@ -689,7 +689,6 @@ void VMManager::Shutdown()
 		DiscSerial.clear();
 		ElfCRC = 0;
 		ElfEntry = 0;
-		ElfTextRange = {};
 
 		std::unique_lock lock(s_info_mutex);
 		s_disc_path.clear();

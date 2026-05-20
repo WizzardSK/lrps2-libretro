@@ -24,29 +24,8 @@
 #include "GS.h"			// for sending game crc to mtgs
 #include "Elfheader.h"
 
-#pragma pack(push, 1)
-struct PSXEXEHeader
-{
-	char id[8]; // 0x000-0x007 PS-X EXE
-	char pad1[8]; // 0x008-0x00F
-	u32 initial_pc; // 0x010
-	u32 initial_gp; // 0x014
-	u32 load_address; // 0x018
-	u32 file_size; // 0x01C excluding 0x800-byte header
-	u32 unk0; // 0x020
-	u32 unk1; // 0x024
-	u32 memfill_start; // 0x028
-	u32 memfill_size; // 0x02C
-	u32 initial_sp_base; // 0x030
-	u32 initial_sp_offset; // 0x034
-	u32 reserved[5]; // 0x038-0x04B
-	char marker[0x7B4]; // 0x04C-0x7FF
-};
-#pragma pack(pop)
-
 u32 ElfCRC;
 u32 ElfEntry;
-std::pair<u32,u32> ElfTextRange;
 std::string LastELF;
 
 ElfObject::ElfObject() = default;
@@ -67,7 +46,7 @@ bool ElfObject::CheckElfSize(s64 size)
 }
 
 
-bool ElfObject::OpenIsoFile(std::string srcfile, IsoFile& isofile, bool isPSXElf_)
+bool ElfObject::OpenIsoFile(IsoFile& isofile)
 {
 	const u32 length = isofile.getLength();
 	if (!CheckElfSize(length))
@@ -79,20 +58,17 @@ bool ElfObject::OpenIsoFile(std::string srcfile, IsoFile& isofile, bool isPSXElf
 	if (rsize < static_cast<s32>(length))
 		return false;
 
-	filename = std::move(srcfile);
-	isPSXElf = isPSXElf_;
-	InitElfHeaders();
 	return true;
 }
 
-bool ElfObject::OpenFile(std::string srcfile, bool isPSXElf_)
+bool ElfObject::OpenFile(std::string srcfile)
 {
 	RFILE *fp;
 	int32_t sd_size = path_get_size(srcfile.c_str());
 	if (sd_size == -1)
 		return false;
 
-	if (!isPSXElf_ && !CheckElfSize(sd_size))
+	if (!CheckElfSize(sd_size))
 		return false;
 
 	fp = FileSystem::OpenFile(srcfile.c_str(), "rb");
@@ -107,70 +83,7 @@ bool ElfObject::OpenFile(std::string srcfile, bool isPSXElf_)
 	}
 
 	filestream_close(fp);
-
-	filename = std::move(srcfile);
-	isPSXElf = isPSXElf_;
-	InitElfHeaders();
 	return true;
-}
-
-void ElfObject::InitElfHeaders()
-{
-	if (isPSXElf)
-		return;
-
-	const ELF_HEADER& header = GetHeader();
-	if (header.e_phnum > 0)
-	{
-		if ((header.e_phoff + sizeof(ELF_PHR)) <= static_cast<u32>(data.size()))
-			proghead = reinterpret_cast<ELF_PHR*>(&data[header.e_phoff]);
-	}
-
-	if (header.e_shnum > 0)
-	{
-		if ((header.e_shoff + sizeof(ELF_SHR)) <= static_cast<u32>(data.size()))
-			secthead = reinterpret_cast<ELF_SHR*>(&data[header.e_shoff]);
-	}
-}
-
-bool ElfObject::HasValidPSXHeader() const
-{
-	if (data.size() < sizeof(PSXEXEHeader))
-		return false;
-	const PSXEXEHeader* header          = reinterpret_cast<const PSXEXEHeader*>(data.data());
-	static constexpr char expected_id[] = {'P', 'S', '-', 'X', ' ', 'E', 'X', 'E'};
-	if (std::memcmp(header->id, expected_id, sizeof(expected_id)) != 0)
-		return false;
-	return true;
-}
-
-u32 ElfObject::GetEntryPoint() const
-{
-	if (isPSXElf)
-	{
-		if (HasValidPSXHeader())
-			return reinterpret_cast<const PSXEXEHeader*>(data.data())->initial_pc;
-		return 0xFFFFFFFFu;
-	}
-	return GetHeader().e_entry;
-}
-
-std::pair<u32,u32> ElfObject::GetTextRange() const
-{
-	if (!isPSXElf)
-	{
-		const ELF_HEADER& header = GetHeader();
-		for (int i = 0; i < header.e_phnum; i++)
-		{
-			u32 start = proghead[i].p_vaddr;
-			u32 size  = proghead[i].p_memsz;
-
-			if (start <= header.e_entry && (start+size) > header.e_entry)
-				return std::make_pair(start,size);
-		}
-	}
-
-	return std::make_pair(0,0);
 }
 
 u32 ElfObject::GetCRC() const

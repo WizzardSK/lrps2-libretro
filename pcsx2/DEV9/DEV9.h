@@ -104,8 +104,6 @@ extern dev9Struct dev9;
 #define dev9Ru16(mem) (*(u16*)&dev9.dev9R[(mem)&0xffff])
 #define dev9Ru32(mem) (*(u32*)&dev9.dev9R[(mem)&0xffff])
 
-extern int ThreadRun;
-
 #define DEV9_R_REV 0x1f80146e
 
 

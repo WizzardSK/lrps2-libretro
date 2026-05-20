@@ -342,12 +342,12 @@ static s32 cdvdWriteConfig(const u8* config)
 }
 
 // Sets ElfCRC to the CRC of the game bound to the CDVD source.
-static bool cdvdLoadElf(ElfObject *elfo, std::string elfpath, bool isPSXElf)
+static bool cdvdLoadElf(ElfObject *elfo, std::string elfpath)
 {
 	if (StringUtil::StartsWith(elfpath, "host:"))
 	{
 		std::string host_filename(elfpath.substr(5));
-		if (!elfo->OpenFile(host_filename, isPSXElf))
+		if (!elfo->OpenFile(host_filename))
 			return false;
 	}
 	else
@@ -380,7 +380,7 @@ static bool cdvdLoadElf(ElfObject *elfo, std::string elfpath, bool isPSXElf)
 
 		IsoFSCDVD isofs;
 		IsoFile file(isofs);
-		if (!file.open(elfpath) || !elfo->OpenIsoFile(elfpath, file, isPSXElf))
+		if (!file.open(elfpath) || !elfo->OpenIsoFile(file))
 			return false;
 	}
 	return true;
@@ -393,12 +393,11 @@ static __fi void _reloadElfInfo(std::string elfpath)
 		return;
 
 	ElfObject elfo;
-	if (!cdvdLoadElf(&elfo, elfpath, false))
+	if (!cdvdLoadElf(&elfo, elfpath))
 		return;
 
 	ElfCRC       = elfo.GetCRC();
 	ElfEntry     = elfo.GetHeader().e_entry;
-	ElfTextRange = elfo.GetTextRange();
 	LastELF      = std::move(elfpath);
 
 	Console.WriteLn(Color_StrongBlue, "ELF (%s) Game CRC = 0x%08X, EntryPoint = 0x%08X", LastELF.c_str(), ElfCRC, ElfEntry);
