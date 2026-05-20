@@ -54,15 +54,6 @@ std::string iopMemReadString(u32 mem, int maxlen = 65536);
 
 namespace IopMemory
 {
-	// Sif functions not made yet (will for future Iop improvements):
-	extern mem8_t SifRead8( u32 iopaddr );
-	extern mem16_t SifRead16( u32 iopaddr );
-	extern mem32_t SifRead32( u32 iopaddr );
-
-	extern void SifWrite8( u32 iopaddr, mem8_t data );
-	extern void SifWrite16( u32 iopaddr, mem16_t data );
-	extern void SifWrite32( u32 iopaddr, mem32_t data );
-
 	extern mem8_t iopHwRead8_generic( u32 addr );
 	extern mem16_t iopHwRead16_generic( u32 addr );
 	extern mem32_t iopHwRead32_generic( u32 addr );

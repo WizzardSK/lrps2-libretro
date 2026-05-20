@@ -40,7 +40,6 @@ extern void psxRcntWtarget16(int index, u32 value);
 extern void psxRcntWtarget32(int index, u32 value);
 extern u16  psxRcntRcount16(int index);
 extern u32  psxRcntRcount32(int index);
-extern u64  psxRcntCycles(int index);
 
 extern void psxVBlankStart();
 extern void psxVBlankEnd();

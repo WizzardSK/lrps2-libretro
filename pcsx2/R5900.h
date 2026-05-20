@@ -345,7 +345,6 @@ extern uint dmacInterrupt();
 extern void cpuReset();
 extern void cpuException(u32 code, u32 bd);
 void cpuTlbMiss(u32 addr, u32 bd, u32 excode);
-extern void cpuClearInt(uint n);
 extern void GoemonPreloadTlb();
 extern void GoemonUnloadTlb(u32 key);
 
