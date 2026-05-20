@@ -369,7 +369,7 @@ static bool cdvdLoadElf(ElfObject *elfo, std::string elfpath)
 		const std::string::size_type semi_pos = elfpath.rfind(';');
 		if (semi_pos != std::string::npos && std::string_view(elfpath).substr(semi_pos) != ";1")
 		{
-			Console.WriteLn(Color_Blue, "(LoadELF) Non-conforming version suffix (%s) detected and replaced.", elfpath.c_str());
+			Console.WriteLn("(LoadELF) Non-conforming version suffix (%s) detected and replaced.", elfpath.c_str());
 			elfpath.erase(semi_pos);
 			elfpath += ";1";
 		}
@@ -400,7 +400,7 @@ static __fi void _reloadElfInfo(std::string elfpath)
 	ElfEntry     = elfo.GetHeader().e_entry;
 	LastELF      = std::move(elfpath);
 
-	Console.WriteLn(Color_StrongBlue, "ELF (%s) Game CRC = 0x%08X, EntryPoint = 0x%08X", LastELF.c_str(), ElfCRC, ElfEntry);
+	Console.WriteLn("ELF (%s) Game CRC = 0x%08X, EntryPoint = 0x%08X", LastELF.c_str(), ElfCRC, ElfEntry);
 
 	// Note: Do not load game database info here.  This code is generic and called from
 	// BIOS key encryption as well as eeloadReplaceOSDSYS.  The first is actually still executing
@@ -2755,26 +2755,26 @@ int GetPS2ElfName( std::string& name )
 
 		if( key == "BOOT2" )
 		{
-			Console.WriteLn( Color_StrongBlue, "(SYSTEM.CNF) Detected PS2 Disc = %.*s",
+			Console.WriteLn("(SYSTEM.CNF) Detected PS2 Disc = %.*s",
 					static_cast<int>(value.size()), value.data());
 			name = value;
 			retype = 2;
 		}
 		else if( key == "BOOT" )
 		{
-			Console.WriteLn( Color_StrongBlue, "(SYSTEM.CNF) Detected PSX/PSone Disc = %.*s",
+			Console.WriteLn("(SYSTEM.CNF) Detected PSX/PSone Disc = %.*s",
 					static_cast<int>(value.size()), value.data());
 			name = value;
 			retype = 1;
 		}
 		else if( key == "VMODE" )
 		{
-			Console.WriteLn( Color_Blue, "(SYSTEM.CNF) Disc region type = %.*s",
+			Console.WriteLn("(SYSTEM.CNF) Disc region type = %.*s",
 					static_cast<int>(value.size()), value.data());
 		}
 		else if( key == "VER" )
 		{
-			Console.WriteLn( Color_Blue, "(SYSTEM.CNF) Software version = %.*s",
+			Console.WriteLn("(SYSTEM.CNF) Software version = %.*s",
 					static_cast<int>(value.size()), value.data());
 		}
 	}

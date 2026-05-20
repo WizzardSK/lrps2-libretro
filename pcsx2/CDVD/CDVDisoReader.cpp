@@ -160,7 +160,7 @@ static void FindLayer1Start(void)
 			return;
 		}
 		layer1start = blockresult;
-		Console.WriteLn(Color_Blue, "isoFile: second layer found at sector 0x%08x", layer1start);
+		Console.WriteLn("isoFile: second layer found at sector 0x%08x", layer1start);
 	}
 }
 

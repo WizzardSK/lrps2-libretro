@@ -1179,7 +1179,7 @@ bool GSDeviceVK::IsSuitableDefaultRenderer()
 	if (       StringUtil::StartsWithNoCase(name, "llvmpipe")
 		|| StringUtil::StartsWithNoCase(name, "SwiftShader"))
 	{
-		Console.WriteLn(Color_StrongOrange, "Not using Vulkan for software renderer.");
+		Console.Warning("Not using Vulkan for software renderer.");
 		return false;
 	}
 
@@ -1187,11 +1187,11 @@ bool GSDeviceVK::IsSuitableDefaultRenderer()
 	// Plus, the Ivy Bridge and Haswell drivers are incomplete.
 	if (StringUtil::StartsWithNoCase(name, "Intel"))
 	{
-		Console.WriteLn(Color_StrongOrange, "Not using Vulkan for Intel GPU.");
+		Console.Warning("Not using Vulkan for Intel GPU.");
 		return false;
 	}
 
-	Console.WriteLn(Color_StrongGreen, "Allowing Vulkan as default renderer.");
+	Console.WriteLn("Allowing Vulkan as default renderer.");
 	return true;
 }
 

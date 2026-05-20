@@ -307,7 +307,7 @@ void VMManager::LoadPatches(const std::string& serial, u32 crc)
 			const std::string* patches = game->findPatch(crc);
 			if (patches && (patch_count = LoadPatchesFromString(*patches)) > 0)
 			{
-				Console.WriteLn(Color_Green, "(GameDB) Patches Loaded: %d", patch_count);
+				Console.WriteLn("(GameDB) Patches Loaded: %d", patch_count);
 				fmt::format_to(std::back_inserter(message), "{} game patches", patch_count);
 			}
 
@@ -322,7 +322,7 @@ void VMManager::LoadPatches(const std::string& serial, u32 crc)
 		cheat_count = LoadPatchesFromDir(crc_string, EmuFolders::Cheats, "Cheats", true);
 		if (cheat_count > 0)
 		{
-			Console.WriteLn(Color_Green, "Cheats Loaded: %d", cheat_count);
+			Console.WriteLn("Cheats Loaded: %d", cheat_count);
 			fmt::format_to(std::back_inserter(message), "{}{} cheat patches", (patch_count > 0) ? " and " : "", cheat_count);
 		}
 	}
@@ -331,7 +331,7 @@ void VMManager::LoadPatches(const std::string& serial, u32 crc)
 	if (EmuConfig.EnableWideScreenPatches && crc != 0)
 	{
 		if ((s_active_widescreen_patches = LoadPatchesFromDir(crc_string, EmuFolders::CheatsWS, "Widescreen hacks", false)) > 0)
-			Console.WriteLn(Color_Gray, "Found widescreen patches in the cheats_ws folder --> skipping cheats_ws.zip");
+			Console.WriteLn("Found widescreen patches in the cheats_ws folder --> skipping cheats_ws.zip");
 		else
 		{
 			// No ws cheat files found at the cheats_ws folder, try the ws cheats zip file.
@@ -347,7 +347,7 @@ void VMManager::LoadPatches(const std::string& serial, u32 crc)
 			if (!s_widescreen_cheats_data.empty())
 			{
 				s_active_widescreen_patches = LoadPatchesFromZip(crc_string, s_widescreen_cheats_data.data(), s_widescreen_cheats_data.size());
-				Console.WriteLn(Color_Green, "(Wide Screen Cheats DB) Patches Loaded: %d", s_active_widescreen_patches);
+				Console.WriteLn("(Wide Screen Cheats DB) Patches Loaded: %d", s_active_widescreen_patches);
 			}
 		}
 
@@ -365,7 +365,7 @@ void VMManager::LoadPatches(const std::string& serial, u32 crc)
 	{
 		if ((s_active_no_interlacing_patches = LoadPatchesFromDir(crc_string, EmuFolders::CheatsNI, "No-interlacing patches", false)) > 0)
 		{
-			Console.WriteLn(Color_Gray, "Found no-interlacing patches in the cheats_ni folder --> skipping cheats_ni.zip");
+			Console.WriteLn("Found no-interlacing patches in the cheats_ni folder --> skipping cheats_ni.zip");
 		}
 		else
 		{
@@ -382,7 +382,7 @@ void VMManager::LoadPatches(const std::string& serial, u32 crc)
 			if (!s_no_interlacing_cheats_data.empty())
 			{
 				s_active_no_interlacing_patches = LoadPatchesFromZip(crc_string, s_no_interlacing_cheats_data.data(), s_no_interlacing_cheats_data.size());
-				Console.WriteLn(Color_Green, "(No-Interlacing Cheats DB) Patches Loaded: %u", s_active_no_interlacing_patches);
+				Console.WriteLn("(No-Interlacing Cheats DB) Patches Loaded: %u", s_active_no_interlacing_patches);
 			}
 		}
 
@@ -1260,13 +1260,13 @@ void VMManager::SetEmuThreadAffinities()
 		this_proc_assigment[0], this_proc_assigment[1], this_proc_assigment[2]);
 
 	const u64 ee_affinity = static_cast<u64>(1) << ee_index;
-	Console.WriteLn(Color_StrongGreen, "EE thread is on processor %u (0x%llx)", ee_index, ee_affinity);
+	Console.WriteLn("EE thread is on processor %u (0x%llx)", ee_index, ee_affinity);
 	s_vm_thread_handle.SetAffinity(ee_affinity);
 
 	if (EmuConfig.Speedhacks.vuThread)
 	{
 		const u64 vu_affinity = static_cast<u64>(1) << vu_index;
-		Console.WriteLn(Color_StrongGreen, "VU thread is on processor %u (0x%llx)", vu_index, vu_affinity);
+		Console.WriteLn("VU thread is on processor %u (0x%llx)", vu_index, vu_affinity);
 		vu1Thread.GetThreadHandle().SetAffinity(vu_affinity);
 	}
 	else

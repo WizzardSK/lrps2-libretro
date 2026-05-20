@@ -1129,7 +1129,7 @@ bool vtlb_Core_Alloc(void)
 		{
 			s_fastmem_virtual_mapping.resize(FASTMEM_PAGE_COUNT, NO_FASTMEM_MAPPING);
 			vtlbdata.fastmem_base = (uptr)s_fastmem_area->BasePointer();
-			Console.WriteLn(Color_StrongGreen, "Fastmem area: %p - %p",
+			Console.WriteLn("Fastmem area: %p - %p",
 				vtlbdata.fastmem_base, vtlbdata.fastmem_base + (FASTMEM_AREA_SIZE - 1));
 		}
 	}

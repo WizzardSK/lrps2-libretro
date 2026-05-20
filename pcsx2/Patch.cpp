@@ -751,7 +751,7 @@ int LoadPatchesFromZip(const std::string& crc, const u8* zip_data, size_t zip_da
 	if (!pnach_data.has_value())
 		return 0;
 
-	Console.WriteLn(Color_Green, "Loading patch '%s' from archive.", pnach_filename.c_str());
+	Console.WriteLn("Loading patch '%s' from archive.", pnach_filename.c_str());
 	return LoadPatchesFromString(pnach_data.value());
 }
 
@@ -763,7 +763,7 @@ int LoadPatchesFromDir(const std::string& crc, const std::string& folder, const 
 {
 	if (!path_is_directory(folder.c_str()))
 	{
-		Console.WriteLn(Color_Red, "The %s folder ('%s') is inaccessible. Skipping...", friendly_name, folder.c_str());
+		Console.WriteLn("The %s folder ('%s') is inaccessible. Skipping...", friendly_name, folder.c_str());
 		return 0;
 	}
 
@@ -773,7 +773,7 @@ int LoadPatchesFromDir(const std::string& crc, const std::string& folder, const 
 
 	if (show_error_when_missing && files.empty())
 	{
-		Console.WriteLn(Color_Gray, "Not found %s file: %s" FS_OSPATH_SEPARATOR_STR "%s.pnach",
+		Console.WriteLn("Not found %s file: %s" FS_OSPATH_SEPARATOR_STR "%s.pnach",
 			friendly_name, folder.c_str(), crc.c_str());
 	}
 
@@ -785,7 +785,7 @@ int LoadPatchesFromDir(const std::string& crc, const std::string& folder, const 
 		if (name.length() < crc.length() || Strncasecmp(name.data(), crc.c_str(), crc.size()) != 0)
 			continue;
 
-		Console.WriteLn(Color_Green, "Found %s file: '%.*s'", friendly_name, static_cast<int>(name.size()), name.data());
+		Console.WriteLn("Found %s file: '%.*s'", friendly_name, static_cast<int>(name.size()), name.data());
 
 		const std::optional<std::string> pnach_data(FileSystem::ReadFileToString(fd.FileName.c_str()));
 		if (!pnach_data.has_value())
@@ -794,11 +794,11 @@ int LoadPatchesFromDir(const std::string& crc, const std::string& folder, const 
 		const int loaded = LoadPatchesFromString(pnach_data.value());
 		total_loaded += loaded;
 
-		Console.WriteLn((loaded ? Color_Green : Color_Gray), "Loaded %d %s from '%.*s'.",
+		Console.WriteLn("Loaded %d %s from '%.*s'.",
 			loaded, friendly_name, static_cast<int>(name.size()), name.data());
 	}
 
-	Console.WriteLn((total_loaded ? Color_Green : Color_Gray), "Overall %d %s loaded", total_loaded, friendly_name);
+	Console.WriteLn("Overall %d %s loaded", total_loaded, friendly_name);
 	return total_loaded;
 }
 
