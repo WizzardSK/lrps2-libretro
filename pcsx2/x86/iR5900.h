@@ -26,6 +26,7 @@
 extern u32 pc;             // recompiler pc
 extern int g_branch;       // set for branch
 extern u32 target;         // branch target
+extern bool s_nBlockInterlocked; // Current block has VU0 interlocking
 
 //////////////////////////////////////////////////////////////////////////////////////////
 //
