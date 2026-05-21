@@ -18,14 +18,6 @@
 #include "Global.h"
 #include "../GS/GSVector.h"
 
-__forceinline s32 V_Core::RevbGetIndexer(s32 offset)
-{
-	u32 start = EffectsStartA & 0x3f'ffff;
-	u32 end   = (EffectsEndA & 0x3f'ffff) | 0xffff;
-	u32 x     = ((Cycles >> 1) + offset) % ((end - start) + 1);
-	return ((x + start) & 0xf'ffff);
-}
-
 StereoOut32 V_Core::DoReverb(StereoOut32 Input)
 {
 	if (EffectsStartA >= EffectsEndA)
@@ -34,6 +26,23 @@ StereoOut32 V_Core::DoReverb(StereoOut32 Input)
 		ret.Left = ret.Right = 0;
 		return ret;
 	}
+
+	/* The reverb work-area bounds and the modulo divisor are loop-invariant
+	 * for the duration of this call: they derive only from EffectsStartA /
+	 * EffectsEndA (written via the register table, never inside the mixer)
+	 * and from Cycles, which is constant across one DoReverb. Compute them
+	 * once here instead of re-deriving the masks on each of the 14 indexer
+	 * calls below. Arithmetic is identical to the previous per-call form,
+	 * so the produced indices are bit-for-bit unchanged. */
+	const u32 rv_start = EffectsStartA & 0x3f'ffff;
+	const u32 rv_end   = (EffectsEndA & 0x3f'ffff) | 0xffff;
+	const u32 rv_size  = (rv_end - rv_start) + 1;
+	const u32 rv_phase = Cycles >> 1;
+	auto Indexer = [rv_start, rv_size, rv_phase](s32 offset) -> u32
+	{
+		u32 x = (rv_phase + (u32)offset) % rv_size;
+		return ((x + rv_start) & 0xf'ffff);
+	};
 
 	Input.Left  = std::clamp(Input.Left, -0x8000, 0x7fff);
 	Input.Right = std::clamp(Input.Right, -0x8000, 0x7fff);
@@ -47,23 +56,23 @@ StereoOut32 V_Core::DoReverb(StereoOut32 Input)
 
 	// Calculate the read/write addresses we'll be needing for this session of reverb.
 
-	const u32 same_src = RevbGetIndexer(R ? Revb.SAME_R_SRC : Revb.SAME_L_SRC);
-	const u32 same_dst = RevbGetIndexer(R ? Revb.SAME_R_DST : Revb.SAME_L_DST);
-	const u32 same_prv = RevbGetIndexer(R ? Revb.SAME_R_DST - 1 : Revb.SAME_L_DST - 1);
+	const u32 same_src = Indexer(R ? Revb.SAME_R_SRC : Revb.SAME_L_SRC);
+	const u32 same_dst = Indexer(R ? Revb.SAME_R_DST : Revb.SAME_L_DST);
+	const u32 same_prv = Indexer(R ? Revb.SAME_R_DST - 1 : Revb.SAME_L_DST - 1);
 
-	const u32 diff_src = RevbGetIndexer(R ? Revb.DIFF_L_SRC : Revb.DIFF_R_SRC);
-	const u32 diff_dst = RevbGetIndexer(R ? Revb.DIFF_R_DST : Revb.DIFF_L_DST);
-	const u32 diff_prv = RevbGetIndexer(R ? Revb.DIFF_R_DST - 1 : Revb.DIFF_L_DST - 1);
+	const u32 diff_src = Indexer(R ? Revb.DIFF_L_SRC : Revb.DIFF_R_SRC);
+	const u32 diff_dst = Indexer(R ? Revb.DIFF_R_DST : Revb.DIFF_L_DST);
+	const u32 diff_prv = Indexer(R ? Revb.DIFF_R_DST - 1 : Revb.DIFF_L_DST - 1);
 
-	const u32 comb1_src = RevbGetIndexer(R ? Revb.COMB1_R_SRC : Revb.COMB1_L_SRC);
-	const u32 comb2_src = RevbGetIndexer(R ? Revb.COMB2_R_SRC : Revb.COMB2_L_SRC);
-	const u32 comb3_src = RevbGetIndexer(R ? Revb.COMB3_R_SRC : Revb.COMB3_L_SRC);
-	const u32 comb4_src = RevbGetIndexer(R ? Revb.COMB4_R_SRC : Revb.COMB4_L_SRC);
+	const u32 comb1_src = Indexer(R ? Revb.COMB1_R_SRC : Revb.COMB1_L_SRC);
+	const u32 comb2_src = Indexer(R ? Revb.COMB2_R_SRC : Revb.COMB2_L_SRC);
+	const u32 comb3_src = Indexer(R ? Revb.COMB3_R_SRC : Revb.COMB3_L_SRC);
+	const u32 comb4_src = Indexer(R ? Revb.COMB4_R_SRC : Revb.COMB4_L_SRC);
 
-	const u32 apf1_src = RevbGetIndexer(R ? (Revb.APF1_R_DST - Revb.APF1_SIZE) : (Revb.APF1_L_DST - Revb.APF1_SIZE));
-	const u32 apf1_dst = RevbGetIndexer(R ? Revb.APF1_R_DST : Revb.APF1_L_DST);
-	const u32 apf2_src = RevbGetIndexer(R ? (Revb.APF2_R_DST - Revb.APF2_SIZE) : (Revb.APF2_L_DST - Revb.APF2_SIZE));
-	const u32 apf2_dst = RevbGetIndexer(R ? Revb.APF2_R_DST : Revb.APF2_L_DST);
+	const u32 apf1_src = Indexer(R ? (Revb.APF1_R_DST - Revb.APF1_SIZE) : (Revb.APF1_L_DST - Revb.APF1_SIZE));
+	const u32 apf1_dst = Indexer(R ? Revb.APF1_R_DST : Revb.APF1_L_DST);
+	const u32 apf2_src = Indexer(R ? (Revb.APF2_R_DST - Revb.APF2_SIZE) : (Revb.APF2_L_DST - Revb.APF2_SIZE));
+	const u32 apf2_dst = Indexer(R ? Revb.APF2_R_DST : Revb.APF2_L_DST);
 
 	// -----------------------------------------
 	//          Optimized IRQ Testing !

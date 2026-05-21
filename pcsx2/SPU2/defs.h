@@ -443,7 +443,6 @@ struct V_Core
 
 	StereoOut32 Mix(const VoiceMixSet& inVoices, const StereoOut32& Input, const StereoOut32& Ext);
 	StereoOut32 DoReverb(StereoOut32 Input);
-	s32 RevbGetIndexer(s32 offset);
 
 	StereoOut32 ReadInput();
 	StereoOut32 ReadInput_HiFi();
