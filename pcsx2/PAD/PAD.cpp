@@ -179,7 +179,7 @@ static int pad_ry[2];
 static int pad_type[2] = { -1, -1 };
 static u8 analog_buttons[2][12];
 
-static PadSettings pad_settings[2];
+PadSettings pad_settings[2];
 
 static int keymap[] =
 {
