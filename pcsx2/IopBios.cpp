@@ -53,39 +53,39 @@
 
 typedef struct
 {
-	unsigned int mode;
-	unsigned int attr;
-	unsigned int size;
-	unsigned char ctime[8];
-	unsigned char atime[8];
-	unsigned char mtime[8];
-	unsigned int hisize;
+	uint32_t mode;
+	uint32_t attr;
+	uint32_t size;
+	uint8_t ctime[8];
+	uint8_t atime[8];
+	uint8_t mtime[8];
+	uint32_t hisize;
 } fio_stat_t;
 typedef struct
 {
 	fio_stat_t _fioStat;
 	/** Number of subs (main) / subpart number (sub) */
-	unsigned int private_0;
-	unsigned int private_1;
-	unsigned int private_2;
-	unsigned int private_3;
-	unsigned int private_4;
+	uint32_t private_0;
+	uint32_t private_1;
+	uint32_t private_2;
+	uint32_t private_3;
+	uint32_t private_4;
 	/** Sector start.  */
-	unsigned int private_5;
+	uint32_t private_5;
 } fxio_stat_t;
 
 typedef struct
 {
 	fio_stat_t stat;
 	char name[256];
-	unsigned int unknown;
+	uint32_t unknown;
 } fio_dirent_t;
 
 typedef struct
 {
 	fxio_stat_t stat;
 	char name[256];
-	unsigned int unknown;
+	uint32_t unknown;
 } fxio_dirent_t;
 
 static std::string hostRoot;
@@ -210,7 +210,7 @@ namespace R3000A
 		if (!FileSystem::StatFile(file_path.c_str(), &file_stats))
 			return -IOP_ENOENT;
 
-		host_stats->size = file_stats.st_size;
+		host_stats->size = (uint32_t)file_stats.st_size;
 		host_stats->hisize = 0;
 
 		// Convert the mode.
@@ -348,13 +348,13 @@ namespace R3000A
 			switch (whence)
 			{
 				case IOP_SEEK_SET:
-					err = ::lseek(fd, offset, SEEK_SET);
+					err = (int)::lseek(fd, offset, SEEK_SET);
 					break;
 				case IOP_SEEK_CUR:
-					err = ::lseek(fd, offset, SEEK_CUR);
+					err = (int)::lseek(fd, offset, SEEK_CUR);
 					break;
 				case IOP_SEEK_END:
-					err = ::lseek(fd, offset, SEEK_END);
+					err = (int)::lseek(fd, offset, SEEK_END);
 					break;
 				default:
 					return -IOP_EIO;
@@ -365,12 +365,12 @@ namespace R3000A
 
 		virtual int read(void* buf, u32 count) /* Flawfinder: ignore */
 		{
-			return translate_error(::read(fd, buf, count));
+			return translate_error((int)::read(fd, buf, count));
 		}
 
 		virtual int write(void* buf, u32 count)
 		{
-			return translate_error(::write(fd, buf, count));
+			return translate_error((int)::write(fd, buf, count));
 		}
 	};
 
@@ -720,7 +720,7 @@ namespace R3000A
 					v0 = host_stat(full_path, (fxio_stat_t*)&buf);
 
 					for (size_t i = 0; i < sizeof(fxio_stat_t); i++)
-						iopMemWrite8(data + i, buf[i]);
+						iopMemWrite8((uint32_t)(data + i), buf[i]);
 				}
 				else
 				{
@@ -728,7 +728,7 @@ namespace R3000A
 					v0 = host_stat(full_path, (fio_stat_t*)&buf);
 
 					for (size_t i = 0; i < sizeof(fio_stat_t); i++)
-						iopMemWrite8(data + i, buf[i]);
+						iopMemWrite8((uint32_t)(data + i), buf[i]);
 				}
 				pc = ra;
 				return 1;
