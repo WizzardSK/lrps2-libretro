@@ -34,7 +34,7 @@ __fi void mVUcheckIsSame(mV)
 // Sets up microProgram PC ranges based on whats been recompiled
 void mVUsetupRange(microVU& mVU, s32 pc, bool isStartPC)
 {
-	std::deque<microRange>*& ranges = mVUcurProg.ranges;
+	microRangeList* ranges = mVUcurProg.ranges;
 
 	/* The PC handling will prewrap the PC so we need to
 	 * set the end PC to the end of the micro memory,
@@ -43,16 +43,15 @@ void mVUsetupRange(microVU& mVU, s32 pc, bool isStartPC)
 
 	if (isStartPC) /* Check if startPC is already within a block we've recompiled */
 	{
-		std::deque<microRange>::const_iterator it(ranges->begin());
-		for (; it != ranges->end(); ++it)
+		for (u32 i = 0; i < ranges->count; i++)
 		{
-			if ((cur_pc >= it[0].start) && (cur_pc <= it[0].end))
+			if ((cur_pc >= ranges->data[i].start) && (cur_pc <= ranges->data[i].end))
 			{
-				if (it[0].start != it[0].end)
+				if (ranges->data[i].start != ranges->data[i].end)
 				{
-					microRange mRange = {it[0].start, it[0].end};
-					ranges->erase(it);
-					ranges->push_front(mRange);
+					microRange mRange = {ranges->data[i].start, ranges->data[i].end};
+					mvu_rangelist_erase(ranges, i);
+					mvu_rangelist_push_front(ranges, mRange);
 					return; // new start PC is inside the range of another range
 				}
 			}
@@ -69,36 +68,35 @@ void mVUsetupRange(microVU& mVU, s32 pc, bool isStartPC)
 	if (isStartPC)
 	{
 		microRange mRange = {cur_pc, -1};
-		ranges->push_front(mRange);
+		mvu_rangelist_push_front(ranges, mRange);
 	}
 	else
 	{
 		if (mVUrange.start <= cur_pc)
 		{
-			std::deque<microRange>::iterator it;
 			mVUrange.end = cur_pc;
 			s32 rStart   = mVUrange.start;
 			s32 rEnd     = mVUrange.end;
-			for (it = ranges->begin() + 1; it != ranges->end();)
+			for (u32 i = 1; i < ranges->count;)
 			{
 				/* Starts after this program but starts
 				 * before the end of current program */
-				if (((it->start >= rStart) && (it->start <= rEnd))
-				||  ((it->end   >= rStart) && (it->end <= rEnd)))
+				if (((ranges->data[i].start >= rStart) && (ranges->data[i].start <= rEnd))
+				||  ((ranges->data[i].end   >= rStart) && (ranges->data[i].end <= rEnd)))
 				{
-					mVUrange.start = rStart = std::min(it->start, rStart); /* Choose the earlier start */
-					mVUrange.end   = rEnd   = std::max(it->end, rEnd);
-					it = ranges->erase(it);
+					mVUrange.start = rStart = std::min(ranges->data[i].start, rStart); /* Choose the earlier start */
+					mVUrange.end   = rEnd   = std::max(ranges->data[i].end, rEnd);
+					mvu_rangelist_erase(ranges, i);
 				}
 				else
-					it++;
+					i++;
 			}
 		}
 		else
 		{
 			mVUrange.end = mVU.microMemSize;
 			microRange mRange = {0, cur_pc };
-			ranges->push_front(mRange);
+			mvu_rangelist_push_front(ranges, mRange);
 		}
 
 		if(!doWholeProgCompare)

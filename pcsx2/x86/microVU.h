@@ -15,7 +15,6 @@
 
 #pragma once
 
-#include <deque>
 #include <algorithm>
 #include <cstring> /* memset/memcpy */
 #include <memory>

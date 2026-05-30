@@ -177,7 +177,7 @@ typedef Fntype_mVUrecInst* Fnptr_mVUrecInst;
 #define sFLAG        mVUinfo.sFlag
 #define mFLAG        mVUinfo.mFlag
 #define cFLAG        mVUinfo.cFlag
-#define mVUrange     (mVUcurProg.ranges[0])[0]
+#define mVUrange     (mVUcurProg.ranges->data[0])
 #define isEvilBlock  (mVUpBlock->pState.blockType == 2)
 #define isBadOrEvil  (mVUlow.badBranch || mVUlow.evilBranch)
 #define isConditional (mVUlow.branch > 2 && mVUlow.branch < 9)

@@ -115,15 +115,14 @@ void mVUreset(microVU& mVU, bool resetReserve)
 	{
 		if (!mVU.prog.prog[i])
 		{
-			mVU.prog.prog[i] = new std::deque<microProgram*>();
+			mVU.prog.prog[i] = mvu_proglist_new();
 			continue;
 		}
-		std::deque<microProgram*>::iterator it(mVU.prog.prog[i]->begin());
-		for (; it != mVU.prog.prog[i]->end(); ++it)
+		for (u32 j = 0; j < mVU.prog.prog[i]->count; j++)
 		{
-			mVUdeleteProg(mVU, it[0]);
+			mVUdeleteProg(mVU, mVU.prog.prog[i]->data[j]);
 		}
-		mVU.prog.prog[i]->clear();
+		mvu_proglist_clear(mVU.prog.prog[i]);
 		mVU.prog.quick[i].block = NULL;
 		mVU.prog.quick[i].prog = NULL;
 	}
@@ -145,10 +144,9 @@ void mVUclose(microVU& mVU)
 	{
 		if (!mVU.prog.prog[i])
 			continue;
-		std::deque<microProgram*>::iterator it(mVU.prog.prog[i]->begin());
-		for (; it != mVU.prog.prog[i]->end(); ++it)
-			mVUdeleteProg(mVU, it[0]);
-		delete mVU.prog.prog[i];
+		for (u32 j = 0; j < mVU.prog.prog[i]->count; j++)
+			mVUdeleteProg(mVU, mVU.prog.prog[i]->data[j]);
+		mvu_proglist_delete(mVU.prog.prog[i]);
 		mVU.prog.prog[i] = NULL;
 	}
 }
@@ -180,7 +178,7 @@ __ri void mVUdeleteProg(microVU& mVU, microProgram*& prog)
 		delete prog->block[i];
 		prog->block[i] = NULL;
 	}
-	delete prog->ranges;
+	mvu_rangelist_delete(prog->ranges);
 	prog->ranges = NULL;
 	safe_aligned_free(prog);
 }
@@ -191,7 +189,7 @@ __ri microProgram* mVUcreateProg(microVU& mVU, int startPC)
 	microProgram* prog = (microProgram*)_aligned_malloc(sizeof(microProgram), 64);
 	memset(prog, 0, sizeof(microProgram));
 	prog->idx = mVU.prog.total++;
-	prog->ranges = new std::deque<microRange>();
+	prog->ranges = mvu_rangelist_new();
 	prog->startPC = startPC;
 	if(doWholeProgCompare)
 		mVUcacheProg(mVU, *prog); // Cache Micro Program
@@ -224,10 +222,10 @@ u64 mVUrangesHash(microVU& mVU, microProgram& prog)
 		u32 v32[2];
 	} hash = {0};
 
-	std::deque<microRange>::const_iterator it(prog.ranges->begin());
-	for (; it != prog.ranges->end(); ++it)
+	for (u32 r = 0; r < prog.ranges->count; r++)
 	{
-		for (int i = it[0].start / 4; i < it[0].end / 4; i++)
+		const microRange& range = prog.ranges->data[r];
+		for (int i = range.start / 4; i < range.end / 4; i++)
 		{
 			hash.v32[0] -= prog.data[i];
 			hash.v32[1] ^= prog.data[i];
@@ -246,8 +244,9 @@ __fi bool mVUcmpProg(microVU& mVU, microProgram& prog)
 	}
 	else
 	{
-		for (const auto& range : *prog.ranges)
+		for (u32 r = 0; r < prog.ranges->count; r++)
 		{
+			const microRange& range = prog.ranges->data[r];
 			auto cmpOffset = [&](void* x) { return (u8*)x + range.start; };
 
 			if (memcmp(cmpOffset(prog.data), cmpOffset(vuRegs[mVU.index].Micro), (range.end - range.start)))
@@ -269,17 +268,17 @@ _mVUt __fi void* mVUsearchProg(u32 startPC, uptr pState)
 
 	if (!quick.prog) // If null, we need to search for new program
 	{
-		std::deque<microProgram*>::iterator it(list->begin());
-		for (; it != list->end(); ++it)
+		for (u32 i = 0; i < list->count; i++)
 		{
-			bool b = mVUcmpProg(mVU, *it[0]);
+			microProgram* p = list->data[i];
+			bool b = mVUcmpProg(mVU, *p);
 
 			if (b)
 			{
-				quick.block = it[0]->block[startPC / 8];
-				quick.prog  = it[0];
-				list->erase(it);
-				list->push_front(quick.prog);
+				quick.block = p->block[startPC / 8];
+				quick.prog  = p;
+				mvu_proglist_erase(list, i);
+				mvu_proglist_push_front(list, quick.prog);
 
 				// Sanity check, in case for some reason the program compilation aborted half way through (JALR for example)
 				if (quick.block == nullptr)
@@ -298,7 +297,7 @@ _mVUt __fi void* mVUsearchProg(u32 startPC, uptr pState)
 		void* entryPoint = mVUblockFetch(mVU,  startPC, pState);
 		quick.block      = mVU.prog.cur->block[startPC/8];
 		quick.prog       = mVU.prog.cur;
-		list->push_front(mVU.prog.cur);
+		mvu_proglist_push_front(list, mVU.prog.cur);
 		return entryPoint;
 	}
 
