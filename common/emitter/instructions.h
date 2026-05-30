@@ -29,7 +29,6 @@
  */
 
 #pragma once
-#include <vector>
 
 #include "internal.h"
 
