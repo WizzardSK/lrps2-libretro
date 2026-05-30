@@ -203,22 +203,28 @@ const xRegister32
 
 	void EmitSibMagic(uint regfield, const void* address, int extraRIPOffset)
 	{
+		// Leaf encoder: cache the thread-local emit cursor in a local so the
+		// 2-3 writes below don't each re-resolve x86Ptr's TLS address. No
+		// nested emit calls occur between the load and the write-back, so the
+		// local can't go stale.
+		u8* p = x86Ptr;
 		sptr displacement = (sptr)address;
-		sptr ripRelative = (sptr)address - ((sptr)x86Ptr + sizeof(s8) + sizeof(s32) + extraRIPOffset);
+		sptr ripRelative = (sptr)address - ((sptr)p + sizeof(s8) + sizeof(s32) + extraRIPOffset);
 		// Can we use a rip-relative address?  (Prefer this over eiz because it's a byte shorter)
 		if (ripRelative == (s32)ripRelative)
 		{
-			ModRM(0, regfield, ModRm_UseDisp32);
+			*p++ = (u8)((0 << 6) | (regfield << 3) | ModRm_UseDisp32);
 			displacement = ripRelative;
 		}
 		else
 		{
-			ModRM(0, regfield, ModRm_UseSib);
-			SibSB(0, Sib_EIZ, Sib_UseDisp32);
+			*p++ = (u8)((0 << 6) | (regfield << 3) | ModRm_UseSib);
+			*p++ = (u8)((0 << 6) | (Sib_EIZ << 3) | Sib_UseDisp32);
 		}
 
-		*(s32*)x86Ptr = (s32)displacement;
-		x86Ptr       += sizeof(s32);
+		*(s32*)p = (s32)displacement;
+		p       += sizeof(s32);
+		x86Ptr   = p;
 	}
 
 	//////////////////////////////////////////////////////////////////////////////////////////
