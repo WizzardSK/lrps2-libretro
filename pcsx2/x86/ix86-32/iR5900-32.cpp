@@ -518,14 +518,8 @@ static void recResetRaw(void)
 	recAlloc();
 
 	recMem->Reset();
-#if TODOFIXME
-	xSetPtr(*recMem);
-#endif
 	_DynGen_Dispatchers();
 	vtlb_DynGenDispatchers();
-#if TODOFIXME
-	recPtr = xGetPtr();
-#endif
 	ClearRecLUT((BASEBLOCK*)recLutReserve_RAM, recLutSize);
 	memset(recRAMCopy, 0, Ps2MemSize::MainRam);
 
@@ -538,11 +532,8 @@ static void recResetRaw(void)
 	mmap_ResetBlockTracking();
 	vtlb_ClearLoadStoreInfo();
 
-#ifndef TODOFIXME
 	xSetPtr(*recMem);
-
 	recPtr = xGetPtr();
-#endif
 
 	g_branch = 0;
 	g_resetEeScalingStats = true;
