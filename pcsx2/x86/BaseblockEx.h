@@ -19,8 +19,7 @@
 #include "../../common/Pcsx2Types.h"
 
 #include <cstring>
-
-#include <map> // used by BaseBlockEx
+#include <cstdlib>
 
 // Every potential jump point in the PS2's addressable memory has a BASEBLOCK
 // associated with it. So that means a BASEBLOCK for every 4 bytes of PS2
@@ -142,13 +141,105 @@ public:
 	}
 };
 
+// Maps a guest start PC to the set of host jump sites (u32* patch locations,
+// stored as uptr) that target it. Replaces std::multimap<u32, uptr>: the only
+// operations needed are insert-with-duplicates, "walk all jump sites for a
+// given PC", and clear. No ordering is required, and inserts arrive in
+// arbitrary PC order on a hot compile path, so a chained hash gives O(1)
+// amortized insert (a sorted array would be O(n) memmove per insert) while a
+// bucket walk serves the range query.
+//
+// Entries live in a single growable POD pool and are chained by index (not
+// pointer) so a realloc of the pool never invalidates the chains.
+class BlockLinkMap
+{
+	struct Entry
+	{
+		u32  pc;
+		uptr jumpptr;
+		s32  next; // pool index of next entry in this bucket, or -1
+	};
+
+	Entry* m_entries;
+	s32    m_count;
+	s32    m_capacity;
+	s32*   m_buckets;
+	u32    m_bucket_count; // power of two
+	u32    m_bucket_mask;
+
+	__fi u32 bucket_of(u32 pc) const
+	{
+		// startpc is 4-byte aligned; drop the low 2 bits before masking so
+		// adjacent block PCs spread across buckets.
+		return (pc >> 2) & m_bucket_mask;
+	}
+
+	void grow_entries(void)
+	{
+		s32 newcap = m_capacity ? m_capacity * 2 : 4096;
+		m_entries  = (Entry*)realloc(m_entries, newcap * sizeof(Entry));
+		m_capacity = newcap;
+	}
+
+public:
+	BlockLinkMap()
+		: m_entries(NULL)
+		, m_count(0)
+		, m_capacity(0)
+		, m_buckets(NULL)
+		, m_bucket_count(0)
+		, m_bucket_mask(0)
+	{
+		m_bucket_count = 0x10000; // 64k buckets, covers typical live-link counts
+		m_bucket_mask  = m_bucket_count - 1;
+		m_buckets      = (s32*)malloc(m_bucket_count * sizeof(s32));
+		memset(m_buckets, 0xFF, m_bucket_count * sizeof(s32)); // all -1
+	}
+
+	~BlockLinkMap()
+	{
+		free(m_entries);
+		free(m_buckets);
+	}
+
+	__fi void insert(u32 pc, uptr jumpptr)
+	{
+		if (m_count == m_capacity)
+			grow_entries();
+		const u32 b = bucket_of(pc);
+		Entry& e    = m_entries[m_count];
+		e.pc        = pc;
+		e.jumpptr   = jumpptr;
+		e.next      = m_buckets[b];
+		m_buckets[b] = m_count;
+		m_count++;
+	}
+
+	// Walks every jump site registered for pc and rewrites each one to a 32-bit
+	// rel32 displacement pointing at target_addr (target_addr - (site + 4)).
+	__fi void patch_links(u32 pc, uptr target_addr) const
+	{
+		s32 i = m_buckets[bucket_of(pc)];
+		while (i != -1)
+		{
+			const Entry& e = m_entries[i];
+			if (e.pc == pc)
+				*(u32*)e.jumpptr = (u32)(target_addr - (e.jumpptr + 4));
+			i = e.next;
+		}
+	}
+
+	__fi void clear(void)
+	{
+		m_count = 0;
+		memset(m_buckets, 0xFF, m_bucket_count * sizeof(s32));
+	}
+};
+
 class BaseBlocks
 {
 protected:
-	typedef std::multimap<u32, uptr>::iterator linkiter_t;
-
-	// switch to a hash map later?
-	std::multimap<u32, uptr> links;
+	BlockLinkMap links;
 	uptr recompiler;
 	BaseBlockArray blocks;
 
@@ -195,10 +286,7 @@ public:
 		int idx = first;
 		do
 		{
-			//u32 startpc = blocks[idx].startpc;
-			std::pair<linkiter_t, linkiter_t> range = links.equal_range(blocks[idx].startpc);
-			for (linkiter_t i = range.first; i != range.second; ++i)
-				*(u32*)i->second = recompiler - (i->second + 4);
+			links.patch_links(blocks[idx].startpc, recompiler);
 		} while (idx++ < last);
 
 		// TODO: remove links from this block?
