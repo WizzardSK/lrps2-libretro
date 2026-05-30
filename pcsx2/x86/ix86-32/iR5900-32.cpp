@@ -1889,8 +1889,13 @@ StartRecomp:
 					break;
 				}
 			}
-			// shifts
-			else if (_Opcode_ == 0 && _Funct_ <= 007)
+			// shifts (word: funct 000-007; doubleword-immediate:
+			// dsll/dsrl/dsra 070-073 and dsll32/dsrl32/dsra32 074-077).
+			// All use the rt -> rd def/use shape; the doubleword group is
+			// the 64-bit-width counterpart and is equally side-effect-free,
+			// so an idle loop that shifts its wait value with dsll32/dsrl32
+			// (which PS2 code does on 64-bit values) qualifies too.
+			else if (_Opcode_ == 0 && (_Funct_ <= 007 || (_Funct_ & 070) == 070))
 			{
 				if (loads & 1 << _Rt_)
 					loads |= 1 << _Rd_;
@@ -1918,8 +1923,10 @@ StartRecomp:
 					break;
 				}
 			}
-			// loads
-			else if ((_Opcode_ & 070) == 040 || (_Opcode_ & 076) == 032 || _Opcode_ == 067)
+			// loads (standard MIPS loads, plus lq 036 = the PS2 128-bit
+			// quad load: same rs->rt def/use shape, no side effects, and
+			// common in PS2 idle loops that poll a 128-bit-aligned flag).
+			else if ((_Opcode_ & 070) == 040 || (_Opcode_ & 076) == 032 || _Opcode_ == 067 || _Opcode_ == 036)
 			{
 				if (!(loads & 1 << _Rs_))
 					reads |= 1 << _Rs_;
