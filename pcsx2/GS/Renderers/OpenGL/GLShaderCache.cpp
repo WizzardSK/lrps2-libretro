@@ -22,8 +22,11 @@
 #include "ShaderCacheVersion.h"
 
 #include "common/Console.h"
-#include "common/MD5Digest.h"
 #include "common/Path.h"
+
+#define XXH_STATIC_LINKING_ONLY 1
+#define XXH_INLINE_ALL 1
+#include <xxhash.h>
 
 #include <file/file_path.h>
 
@@ -236,35 +239,17 @@ bool GLShaderCache::Recreate()
 GLShaderCache::CacheIndexKey GLShaderCache::GetCacheKey(const std::string_view& vertex_shader,
 		const std::string_view& fragment_shader)
 {
-	union ShaderHash
-	{
-		struct
-		{
-			u64 low;
-			u64 high;
-		};
-		u8 bytes[16];
-	};
+	XXH128_hash_t vertex_hash   = {};
+	XXH128_hash_t fragment_hash = {};
 
-	ShaderHash vertex_hash = {};
-	ShaderHash fragment_hash = {};
-
-	MD5Digest digest;
 	if (!vertex_shader.empty())
-	{
-		digest.Update(vertex_shader.data(), static_cast<u32>(vertex_shader.length()));
-		digest.Final(vertex_hash.bytes);
-	}
+		vertex_hash = XXH3_128bits(vertex_shader.data(), vertex_shader.length());
 
 	if (!fragment_shader.empty())
-	{
-		digest.Reset();
-		digest.Update(fragment_shader.data(), static_cast<u32>(fragment_shader.length()));
-		digest.Final(fragment_hash.bytes);
-	}
+		fragment_hash = XXH3_128bits(fragment_shader.data(), fragment_shader.length());
 
-	return CacheIndexKey{vertex_hash.low, vertex_hash.high, static_cast<u32>(vertex_shader.length()),
-		fragment_hash.low, fragment_hash.high, static_cast<u32>(fragment_shader.length())};
+	return CacheIndexKey{vertex_hash.low64, vertex_hash.high64, static_cast<u32>(vertex_shader.length()),
+		fragment_hash.low64, fragment_hash.high64, static_cast<u32>(fragment_shader.length())};
 }
 
 std::string GLShaderCache::GetIndexFileName() const

@@ -22,9 +22,12 @@
 
 #include "common/FileSystem.h"
 #include "common/Console.h"
-#include "common/MD5Digest.h"
 #include "common/Path.h"
 #include <array>
+
+#define XXH_STATIC_LINKING_ONLY 1
+#define XXH_INLINE_ALL 1
+#include <xxhash.h>
 
 #include <d3dcompiler.h>
 
@@ -243,46 +246,31 @@ std::string D3D11ShaderCache::GetCacheBaseFileName(D3D_FEATURE_LEVEL feature_lev
 D3D11ShaderCache::CacheIndexKey D3D11ShaderCache::GetCacheKey(D3D::ShaderType type, const std::string_view& shader_code,
 	const D3D_SHADER_MACRO* macros, const char* entry_point)
 {
-	// gcc rejects anonymous struct-inside-union at function scope (an
-	// MSVC extension).  Use a plain byte buffer and memcpy out the two
-	// u64s -- this also keeps the strict-aliasing rules happy.
-	u8 hash[16];
-	u64 hash_low, hash_high;
-
 	CacheIndexKey key = {};
 	key.shader_type = type;
 
-	MD5Digest digest;
-	digest.Update(shader_code.data(), static_cast<u32>(shader_code.length()));
-	digest.Final(hash);
-	std::memcpy(&hash_low,  &hash[0], sizeof(u64));
-	std::memcpy(&hash_high, &hash[8], sizeof(u64));
-	key.source_hash_low = hash_low;
-	key.source_hash_high = hash_high;
+	XXH128_hash_t h = XXH3_128bits(shader_code.data(), shader_code.length());
+	key.source_hash_low = h.low64;
+	key.source_hash_high = h.high64;
 	key.source_length = static_cast<u32>(shader_code.length());
 
 	if (macros)
 	{
-		digest.Reset();
+		XXH3_state_t state;
+		XXH3_128bits_reset(&state);
 		for (const D3D_SHADER_MACRO* macro = macros; macro->Name != nullptr; macro++)
 		{
-			digest.Update(macro->Name, std::strlen(macro->Name));
-			digest.Update(macro->Definition, std::strlen(macro->Definition));
+			XXH3_128bits_update(&state, macro->Name, std::strlen(macro->Name));
+			XXH3_128bits_update(&state, macro->Definition, std::strlen(macro->Definition));
 		}
-		digest.Final(hash);
-		std::memcpy(&hash_low,  &hash[0], sizeof(u64));
-		std::memcpy(&hash_high, &hash[8], sizeof(u64));
-		key.macro_hash_low = hash_low;
-		key.macro_hash_high = hash_high;
+		h = XXH3_128bits_digest(&state);
+		key.macro_hash_low = h.low64;
+		key.macro_hash_high = h.high64;
 	}
 
-	digest.Reset();
-	digest.Update(entry_point, static_cast<u32>(std::strlen(entry_point)));
-	digest.Final(hash);
-	std::memcpy(&hash_low,  &hash[0], sizeof(u64));
-	std::memcpy(&hash_high, &hash[8], sizeof(u64));
-	key.entry_point_low = hash_low;
-	key.entry_point_high = hash_high;
+	h = XXH3_128bits(entry_point, std::strlen(entry_point));
+	key.entry_point_low = h.low64;
+	key.entry_point_high = h.high64;
 
 	return key;
 }

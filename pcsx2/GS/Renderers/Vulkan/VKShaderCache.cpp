@@ -26,9 +26,12 @@
 
 #include "common/Console.h"
 #include "common/FileSystem.h"
-#include "common/MD5Digest.h"
 #include "common/Path.h"
 #include "common/StringUtil.h"
+
+#define XXH_STATIC_LINKING_ONLY 1
+#define XXH_INLINE_ALL 1
+#include <xxhash.h>
 
 #include <cstring>
 #include <memory>
@@ -529,22 +532,9 @@ std::string VKShaderCache::GetPipelineCacheBaseFileName(bool debug)
 
 VKShaderCache::CacheIndexKey VKShaderCache::GetCacheKey(ShaderType type, const std::string_view& shader_code)
 {
-	union HashParts
-	{
-		struct
-		{
-			u64 hash_low;
-			u64 hash_high;
-		};
-		u8 hash[16];
-	};
-	HashParts h;
+	const XXH128_hash_t h = XXH3_128bits(shader_code.data(), shader_code.length());
 
-	MD5Digest digest;
-	digest.Update(shader_code.data(), static_cast<u32>(shader_code.length()));
-	digest.Final(h.hash);
-
-	return CacheIndexKey{h.hash_low, h.hash_high, static_cast<u32>(shader_code.length()), type};
+	return CacheIndexKey{h.low64, h.high64, static_cast<u32>(shader_code.length()), type};
 }
 
 std::optional<SPIRVCodeVector> VKShaderCache::GetShaderSPV(

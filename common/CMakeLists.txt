@@ -14,7 +14,6 @@ target_sources(common PRIVATE
 	FastJmp.cpp
 	FileSystem.cpp
 	MemorySettingsInterface.cpp
-	MD5Digest.cpp
 	Semaphore.cpp
 	SettingsWrapper.cpp
 	StringUtil.cpp
@@ -43,7 +42,6 @@ target_sources(common PRIVATE
 	General.h
 	HashCombine.h
 	MemorySettingsInterface.h
-	MD5Digest.h
 	Path.h
 	RedtapeWilCom.h
 	RedtapeWindows.h

@@ -126,7 +126,6 @@ SOURCES_CXX += \
 	$(COMMON_DIR)/FastJmp.cpp \
 	$(COMMON_DIR)/FileSystem.cpp \
 	$(COMMON_DIR)/HostSys.cpp \
-	$(COMMON_DIR)/MD5Digest.cpp \
 	$(COMMON_DIR)/MemorySettingsInterface.cpp \
 	$(COMMON_DIR)/Semaphore.cpp \
 	$(COMMON_DIR)/SettingsWrapper.cpp \
