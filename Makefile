@@ -594,11 +594,17 @@ endif
 # For each (source, tier) pair, define an explicit object + rule:
 #   <src-without-.cpp>.<tier>.o : <src>
 # compiled with the tier flags and the unshared-compilation defines.
+#
+# The tier objects are the UNSHARED half of the multi-isa build, so they must
+# NOT see -DMULTI_ISA_SHARED_COMPILATION (it lives in the global CXXFLAGS for
+# the shared TUs). MultiISA.h treats the two defines as mutually exclusive;
+# having both poisons MULTI_ISA_UNSHARED_START with a static_assert. Strip the
+# shared define from CXXFLAGS for the per-tier compile.
 # NOTE: define-block bodies must start at column 0; the recipe line is a TAB.
 define MULTI_ISA_template
 $(1:.cpp=.$(2).o): MULTI_ISA_OBJ_FLAGS := $(MULTI_ISA_FLAGS_$(2)) -DMULTI_ISA_UNSHARED_COMPILATION=isa_$(2) -DMULTI_ISA_IS_FIRST=$(if $(filter $(2),$(MULTI_ISA_FIRST_TIER)),1,0)
 $(1:.cpp=.$(2).o): $(1)
-	$$(CXX) -c $$(OBJOUT)$$@ $$< $$(CXXFLAGS) $$(MULTI_ISA_OBJ_FLAGS)
+	$$(CXX) -c $$(OBJOUT)$$@ $$< $$(filter-out -DMULTI_ISA_SHARED_COMPILATION,$$(CXXFLAGS)) $$(MULTI_ISA_OBJ_FLAGS)
 MULTI_ISA_OBJECTS += $(1:.cpp=.$(2).o)
 endef
 
