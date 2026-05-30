@@ -84,7 +84,13 @@ mark_as_advanced(CMAKE_C_FLAGS_DEVEL CMAKE_CXX_FLAGS_DEVEL CMAKE_LINKER_FLAGS_DE
 #-------------------------------------------------------------------------------
 # Select the architecture
 #-------------------------------------------------------------------------------
-option(DISABLE_ADVANCE_SIMD "Disable advance use of SIMD (SSE2+ & AVX)" OFF)
+# DISABLE_ADVANCE_SIMD=ON builds the GS/IPU/SPU2 MultiISA sources three times
+# (sse4/avx/avx2) and selects the best path per-CPU at runtime via cpuinfo,
+# instead of baking a single advanced-SIMD level into the whole build. The
+# sse4 tier remains the fallback on CPUs without AVX/AVX2, so this preserves
+# support for SSE4-or-earlier hosts. Defaulted ON to match the Makefile's
+# ENABLE_MULTI_ISA=1 default; set OFF for a single-ISA build.
+option(DISABLE_ADVANCE_SIMD "Disable advance use of SIMD (SSE2+ & AVX)" ON)
 
 # Print if we are cross compiling.
 if(CMAKE_CROSSCOMPILING)

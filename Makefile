@@ -505,21 +505,22 @@ include Makefile.common
 .DEFAULT_GOAL := all
 
 # ---------------------------------------------------------------------------
-# Multi-ISA runtime SIMD dispatch (opt-in; default OFF).
+# Multi-ISA runtime SIMD dispatch (default ON; set ENABLE_MULTI_ISA=0 to opt
+# out and get the single-ISA SSE4.1 build).
 #
-# When OFF (default), the GS/IPU MultiISA sources are compiled once at the
-# SSE4.1 baseline and MultiISA.h resolves CURRENT_ISA to isa_native. This is
-# byte-identical to the historical core build: the SSE4.1 floor is preserved
-# and no AVX/AVX2 code is emitted or executed.
+# When ON (default), the unshared MultiISA sources are compiled three times
+# (sse4/avx/avx2) into separate objects and all tiers are linked; cpuinfo
+# selects the best path the host CPU supports at runtime (MULTI_ISA_SELECT in
+# MultiISA.h). The sse4 tier remains and is the path chosen on any CPU lacking
+# AVX/AVX2, so this does NOT regress support for SSE4-or-earlier hosts -- those
+# CPUs run exactly the SSE4.1 code they did before.
 #
-# When ON, the unshared MultiISA sources are compiled three times (sse4/avx/
-# avx2) into separate objects and all tiers are linked; cpuinfo selects the
-# best path the host CPU supports at runtime (MULTI_ISA_SELECT in MultiISA.h).
-# The sse4 tier remains and is the path chosen on any CPU lacking AVX/AVX2, so
-# enabling this does NOT regress support for SSE4-or-earlier hosts.
+# When OFF (ENABLE_MULTI_ISA=0), the GS/IPU/SPU2 MultiISA sources are compiled
+# once at the SSE4.1 baseline and MultiISA.h resolves CURRENT_ISA to
+# isa_native -- byte-identical to the historical single-ISA core build.
 #
 # Declared before first use below.
-ENABLE_MULTI_ISA ?= 0
+ENABLE_MULTI_ISA ?= 1
 
 # ---------------------------------------------------------------------------
 # Multi-ISA tier flags. Defined here, before the object generation below
