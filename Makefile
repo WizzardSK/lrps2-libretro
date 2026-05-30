@@ -497,6 +497,13 @@ endif
 
 include Makefile.common
 
+# The multi-ISA block below uses $(eval) to generate explicit per-tier object
+# rules. In make, the first explicit target seen becomes the default goal if
+# none is set yet -- so a generated rule like GSBlock.sse4.o would otherwise
+# hijack the default goal, making a bare `make` build only that one object.
+# Pin the default goal to `all` (defined later) before any rule generation.
+.DEFAULT_GOAL := all
+
 # ---------------------------------------------------------------------------
 # Multi-ISA runtime SIMD dispatch (opt-in; default OFF).
 #
