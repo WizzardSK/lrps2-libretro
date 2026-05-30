@@ -449,8 +449,7 @@ s32 FileMemoryCard::Save(uint slot, const u8* src, u32 adr, int size)
 	{
 		if (static_cast<int>(m_currentdata.size()) < size)
 			m_currentdata.resize(size);
-		for (int i = 0; i < size; i++)
-			m_currentdata[i] = src[i];
+		memcpy(m_currentdata.data(), src, size);
 	}
 	else
 	{
