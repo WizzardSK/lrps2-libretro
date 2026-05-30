@@ -452,7 +452,7 @@ else
    IS_WIN_MINGW = 1
    SHARED    := -shared -Wl,--no-undefined -Wl,--version-script=link.T
    ifeq ($(GCSCAN),1)
-      SHARED += -Wl,--gc-sections -Wl,--print-gc-sections
+      SHARED += -Wl,--gc-sections -Wl,--print-gc-sections -Wl,-Map=gcscan.map
    endif
    HAVE_CDROM = 1
 
