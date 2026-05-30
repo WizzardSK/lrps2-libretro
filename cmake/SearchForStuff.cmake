@@ -53,7 +53,7 @@ if((GCC_VERSION VERSION_EQUAL "9.0" OR GCC_VERSION VERSION_GREATER "9.0") AND GC
 	This text being in a compile log in an open issue may cause it to be closed.")
 endif()
 
-find_optional_system_library(ryml 3rdparty/rapidyaml/rapidyaml 0.4.0)
+find_optional_system_library(ryml 3rdparty/rapidyaml/rapidyaml 0.11.1)
 find_optional_system_library(zstd 3rdparty/zstd 1.4.5)
 if (${zstd_TYPE} STREQUAL System)
 	alias_library(Zstd::Zstd zstd::libzstd_shared)

@@ -614,9 +614,13 @@ SOURCES_C += \
 SOURCES_CXX += \
 	$(DEPS_DIR)/rapidyaml/rapidyaml/src/c4/yml/common.cpp \
 	$(DEPS_DIR)/rapidyaml/rapidyaml/src/c4/yml/node.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/src/c4/yml/node_type.cpp \
 	$(DEPS_DIR)/rapidyaml/rapidyaml/src/c4/yml/parse.cpp \
 	$(DEPS_DIR)/rapidyaml/rapidyaml/src/c4/yml/preprocess.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/src/c4/yml/reference_resolver.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/src/c4/yml/tag.cpp \
 	$(DEPS_DIR)/rapidyaml/rapidyaml/src/c4/yml/tree.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/src/c4/yml/version.cpp \
 	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/base64.cpp \
 	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/char_traits.cpp \
 	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/error.cpp \
@@ -624,7 +628,8 @@ SOURCES_CXX += \
 	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/language.cpp \
 	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/memory_resource.cpp \
 	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/memory_util.cpp \
-	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/utf.cpp
+	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/utf.cpp \
+	$(DEPS_DIR)/rapidyaml/rapidyaml/ext/c4core/src/c4/version.cpp
 
 # libzip - uses pre-generated zip_err_str.c and a hand-written portable
 # libzip_config.h (#ifdef _WIN32-aware) from 3rdparty/libzip/private/.
