@@ -119,10 +119,20 @@ static int mg_BIToffset(u8* buffer)
 	for (i = 0; i < count; i++)
 		ofs += 0x10;
 
+	// ofs is used to index the 65536-byte mg_buffer below (buffer[ofs] and
+	// the returned ofs+0x20). Guard every step so crafted MG data cannot
+	// push the offset out of bounds.
 	if (*(u16*)&buffer[0x18] & 1)
+	{
+		if (ofs < 0 || ofs >= 65536)
+			return -1;
 		ofs += buffer[ofs];
+	}
 	if ((*(u16*)&buffer[0x18] & 0xF000) == 0)
 		ofs += 8;
+
+	if (ofs < 0 || (ofs + 0x20) > 65536)
+		return -1;
 
 	return ofs + 0x20;
 }
@@ -2554,7 +2564,10 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 
 				bit_ofs = mg_BIToffset(&cdvd.mg_buffer[0]);
 
-				if (bit_ofs < 0)
+				/* bit_ofs is derived from guest-controlled MG data. It indexes
+				 * mg_buffer at [bit_ofs - 0x20 .. bit_ofs + 7]; bound it so a
+				 * crafted buffer cannot under/overflow mg_buffer. */
+				if (bit_ofs < 0x20 || (bit_ofs + 8) > (int)sizeof(cdvd.mg_buffer))
 				{
 					cdvd.SCMDResultBuff[0] = 0x80;
 					break;
@@ -2589,7 +2602,29 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 				cdvd.SCMDResultPos  = 0;
 				cdvd.sDataIn       &= ~0x40;
 				const int bit_ofs = mg_BIToffset(&cdvd.mg_buffer[0]);
-				memcpy(&cdvd.mg_buffer[0], &cdvd.mg_buffer[bit_ofs], static_cast<size_t>(8 + 16 * static_cast<int>(cdvd.mg_buffer[bit_ofs + 4])));
+
+				/* bit_ofs and the copy length are derived from the
+				 * guest-controlled MG buffer; validate both against the
+				 * buffer bounds before copying so a crafted buffer cannot
+				 * trigger an out-of-bounds read (host memory disclosure). */
+				if (bit_ofs < 0 || (bit_ofs + 4) >= (int)sizeof(cdvd.mg_buffer))
+				{
+					cdvd.SCMDResultBuff[0] = 0x80;
+					cdvd.SCMDResultBuff[1] = 0;
+					cdvd.SCMDResultBuff[2] = 0;
+					break;
+				}
+
+				const int copy_len = 8 + 16 * static_cast<int>(cdvd.mg_buffer[bit_ofs + 4]);
+				if (copy_len < 0 || (bit_ofs + copy_len) > (int)sizeof(cdvd.mg_buffer))
+				{
+					cdvd.SCMDResultBuff[0] = 0x80;
+					cdvd.SCMDResultBuff[1] = 0;
+					cdvd.SCMDResultBuff[2] = 0;
+					break;
+				}
+
+				memcpy(&cdvd.mg_buffer[0], &cdvd.mg_buffer[bit_ofs], static_cast<size_t>(copy_len));
 
 				cdvd.mg_maxsize = 0; // don't allow any write
 				cdvd.mg_size = 8 + 16 * cdvd.mg_buffer[4]; //new offset, i just moved the data
