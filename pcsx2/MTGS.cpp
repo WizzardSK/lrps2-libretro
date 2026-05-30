@@ -30,7 +30,7 @@
 
 // Mask to apply to ring buffer indices to wrap the pointer from end to
 // start (the wrapping is what makes it a ringbuffer, yo!)
-static const unsigned int RINGBUFFERMASK = RINGBUFFERSIZE - 1;
+static const unsigned int RINGBUFFERMASK = MTGS_RINGBUFFERSIZE - 1;
 
 union PacketTagType
 {
@@ -51,7 +51,7 @@ union PacketTagType
 //  MTGS Threaded Class Implementation
 // =====================================================================================================
 
-alignas(__cachelinesize) static u128 m_Ring[RINGBUFFERSIZE];
+alignas(__cachelinesize) static u128 m_Ring[MTGS_RINGBUFFERSIZE];
 
 extern struct retro_hw_render_callback hw_render;
 

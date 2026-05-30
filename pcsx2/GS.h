@@ -275,7 +275,23 @@ extern std::atomic<bool> s_GSRegistersWritten;
 // A value of 19 is a 8meg ring buffer.  18 would be 4 megs, and 20 would be 16 megs.
 // Default was 2mb, but some games with lots of MTGS activity want 8mb to run fast (rama)
 // size of the ringbuffer in simd128's. RingBufferSize = 1 << RINGBUFFERSIZEFACTOR
+//
+// NB: this constant now only sizes Gif_Path_MTVU::gsPackQueue (RINGBUFFERSIZE/2,
+// instantiated per GIF path). The MTGS command ring uses MTGS_RINGBUFFERSIZE
+// below, which is sized for the libretro topology where PostVsyncStart pacing
+// keeps occupancy far lower than the upstream multithreaded GS thread case.
 #define RINGBUFFERSIZE 524288
+
+// MTGS command-ring size in u128 qwords (must be a power of two).
+//
+// The upstream 8 MiB ring is sized for a free-running GS thread that can lag
+// the EE by many frames. In the libretro topology MTGS::PostVsyncStart blocks
+// the EE on WaitGS every vsync, so the ring never accumulates more than roughly
+// a frame of packets. Measured peak occupancy on real content: ~22k qwords in
+// the worst case (Shadow of the Colossus colossus fights); Tekken Tag, DMC3 and
+// DoA2 all stayed under ~3.1k. 65536 (1 MiB) gives ~3x headroom over the worst
+// observed peak while reclaiming 7 MiB of static storage vs the old 8 MiB ring.
+#define MTGS_RINGBUFFERSIZE 65536
 
 // FIXME: These belong in common with other memcpy tools.  Will move them there later if no one
 // else beats me to it.  --air
