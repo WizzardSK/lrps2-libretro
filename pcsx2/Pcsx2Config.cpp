@@ -749,8 +749,47 @@ void Pcsx2Config::DEV9Options::LoadSave(SettingsWrapper& wrap)
 
 void Pcsx2Config::DEV9Options::LoadIPHelper(u8* field, const std::string& setting)
 {
-	if (4 == sscanf(setting.c_str(), "%hhu.%hhu.%hhu.%hhu", &field[0], &field[1], &field[2], &field[3]))
-		return;
+	const char* p = setting.c_str();
+	u8          octets[4];
+	int         i;
+
+	for (i = 0; i < 4; i++)
+	{
+		unsigned int v      = 0;
+		int          digits = 0;
+
+		while (*p >= '0' && *p <= '9')
+		{
+			v = v * 10 + (unsigned int)(*p - '0');
+			if (v > 255)
+				goto fail;
+			p++;
+			digits++;
+		}
+
+		if (digits == 0)
+			goto fail;
+
+		octets[i] = (u8)v;
+
+		if (i < 3)
+		{
+			if (*p != '.')
+				goto fail;
+			p++;
+		}
+	}
+
+	if (*p != '\0')
+		goto fail;
+
+	field[0] = octets[0];
+	field[1] = octets[1];
+	field[2] = octets[2];
+	field[3] = octets[3];
+	return;
+
+fail:
 	std::fill(field, field + 4, 0);
 }
 std::string Pcsx2Config::DEV9Options::SaveIPHelper(u8* field)
