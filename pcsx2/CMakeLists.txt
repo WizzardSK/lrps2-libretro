@@ -72,6 +72,7 @@ set(pcsx2Sources
 	Counters.cpp
 	Dmac.cpp
 	GameDatabase.cpp
+	GameDatabaseBuiltin.cpp
 	Elfheader.cpp
 	FW.cpp
 	FiFo.cpp

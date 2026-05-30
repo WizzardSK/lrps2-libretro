@@ -747,6 +747,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "pcsx2_use_external_gameindex",
+      "Use External GameIndex Database",
+      NULL,
+      "Load the game-compatibility database from <system>/resources/GameIndex.yaml if present, falling back to the built-in database when it is missing. When disabled, always use the database built into the core.",
+      NULL,
+      NULL,
+      {
+         { "disabled", NULL },
+         { "enabled", NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "pcsx2_framebuffer_conversion",
       "HW Hacks > Framebuffer Conversion",
       "Framebuffer Conversion",

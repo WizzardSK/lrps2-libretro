@@ -144,6 +144,11 @@ static bool setting_framebuffer_conversion     = false;
 static bool setting_disable_partial_invalid    = false;
 static bool setting_gpu_palette_conversion     = false;
 static bool setting_preload_frame_data         = false;
+static bool setting_use_external_gameindex     = false;
+
+// Built-in GameIndex.yaml database, embedded in the core (GameDatabaseBuiltin.cpp).
+extern const unsigned char g_gameDatabaseBuiltin[];
+extern const size_t g_gameDatabaseBuiltinSize;
 static bool setting_align_sprite               = false;
 static bool setting_merge_sprite               = false;
 static bool setting_unscaled_palette_draw      = false;
@@ -849,6 +854,10 @@ static void check_variables(bool first_run)
 					updated = true;
 				}
 			}
+
+			var.key = "pcsx2_use_external_gameindex";
+			if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+				setting_use_external_gameindex = !strcmp(var.value, "enabled");
 
 			var.key = "pcsx2_framebuffer_conversion";
 			if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -2471,6 +2480,29 @@ std::optional<std::vector<u8>> Host::ReadResourceFile(const char* filename)
 
 std::optional<std::string> Host::ReadResourceFileToString(const char* filename)
 {
+	// GameIndex.yaml (the game-compatibility database) is embedded in the core
+	// so games work without an external resources file. Behaviour:
+	//   "use external gameindex database" disabled (default): always built-in.
+	//   enabled: try <systemdir>/resources/GameIndex.yaml, fall back to built-in
+	//            if it is missing.
+	// This is scoped to GameIndex.yaml; all other resources use the normal
+	// external-only path below.
+	if (!strcmp(filename, "GameIndex.yaml"))
+	{
+		if (setting_use_external_gameindex)
+		{
+			const std::string path(Path::Combine(EmuFolders::Resources, filename));
+			std::optional<std::string> ext(FileSystem::ReadFileToString(path.c_str()));
+			if (ext.has_value())
+				return ext;
+			log_cb(RETRO_LOG_INFO,
+				"External GameIndex.yaml not found at '%s', using built-in database.\n",
+				path.c_str());
+		}
+		return std::string(reinterpret_cast<const char*>(g_gameDatabaseBuiltin),
+			g_gameDatabaseBuiltinSize);
+	}
+
 	const std::string path(Path::Combine(EmuFolders::Resources, filename));
 	std::optional<std::string> ret(FileSystem::ReadFileToString(path.c_str()));
 	if (!ret.has_value())
