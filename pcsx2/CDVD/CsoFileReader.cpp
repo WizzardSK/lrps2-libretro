@@ -36,27 +36,6 @@ struct CsoHeader
 	u8 reserved[2];
 };
 
-// Simple pointer validation helper
-static bool IsValidPointer(const void* ptr)
-{
-	// Basic NULL check
-	if (!ptr)
-		return false;
-	
-	// Check if pointer is reasonably aligned
-	// Most valid pointers should be at least 4-byte aligned
-	if (reinterpret_cast<uintptr_t>(ptr) & 0x3)
-		return false;
-	
-	// Check if pointer is in a reasonable range
-	// This is a heuristic and might not catch all cases
-	uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
-	if (addr < 0x1000 || addr > 0x7FFFFFFFFFFF)
-		return false;
-	
-	return true;
-}
-
 static const u32 CSO_READ_BUFFER_SIZE = 256 * 1024;
 
 CsoFileReader::CsoFileReader()
@@ -120,31 +99,15 @@ bool CsoFileReader::Open2(std::string fileName)
 {
 	Close2();
 	m_filename = std::move(fileName);
-	
-	// Open the file and validate the result
 	m_src = FileSystem::OpenFile(m_filename.c_str(), "rb");
-	
-	// Additional validation: ensure m_src is either NULL or a valid pointer
-	// If it's not NULL but also not a reasonable pointer, treat it as NULL
-	if (m_src && !IsValidPointer(m_src))
-	{
-		// Invalid pointer returned by OpenFile, treat as failure
-		m_src = NULL;
-	}
 
 	bool success = false;
 	if (m_src && ReadFileHeader() && InitializeBuffers())
-	{
 		success = true;
-	}
 
 	if (!success)
 	{
-		// Ensure m_src is valid before calling Close2()
-		if (m_src)
-		{
-			Close2();
-		}
+		Close2();
 		return false;
 	}
 	return true;
@@ -228,18 +191,8 @@ void CsoFileReader::Close2()
 
 	if (m_src)
 	{
-		// Use a safe approach to close the file handle
-		// that doesn't require accessing internal structure members
-		RFILE* src = m_src;
+		rfclose(m_src);
 		m_src = NULL;
-		
-		// Try to close the file, but handle potential errors gracefully
-		if (src)
-		{
-			int closeResult = rfclose(src);
-			(void)closeResult; // Silence unused variable warning
-			// If rfclose fails, it will handle the error internally
-		}
 	}
 	if (m_z_stream)
 	{

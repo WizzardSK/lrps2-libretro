@@ -497,35 +497,19 @@ int filestream_error(RFILE *stream)
 
 int filestream_close(RFILE *stream)
 {
-	// Basic NULL check for stream pointer
-	if (!stream)
-	{
-		return EOF;
-	}
+   int output;
+   struct retro_vfs_file_handle* fp = stream->hfile;
 
-	// Try to close the file handle, but be prepared for failures
-	// If the stream is corrupted, this might still crash, but we've
-	// added safety checks at higher levels to prevent this
-	int output;
-	struct retro_vfs_file_handle* fp = stream->hfile;
+   if (filestream_close_cb)
+      output = filestream_close_cb(fp);
+   else
+      output = retro_vfs_file_close_impl(
+            (libretro_vfs_implementation_file*)fp);
 
-	// Additional safety check for the file handle
-	if (!fp)
-	{
-		free(stream);
-		return EOF;
-	}
+   if (output == 0)
+      free(stream);
 
-	if (filestream_close_cb)
-		output = filestream_close_cb(fp);
-	else
-		output = retro_vfs_file_close_impl(
-				(libretro_vfs_implementation_file*)fp);
-
-	if (output == 0)
-		free(stream);
-
-	return output;
+   return output;
 }
 
 int64_t filestream_read_file(const char *path, void **buf, int64_t *len)
