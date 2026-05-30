@@ -497,6 +497,111 @@ endif
 
 include Makefile.common
 
+# ---------------------------------------------------------------------------
+# Multi-ISA runtime SIMD dispatch (opt-in; default OFF).
+#
+# When OFF (default), the GS/IPU MultiISA sources are compiled once at the
+# SSE4.1 baseline and MultiISA.h resolves CURRENT_ISA to isa_native. This is
+# byte-identical to the historical core build: the SSE4.1 floor is preserved
+# and no AVX/AVX2 code is emitted or executed.
+#
+# When ON, the unshared MultiISA sources are compiled three times (sse4/avx/
+# avx2) into separate objects and all tiers are linked; cpuinfo selects the
+# best path the host CPU supports at runtime (MULTI_ISA_SELECT in MultiISA.h).
+# The sse4 tier remains and is the path chosen on any CPU lacking AVX/AVX2, so
+# enabling this does NOT regress support for SSE4-or-earlier hosts.
+#
+# Declared before first use below.
+ENABLE_MULTI_ISA ?= 0
+
+# ---------------------------------------------------------------------------
+# Multi-ISA tier flags (GCC/clang). Defined here, before the object
+# generation below consumes them. Feature flags rather than -march so the
+# compiler can still inline shared helpers across tiers (per cmake). MSVC/
+# MinGW tier maps are added in a later commit.
+ifeq ($(IS_X86),1)
+ifeq ($(ENABLE_MULTI_ISA),1)
+   MULTI_ISA_FLAGS_sse4 := -msse4.1
+   MULTI_ISA_FLAGS_avx  := -msse4.1 -mavx
+   MULTI_ISA_FLAGS_avx2 := -msse4.1 -mavx -mavx2 -mbmi -mbmi2 -mfma
+   # Tiers in oldest->newest order. Link/archive order MUST follow this so the
+   # linker resolves shared inline (ODR-duplicated) symbols to the SSE4-safe
+   # copy; see the ordering note where tier objects are archived.
+   MULTI_ISA_TIERS := sse4 avx avx2
+endif
+endif
+
+# ---------------------------------------------------------------------------
+# Multi-ISA object generation (only when ENABLE_MULTI_ISA=1 on x86).
+#
+# The "unshared" GS/IPU sources contain the SIMD-templated code that
+# MultiISA.h splits into per-ISA namespaces. When multi-ISA is enabled they
+# must be compiled once per tier (sse4/avx/avx2) with that tier's feature
+# flags and MULTI_ISA_UNSHARED_COMPILATION=isa_<tier>, producing distinct
+# objects (e.g. GSRasterizer.sse4.o). Every other TU is compiled once as the
+# "shared" build with MULTI_ISA_SHARED_COMPILATION defined.
+#
+# When the switch is OFF this whole block is skipped: the unshared files stay
+# in SOURCES_CXX and are built once at the SSE4.1 baseline (CURRENT_ISA ==
+# isa_native), exactly as before.
+MULTI_ISA_UNSHARED_SRC := \
+	$(LRPS2_DIR)/GS/GSBlock.cpp \
+	$(LRPS2_DIR)/GS/GSLocalMemoryMultiISA.cpp \
+	$(LRPS2_DIR)/GS/GSXXH.cpp \
+	$(LRPS2_DIR)/GS/Renderers/Common/GSVertexTraceFMM.cpp \
+	$(LRPS2_DIR)/GS/Renderers/HW/GSRendererHWMultiISA.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSDrawScanline.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSDrawScanlineCodeGenerator.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSDrawScanlineCodeGenerator.all.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSRasterizer.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSRendererSW.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSSetupPrimCodeGenerator.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSSetupPrimCodeGenerator.all.cpp \
+	$(LRPS2_DIR)/IPU/IPU_MultiISA.cpp \
+	$(LRPS2_DIR)/IPU/IPUdither.cpp \
+	$(LRPS2_DIR)/IPU/yuv2rgb.cpp
+
+ifeq ($(IS_X86),1)
+ifeq ($(ENABLE_MULTI_ISA),1)
+   # The shared build (everything that stays in SOURCES_CXX) needs to know it
+   # is the shared half of a multi-isa build.
+   CXXFLAGS += -DMULTI_ISA_SHARED_COMPILATION
+
+   # Pull the unshared files out of the normal (single-compile) source list;
+   # they are built per-tier below instead.
+   SOURCES_CXX := $(filter-out $(MULTI_ISA_UNSHARED_SRC),$(SOURCES_CXX))
+
+   # First tier in MULTI_ISA_TIERS is the "is-first" one (drives
+   # MULTI_ISA_IS_FIRST / MULTI_ISA_COMPILE_ONCE so compile-once globals are
+   # emitted exactly once, in the sse4 tier).
+   MULTI_ISA_FIRST_TIER := $(firstword $(MULTI_ISA_TIERS))
+
+   MULTI_ISA_OBJECTS :=
+endif
+endif
+
+# For each (source, tier) pair, define an explicit object + rule:
+#   <src-without-.cpp>.<tier>.o : <src>
+# compiled with the tier flags and the unshared-compilation defines.
+# NOTE: define-block bodies must start at column 0; the recipe line is a TAB.
+define MULTI_ISA_template
+$(1:.cpp=.$(2).o): MULTI_ISA_OBJ_FLAGS := $(MULTI_ISA_FLAGS_$(2)) -DMULTI_ISA_UNSHARED_COMPILATION=isa_$(2) -DMULTI_ISA_IS_FIRST=$(if $(filter $(2),$(MULTI_ISA_FIRST_TIER)),1,0)
+$(1:.cpp=.$(2).o): $(1)
+	$$(CXX) -c $$(OBJOUT)$$@ $$< $$(CXXFLAGS) $$(MULTI_ISA_OBJ_FLAGS)
+MULTI_ISA_OBJECTS += $(1:.cpp=.$(2).o)
+endef
+
+ifeq ($(IS_X86),1)
+ifeq ($(ENABLE_MULTI_ISA),1)
+   $(foreach src,$(MULTI_ISA_UNSHARED_SRC),\
+     $(foreach tier,$(MULTI_ISA_TIERS),\
+       $(eval $(call MULTI_ISA_template,$(src),$(tier)))))
+endif
+endif
+
+
+
+
 WARNINGS := -Wall \
             -Wno-sign-compare \
             -Wno-unused-variable \
@@ -530,7 +635,7 @@ ifeq ($(NO_GCC),1)
    WARNINGS :=
 endif
 
-OBJECTS := $(SOURCES_CXX:.cpp=.o) $(SOURCES_C:.c=.o) $(SOURCES_ASM:.S=.o)
+OBJECTS := $(SOURCES_CXX:.cpp=.o) $(SOURCES_C:.c=.o) $(SOURCES_ASM:.S=.o) $(MULTI_ISA_OBJECTS)
 DEPS    := $(SOURCES_CXX:.cpp=.d) $(SOURCES_C:.c=.d)
 
 all: $(TARGET)
@@ -590,40 +695,6 @@ endif
 ifeq ($(IS_X86),1)
    CFLAGS   += -msse -msse2 -msse4.1 -mfxsr
    CXXFLAGS += -msse -msse2 -msse4.1 -mfxsr -msse3
-endif
-
-# ---------------------------------------------------------------------------
-# Multi-ISA runtime SIMD dispatch (opt-in; default OFF).
-#
-# When OFF (default), the GS/IPU MultiISA sources are compiled once at the
-# SSE4.1 baseline above and MultiISA.h resolves CURRENT_ISA to isa_native.
-# This is byte-identical to the historical core build: the SSE4.1 floor is
-# preserved and no AVX/AVX2 code is emitted or executed.
-#
-# When ON, the unshared MultiISA sources are compiled three times (sse4/avx/
-# avx2) into separate objects and all tiers are linked; cpuinfo selects the
-# best path the host CPU supports at runtime (MULTI_ISA_SELECT in MultiISA.h).
-# The sse4 tier remains and is the path chosen on any CPU lacking AVX/AVX2, so
-# enabling this does NOT regress support for SSE4-or-earlier hosts.
-#
-# Only meaningful on x86. The per-tier flag maps and object generation are
-# wired in subsequent commits; this commit only introduces the switch and the
-# tier-flag variables, and intentionally changes nothing while OFF.
-ENABLE_MULTI_ISA ?= 0
-
-ifeq ($(IS_X86),1)
-ifeq ($(ENABLE_MULTI_ISA),1)
-   # Per-tier compile flags (GCC/clang). Feature flags rather than -march so
-   # the compiler can still inline shared helpers across tiers (per cmake).
-   # MSVC/MinGW tier maps are added in a later commit.
-   MULTI_ISA_FLAGS_sse4 := -msse4.1
-   MULTI_ISA_FLAGS_avx  := -msse4.1 -mavx
-   MULTI_ISA_FLAGS_avx2 := -msse4.1 -mavx -mavx2 -mbmi -mbmi2 -mfma
-   # Tiers in oldest->newest order. Link/archive order MUST follow this so the
-   # linker resolves shared inline (ODR-duplicated) symbols to the SSE4-safe
-   # copy; see the ordering note where tier objects are archived.
-   MULTI_ISA_TIERS := sse4 avx avx2
-endif
 endif
 
 LDFLAGS += $(fpic) $(SHARED)
