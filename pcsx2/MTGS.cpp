@@ -18,6 +18,7 @@
 #include <atomic>
 #include <cstring>
 #include <list>
+#include <thread>
 
 #include <libretro.h>
 
@@ -325,10 +326,19 @@ void MTGS::WaitGS(bool isMTVU)
 		{
 			for (;;)
 			{
+				// Rendezvous with MainLoop: lock() blocks while MTGS holds
+				// the mutex (actively draining) and returns once MTGS parks,
+				// throttling this poll of GetPendingGSPackets(). When MTGS is
+				// parked the lock is uncontended, so without a yield this
+				// loop pins a core spinning on the packet count until MTGS
+				// consumes a path-1 packet. yield() hands the core to MTGS/EE
+				// instead. Protocol (lock rendezvous + exit condition) is
+				// unchanged; this only affects scheduling.
 				s_mtvu_handoff_mutex.lock();
 				s_mtvu_handoff_mutex.unlock();
 				if (path.GetPendingGSPackets() != startP1Packs)
 					break;
+				std::this_thread::yield();
 			}
 		}
 	}
