@@ -24,8 +24,8 @@
 #include "Config.h"
 #include "PAD/PAD.h"
 
-std::deque<u8> fifoIn;
-std::deque<u8> fifoOut;
+SioFifo fifoIn;
+SioFifo fifoOut;
 
 Sio0 sio0;
 Sio2 sio2;
@@ -690,8 +690,8 @@ bool SaveStateBase::sio2Freeze()
 		return false;
 
 	Freeze(sio2);
-	FreezeDeque(fifoIn);
-	FreezeDeque(fifoOut);
+	FreezeSioFifo(fifoIn);
+	FreezeSioFifo(fifoOut);
 	if (!IsOkay())
 		return false;
 

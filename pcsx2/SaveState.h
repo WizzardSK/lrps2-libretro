@@ -112,6 +112,32 @@ public:
 		}
 	}
 
+	// Serializes a SioFifo identically to FreezeDeque (u32 count followed by
+	// the bytes in front-to-back order), so savestates remain compatible.
+	// Templated so the body only instantiates in TUs where the FIFO type is
+	// complete (SaveState.h does not include Sio.h).
+	template <typename FifoT>
+	void FreezeSioFifo(FifoT& q)
+	{
+		u32 count = static_cast<u32>(q.size());
+		Freeze(count);
+
+		if (count > 0 && IsSaving())
+			FreezeMem(q.data + q.head, static_cast<int>(sizeof(u8) * count));
+
+		if (IsLoading())
+		{
+			q.clear();
+			if (count > 0)
+			{
+				std::unique_ptr<u8[]> temp = std::make_unique<u8[]>(count);
+				FreezeMem(temp.get(), static_cast<int>(sizeof(u8) * count));
+				for (u32 i = 0; i < count; i++)
+					q.push_back(temp[i]);
+			}
+		}
+	}
+
 	u8* GetBlockPtr()
 	{
 		return &m_memory[m_idx];

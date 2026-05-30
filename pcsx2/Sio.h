@@ -20,7 +20,84 @@
 
 #include "SioTypes.h"
 #include "MemoryCardFile.h"
-#include <deque>
+#include <cstdlib>
+#include <cstring>
+
+// Byte FIFO for SIO/SIO2 command exchange. Replaces std::deque<u8>: a flat
+// growable buffer with a head cursor, so push_back appends and pop_front just
+// advances the cursor (no per-byte node allocation, no memmove on consume).
+// A SIO2 cycle fills the FIFO then drains it fully and clears, so the live
+// span [head, count) stays contiguous and compaction is essentially never
+// hit; the guard is kept for safety. front()/size()/empty() mirror the deque
+// interface so call sites are unchanged.
+struct SioFifo
+{
+	u8*    data     = nullptr;
+	size_t head     = 0; // index of front element
+	size_t count    = 0; // one past the last element
+	size_t capacity = 0;
+
+	size_t size()  const { return count - head; }
+	bool   empty() const { return count == head; }
+	u8     front() const { return data[head]; }
+
+	void clear()
+	{
+		head  = 0;
+		count = 0;
+	}
+
+	void pop_front()
+	{
+		head++;
+		// Once fully drained, reset to the start so the buffer is reused
+		// without growing and without a memmove.
+		if (head == count)
+		{
+			head  = 0;
+			count = 0;
+		}
+	}
+
+	void push_back(u8 v)
+	{
+		if (count == capacity)
+		{
+			// Compact first if there is reclaimable space at the front;
+			// otherwise grow.
+			if (head > 0)
+			{
+				memmove(data, data + head, (count - head) * sizeof(u8));
+				count -= head;
+				head   = 0;
+			}
+			if (count == capacity)
+			{
+				size_t newcap = capacity ? capacity * 2 : 64;
+				data     = (u8*)realloc(data, newcap * sizeof(u8));
+				capacity = newcap;
+			}
+		}
+		data[count++] = v;
+	}
+
+	void free_storage()
+	{
+		free(data);
+		data     = nullptr;
+		head     = 0;
+		count    = 0;
+		capacity = 0;
+	}
+
+	~SioFifo()
+	{
+		free(data);
+	}
+};
+
+extern SioFifo fifoIn;
+extern SioFifo fifoOut;
 
 struct _mcd
 {
@@ -141,9 +218,6 @@ public:
 	void Write(u8 data);
 	u8 Read();
 };
-
-extern std::deque<u8> fifoIn;
-extern std::deque<u8> fifoOut;
 
 extern Sio0 sio0;
 extern Sio2 sio2;
