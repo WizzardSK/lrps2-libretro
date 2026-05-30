@@ -180,7 +180,8 @@ protected:
 	RFILE* m_file[8] = {};
 	s64 m_fileSize[8] = {};
 	std::string m_filenames[8] = {};
-	std::vector<u8> m_currentdata;
+	u8* m_cardData[8] = {};   /* full card image held in RAM (new[] at Open), one per slot */
+	size_t m_cardSize[8] = {};   /* allocated/used length of m_cardData[slot] */
 	u64 m_chksum[8] = {};
 	bool m_ispsx[8] = {};
 	u32 m_chkaddr = 0;
@@ -269,7 +270,18 @@ FileMemoryCard::FileMemoryCard()
 		m_fileSize[slot] = -1;
 }
 
-FileMemoryCard::~FileMemoryCard() = default;
+FileMemoryCard::~FileMemoryCard()
+{
+	/* Free any card images still held in RAM. Close() also frees and NULLs
+	 * these; freeing here too (with delete[] nullptr being a no-op) makes a
+	 * teardown that bypassed Close, or a never-opened slot, leak-free. */
+	for (int slot = 0; slot < 8; ++slot)
+	{
+		delete[] m_cardData[slot];
+		m_cardData[slot] = nullptr;
+		m_cardSize[slot] = 0;
+	}
+}
 
 void FileMemoryCard::Open()
 {
@@ -329,19 +341,32 @@ void FileMemoryCard::Open()
 		else
 			m_file[slot] = FileSystem::OpenFile(fname.c_str(), "r+b");
 
-		if (m_file[slot]) // Load checksum
+		if (m_file[slot]) // Load the whole card into RAM
 		{
 			m_fileSize[slot]  = FileSystem::FSize64(m_file[slot]);
 			m_filenames[slot] = std::move(fname);
 			m_ispsx[slot]     = m_fileSize[slot] == 0x20000;
 			m_chkaddr = 0x210;
 
-			if (!m_ispsx[slot] && FileSystem::FSeek64(m_file[slot], m_chkaddr, SEEK_SET) == 0)
+			/* Read the entire card image into a RAM buffer once. All
+			 * subsequent Read/Save/EraseBlock operate on this buffer
+			 * (writes are still persisted through m_file immediately, so
+			 * durability is unchanged). This removes the per-operation
+			 * seek+read on every memcard access. */
+			if (m_fileSize[slot] > 0)
 			{
-				const size_t read_result = rfread(&m_chksum[slot], sizeof(m_chksum[slot]), 1, m_file[slot]);
-				if (read_result == 0)
+				m_cardSize[slot] = static_cast<size_t>(m_fileSize[slot]);
+				m_cardData[slot] = new u8[m_cardSize[slot]];
+				FileSystem::FSeek64(m_file[slot], 0, SEEK_SET);
+				if (rfread(m_cardData[slot], m_cardSize[slot], 1, m_file[slot]) != 1)
 					Console.Error("Error reading memcard.");
 			}
+
+			/* Checksum word lives at m_chkaddr; take it from the buffer
+			 * rather than a separate seek+read. */
+			if (!m_ispsx[slot] && m_cardData[slot] &&
+				(m_chkaddr + sizeof(m_chksum[slot])) <= m_cardSize[slot])
+				memcpy(&m_chksum[slot], m_cardData[slot] + m_chkaddr, sizeof(m_chksum[slot]));
 		}
 	}
 }
@@ -366,6 +391,12 @@ void FileMemoryCard::Close()
 			if (ConvertRAWtoNoECC(name_in.c_str(), m_filenames[slot].c_str()))
 				FileSystem::DeleteFilePath(name_in.c_str());
 		}
+
+		/* Release the RAM card image (also freed in the destructor; NULL
+		 * after free so a later dtor pass is a no-op). */
+		delete[] m_cardData[slot];
+		m_cardData[slot] = nullptr;
+		m_cardSize[slot] = 0;
 
 		m_filenames[slot] = {};
 		m_fileSize[slot]  = -1;
@@ -427,45 +458,44 @@ bool FileMemoryCard::IsPSX(uint slot)
 
 s32 FileMemoryCard::Read(uint slot, u8* dest, u32 adr, int size)
 {
-	RFILE* mcfp = m_file[slot];
-	if (!mcfp)
+	if (!m_cardData[slot])
 	{
 		memset(dest, 0, size);
 		return 1;
 	}
-	if (!Seek(mcfp, adr))
+	/* Bounds check mirrors the old Seek() out-of-range failure. */
+	if (static_cast<size_t>(adr) + size > m_cardSize[slot])
 		return 0;
-	return rfread(dest, size, 1, mcfp) == 1;
+	memcpy(dest, m_cardData[slot] + adr, size);
+	return 1;
 }
 
 s32 FileMemoryCard::Save(uint slot, const u8* src, u32 adr, int size)
 {
-	RFILE* mcfp = m_file[slot];
-
-	if (!mcfp)
+	if (!m_cardData[slot])
 		return 1;
+
+	if (static_cast<size_t>(adr) + size > m_cardSize[slot])
+		return 0;
+
+	u8* dst = m_cardData[slot] + adr;
 
 	if (m_ispsx[slot])
 	{
-		if (static_cast<int>(m_currentdata.size()) < size)
-			m_currentdata.resize(size);
-		memcpy(m_currentdata.data(), src, size);
+		/* PSX: straight copy (no read-modify-write, matches old path). */
+		memcpy(dst, src, size);
 	}
 	else
 	{
-		if (!Seek(mcfp, adr))
-			return 0;
-		if (static_cast<int>(m_currentdata.size()) < size)
-			m_currentdata.resize(size);
-
-		rfread(m_currentdata.data(), size, 1, mcfp);
-
+		/* PS2: AND-merge new data into the existing card bytes (which are
+		 * already in the RAM buffer, so no read-back from disk), then fold
+		 * the merged region into the running checksum. */
 		for (int i = 0; i < size; i++)
-			m_currentdata[i] &= src[i];
+			dst[i] &= src[i];
 
 		// Checksumness
 		{
-			u64* pdata = (u64*)&m_currentdata[0];
+			u64* pdata = (u64*)dst;
 			u32 loops = size / 8;
 
 			for (u32 i = 0; i < loops; i++)
@@ -473,10 +503,12 @@ s32 FileMemoryCard::Save(uint slot, const u8* src, u32 adr, int size)
 		}
 	}
 
-	if (!Seek(mcfp, adr))
+	/* Persist just the changed region immediately (one write, durability
+	 * unchanged from the old per-operation fwrite). */
+	if (!Seek(m_file[slot], adr))
 		return 0;
 
-	if (rfwrite(m_currentdata.data(), size, 1, mcfp) == 1)
+	if (rfwrite(dst, size, 1, m_file[slot]) == 1)
 		return 1;
 
 	return 0;
@@ -484,15 +516,19 @@ s32 FileMemoryCard::Save(uint slot, const u8* src, u32 adr, int size)
 
 s32 FileMemoryCard::EraseBlock(uint slot, u32 adr)
 {
-	u8 buf[MC2_ERASE_SIZE];
-	RFILE* mcfp = m_file[slot];
-	if (!mcfp)
+	if (!m_cardData[slot])
 		return 1;
 
-	if (!Seek(mcfp, adr))
+	if (static_cast<size_t>(adr) + MC2_ERASE_SIZE > m_cardSize[slot])
 		return 0;
-	memset(buf, 0xff, sizeof(buf));
-	return rfwrite(buf, sizeof(buf), 1, mcfp) == 1;
+
+	/* Update the RAM image AND disk; without the buffer update a later Read
+	 * would return stale (pre-erase) bytes. */
+	memset(m_cardData[slot] + adr, 0xff, MC2_ERASE_SIZE);
+
+	if (!Seek(m_file[slot], adr))
+		return 0;
+	return rfwrite(m_cardData[slot] + adr, MC2_ERASE_SIZE, 1, m_file[slot]) == 1;
 }
 
 u64 FileMemoryCard::GetCRC(uint slot)
