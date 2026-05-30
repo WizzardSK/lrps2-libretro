@@ -117,14 +117,6 @@ namespace StringUtil
 		return newStr;
 	}
 
-	std::string toUpper(const std::string_view& input)
-	{
-		std::string newStr;
-		std::transform(input.begin(), input.end(), std::back_inserter(newStr),
-			[](unsigned char c) { return std::toupper(c); });
-		return newStr;
-	}
-
 	std::string_view StripWhitespace(const std::string_view& str)
 	{
 		std::string_view::size_type start = 0;
@@ -225,28 +217,6 @@ namespace StringUtil
 	}
 
 #ifdef _WIN32
-	std::wstring UTF8StringToWideString(const std::string_view& str)
-	{
-		std::wstring ret;
-		if (!UTF8StringToWideString(ret, str))
-			return {};
-
-		return ret;
-	}
-
-	bool UTF8StringToWideString(std::wstring& dest, const std::string_view& str)
-	{
-		int wlen = MultiByteToWideChar(CP_UTF8, 0, str.data(), static_cast<int>(str.length()), nullptr, 0);
-		if (wlen < 0)
-			return false;
-
-		dest.resize(wlen);
-		if (wlen > 0 && MultiByteToWideChar(CP_UTF8, 0, str.data(), static_cast<int>(str.length()), dest.data(), wlen) < 0)
-			return false;
-
-		return true;
-	}
-
 	std::string WideStringToUTF8String(const std::wstring_view& str)
 	{
 		std::string ret;

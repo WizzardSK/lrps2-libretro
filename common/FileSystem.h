@@ -77,9 +77,6 @@ namespace FileSystem
 	/// Delete file
 	bool DeleteFilePath(const char* path);
 
-	/// Rename file
-	bool RenamePath(const char* OldPath, const char* NewPath);
-
 	/// open files
 	RFILE *OpenFile(const char* filename, const char* mode);
 	int FSeek64(RFILE* fp, s64 offset, int whence);

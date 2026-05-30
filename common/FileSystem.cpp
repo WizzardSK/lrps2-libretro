@@ -794,24 +794,6 @@ bool FileSystem::DeleteFilePath(const char* path)
 	return ret;
 }
 
-bool FileSystem::RenamePath(const char* old_path, const char* new_path)
-{
-	wchar_t *old_wpath         = utf8_to_utf16_string_alloc(old_path);
-	wchar_t *new_wpath         = utf8_to_utf16_string_alloc(new_path);
-
-	if (!MoveFileExW(old_wpath, new_wpath, MOVEFILE_REPLACE_EXISTING))
-	{
-		free(old_wpath);
-		free(new_wpath);
-		Console.Error("MoveFileEx('%s', '%s') failed: %08X", old_path, new_path, GetLastError());
-		return false;
-	}
-
-	free(old_wpath);
-	free(new_wpath);
-	return true;
-}
-
 bool FileSystem::DeleteDirectory(const char* path)
 {
 	wchar_t *wpath = utf8_to_utf16_string_alloc(path);
@@ -957,20 +939,6 @@ bool FileSystem::DeleteFilePath(const char* path)
 	if (path_is_directory(path))
 		return false;
 	return (unlink(path) == 0);
-}
-
-bool FileSystem::RenamePath(const char* old_path, const char* new_path)
-{
-	if (old_path[0] == '\0' || new_path[0] == '\0')
-		return false;
-
-	if (rename(old_path, new_path) != 0)
-	{
-		Console.Error("rename('%s', '%s') failed: %d", old_path, new_path, errno);
-		return false;
-	}
-
-	return true;
 }
 
 bool FileSystem::DeleteDirectory(const char* path)
