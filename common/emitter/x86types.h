@@ -66,6 +66,35 @@ extern thread_local XMMSSEType g_xmmtypes[iREGCNT_XMM];
 		x86Ptr += sizeof(u64); \
 	}
 
+// Local-cursor variants of the above. These write through a caller-supplied
+// u8* cursor (typically a local cached from x86Ptr) and advance it, instead of
+// touching the thread_local x86Ptr on every byte. Used by emit paths that cache
+// the cursor across several writes and store it back once. Behaviourally
+// identical to the global versions for the same cursor value.
+#define xWrite8p(p, val) \
+	{ \
+		*(u8*)(p) = (val); \
+		(p) += sizeof(u8); \
+	}
+
+#define xWrite16p(p, val) \
+	{ \
+		*(u16*)(p) = (val); \
+		(p) += sizeof(u16); \
+	}
+
+#define xWrite32p(p, val) \
+	{ \
+		*(u32*)(p) = (val); \
+		(p) += sizeof(u32); \
+	}
+
+#define xWrite64p(p, val) \
+	{ \
+		*(u64*)(p) = (val); \
+		(p) += sizeof(u64); \
+	}
+
 namespace x86Emitter
 {
 	// Win32 requires 32 bytes of shadow stack in the caller's frame.
