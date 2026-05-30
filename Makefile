@@ -451,6 +451,9 @@ else
    IS_WINDOWS = 1
    IS_WIN_MINGW = 1
    SHARED    := -shared -Wl,--no-undefined -Wl,--version-script=link.T
+   ifeq ($(GCSCAN),1)
+      SHARED += -Wl,--gc-sections -Wl,--print-gc-sections
+   endif
    HAVE_CDROM = 1
 
    # Match cmake target_compile_definitions on Windows + LIBRETRO=ON.
@@ -566,6 +569,17 @@ else
       CFLAGS   += -O3 -DNDEBUG -MMD
       CXXFLAGS += -O3 -DNDEBUG -MMD
    endif
+endif
+
+# Dead-code scan (GCSCAN=1): split every function/data item into its own
+# section so the linker's --gc-sections can discard unreferenced ones and
+# --print-gc-sections (on SHARED above) reports each discard. The link.T
+# version script anchors the GC roots to the exported retro_* API, so
+# everything reachable from the libretro entry points is kept. Measurement
+# only -- do not ship a GCSCAN build.
+ifeq ($(GCSCAN),1)
+   CFLAGS   += -ffunction-sections -fdata-sections
+   CXXFLAGS += -ffunction-sections -fdata-sections
 endif
 
 # Architecture / SIMD baseline.  cmake passes -march=native; for the static
