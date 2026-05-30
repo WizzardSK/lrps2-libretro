@@ -347,6 +347,22 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "Automatic"
    },
    {
+      "pcsx2_hw_download_mode",
+      "Video > Hardware Download Mode",
+      "Hardware Download Mode",
+      "Controls how the GS reads rendered data back to the CPU (e.g. memory-card save images). 'Accurate' is the safest and matches hardware, but forces a CPU/GPU synchronization on every readback, which can sharply reduce the frame rate on screens that read back often (some save/load and stage-select menus) - this is especially severe with the paraLLEl-GS renderer. 'Unsynchronized' avoids that stall and is much faster, at the risk of incorrect results in the rare games that read back GPU-rendered content. 'Disable Readbacks' and 'Disabled' trade more accuracy for speed.",
+      NULL,
+      "video",
+      {
+         { "Accurate", NULL },
+         { "Disable Readbacks", NULL },
+         { "Unsynchronized", NULL },
+         { "Disabled", NULL },
+         { NULL, NULL },
+      },
+      "Accurate"
+   },
+   {
       "pcsx2_nointerlacing_hint",
       "Video > No interlacing hint (Restart)",
       "No interlacing hint (Restart)",

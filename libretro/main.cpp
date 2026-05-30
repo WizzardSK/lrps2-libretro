@@ -114,6 +114,7 @@ static u8 setting_pgs_disable_mipmaps          = 0;
 static u8 setting_pgs_ss_tex                   = 0;
 static u8 setting_pgs_deblur                   = 0;
 static u8 setting_deinterlace_mode             = 0;
+static u8 setting_hw_download_mode             = 0; /* GSHardwareDownloadMode::Enabled */
 static u8 setting_texture_filtering            = 0;
 static u8 setting_anisotropic_filtering        = 0;
 static u8 setting_dithering                    = 0;
@@ -582,6 +583,26 @@ static void check_variables(bool first_run)
 			if (first_run || setting_deinterlace_mode != deinterlace_mode_prev)
 			{
 				s_settings_interface.SetUIntValue("EmuCore/GS", "deinterlace_mode", setting_deinterlace_mode);
+				updated = true;
+			}
+		}
+
+		var.key = "pcsx2_hw_download_mode";
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		{
+			u8 hw_download_mode_prev = setting_hw_download_mode;
+			if (!strcmp(var.value, "Accurate"))
+				setting_hw_download_mode = (u8)GSHardwareDownloadMode::Enabled;
+			else if (!strcmp(var.value, "Disable Readbacks"))
+				setting_hw_download_mode = (u8)GSHardwareDownloadMode::NoReadbacks;
+			else if (!strcmp(var.value, "Unsynchronized"))
+				setting_hw_download_mode = (u8)GSHardwareDownloadMode::Unsynchronized;
+			else if (!strcmp(var.value, "Disabled"))
+				setting_hw_download_mode = (u8)GSHardwareDownloadMode::Disabled;
+
+			if (first_run || setting_hw_download_mode != hw_download_mode_prev)
+			{
+				s_settings_interface.SetIntValue("EmuCore/GS", "HWDownloadMode", setting_hw_download_mode);
 				updated = true;
 			}
 		}
