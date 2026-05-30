@@ -87,7 +87,51 @@ static constexpr u32 NO_FASTMEM_MAPPING = 0xFFFFFFFFu;
 static std::unique_ptr<SharedMemoryMappingArea> s_fastmem_area;
 static std::vector<u32> s_fastmem_virtual_mapping; // maps vaddr -> mainmem offset
 static std::unordered_multimap<u32, u32> s_fastmem_physical_mapping; // maps mainmem offset -> vaddr
-static std::unordered_map<uptr, LoadstoreBackpatchInfo> s_fastmem_backpatch_info;
+// Backpatch info for fastmem loadstores, keyed by host code address.
+// code_address values are inserted in recompilation order (monotonically
+// increasing within a run) and the table is cleared on every cache reset,
+// so a sorted flat array kept ordered by code_address gives O(1) amortized
+// append on the common path and bsearch lookup on the fault path, without
+// the per-entry node allocation of std::unordered_map.
+struct LoadstoreBackpatchEntry
+{
+	uptr                  code_address;
+	LoadstoreBackpatchInfo info;
+};
+static LoadstoreBackpatchEntry* s_fastmem_backpatch       = NULL;
+static size_t                   s_fastmem_backpatch_count = 0;
+static size_t                   s_fastmem_backpatch_cap   = 0;
+
+// Returns the index of code_address, or the insertion point (== count if it
+// belongs at the end). *found is set to whether an exact match was present.
+static size_t vtlb_BackpatchLowerBound(uptr code_address, bool* found)
+{
+	size_t lo = 0;
+	size_t hi = s_fastmem_backpatch_count;
+	while (lo < hi)
+	{
+		size_t mid = lo + ((hi - lo) >> 1);
+		if (s_fastmem_backpatch[mid].code_address < code_address)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	*found = (lo < s_fastmem_backpatch_count && s_fastmem_backpatch[lo].code_address == code_address);
+	return lo;
+}
+
+static void vtlb_BackpatchClear(void)
+{
+	s_fastmem_backpatch_count = 0;
+}
+
+static void vtlb_BackpatchFree(void)
+{
+	free(s_fastmem_backpatch);
+	s_fastmem_backpatch       = NULL;
+	s_fastmem_backpatch_count = 0;
+	s_fastmem_backpatch_cap   = 0;
+}
 
 // Sorted, unique list of guest PCs that have faulted out of fastmem.
 // Raw buffer + realloc growth; bsearch for lookup.  Insert keeps the
@@ -847,18 +891,35 @@ static void vtlb_UpdateFastmemProtection(u32 paddr, u32 size, const PageProtecti
 
 void vtlb_ClearLoadStoreInfo(void)
 {
-	s_fastmem_backpatch_info.clear();
+	vtlb_BackpatchClear();
 	s_fastmem_faulting_pcs_count = 0;
 }
 
 void vtlb_AddLoadStoreInfo(uptr code_address, u32 code_size, u32 guest_pc, u32 gpr_bitmask, u32 fpr_bitmask, u8 address_register, u8 data_register, u8 size_in_bits, bool is_signed, bool is_load, bool is_fpr)
 {
-	auto iter = s_fastmem_backpatch_info.find(code_address);
-	if (iter != s_fastmem_backpatch_info.end())
-		s_fastmem_backpatch_info.erase(iter);
-
 	LoadstoreBackpatchInfo info{guest_pc, gpr_bitmask, fpr_bitmask, static_cast<u8>(code_size), address_register, data_register, size_in_bits, is_signed, is_load, is_fpr};
-	s_fastmem_backpatch_info.emplace(code_address, info);
+
+	bool   found;
+	size_t pos = vtlb_BackpatchLowerBound(code_address, &found);
+	if (found)
+	{
+		// Replace existing entry in place.
+		s_fastmem_backpatch[pos].info = info;
+		return;
+	}
+
+	if (s_fastmem_backpatch_count == s_fastmem_backpatch_cap)
+	{
+		size_t newcap = s_fastmem_backpatch_cap ?
+			s_fastmem_backpatch_cap + (s_fastmem_backpatch_cap >> 1) : 64;
+		s_fastmem_backpatch     = (LoadstoreBackpatchEntry*)realloc(s_fastmem_backpatch, newcap * sizeof(LoadstoreBackpatchEntry));
+		s_fastmem_backpatch_cap = newcap;
+	}
+	memmove(&s_fastmem_backpatch[pos + 1], &s_fastmem_backpatch[pos],
+		(s_fastmem_backpatch_count - pos) * sizeof(LoadstoreBackpatchEntry));
+	s_fastmem_backpatch[pos].code_address = code_address;
+	s_fastmem_backpatch[pos].info         = info;
+	s_fastmem_backpatch_count++;
 }
 
 static bool vtlb_BackpatchLoadStore(uptr code_address, uptr fault_address)
@@ -868,18 +929,20 @@ static bool vtlb_BackpatchLoadStore(uptr code_address, uptr fault_address)
 	if (fault_address < fastmem_start || fault_address > fastmem_end)
 		return false;
 
-	auto iter = s_fastmem_backpatch_info.find(code_address);
-	if (iter == s_fastmem_backpatch_info.end())
+	bool   found;
+	size_t pos = vtlb_BackpatchLowerBound(code_address, &found);
+	if (!found)
 		return false;
 
-	const LoadstoreBackpatchInfo& info = iter->second;
+	const LoadstoreBackpatchInfo& info = s_fastmem_backpatch[pos].info;
+	const u32 info_guest_pc = info.guest_pc;
 	const u32 guest_addr = static_cast<u32>(fault_address - fastmem_start);
 	vtlb_DynBackpatchLoadStore(code_address, info.code_size, info.guest_pc, guest_addr,
 		info.gpr_bitmask, info.fpr_bitmask, info.address_register, info.data_register,
 		info.size_in_bits, info.is_signed, info.is_load, info.is_fpr);
 
 	// queue block for recompilation later
-	Cpu->Clear(info.guest_pc, 1);
+	Cpu->Clear(info_guest_pc, 1);
 
 	// and store the pc in the faulting list, so that we don't emit another fastmem loadstore
 	{
@@ -888,12 +951,12 @@ static bool vtlb_BackpatchLoadStore(uptr code_address, uptr fault_address)
 		while (lo < hi)
 		{
 			size_t mid = lo + ((hi - lo) >> 1);
-			if (s_fastmem_faulting_pcs[mid] < info.guest_pc)
+			if (s_fastmem_faulting_pcs[mid] < info_guest_pc)
 				lo = mid + 1;
 			else
 				hi = mid;
 		}
-		if (lo == s_fastmem_faulting_pcs_count || s_fastmem_faulting_pcs[lo] != info.guest_pc)
+		if (lo == s_fastmem_faulting_pcs_count || s_fastmem_faulting_pcs[lo] != info_guest_pc)
 		{
 			if (s_fastmem_faulting_pcs_count == s_fastmem_faulting_pcs_cap)
 			{
@@ -904,11 +967,13 @@ static bool vtlb_BackpatchLoadStore(uptr code_address, uptr fault_address)
 			}
 			memmove(&s_fastmem_faulting_pcs[lo + 1], &s_fastmem_faulting_pcs[lo],
 				(s_fastmem_faulting_pcs_count - lo) * sizeof(u32));
-			s_fastmem_faulting_pcs[lo] = info.guest_pc;
+			s_fastmem_faulting_pcs[lo] = info_guest_pc;
 			s_fastmem_faulting_pcs_count++;
 		}
 	}
-	s_fastmem_backpatch_info.erase(iter);
+	memmove(&s_fastmem_backpatch[pos], &s_fastmem_backpatch[pos + 1],
+		(s_fastmem_backpatch_count - pos - 1) * sizeof(LoadstoreBackpatchEntry));
+	s_fastmem_backpatch_count--;
 	return true;
 }
 
@@ -1051,14 +1116,14 @@ void vtlb_Reset(void)
 void vtlb_Shutdown(void)
 {
 	vtlb_RemoveFastmemMappings();
-	s_fastmem_backpatch_info.clear();
+	vtlb_BackpatchFree();
 	s_fastmem_faulting_pcs_free();
 }
 
 void vtlb_ResetFastmem(void)
 {
 	vtlb_RemoveFastmemMappings();
-	s_fastmem_backpatch_info.clear();
+	vtlb_BackpatchClear();
 	s_fastmem_faulting_pcs_count = 0;
 
 	if (!CHECK_FASTMEM || !CHECK_EEREC || !vtlbdata.vmap)
