@@ -306,15 +306,24 @@ __fi void mVUsetupFlags(mV, microFlagCycles& mFC)
 	}
 }
 
-/* Scan through instructions and check if flags are read (FSxxx, FMxxx, FCxxx opcodes) */
-static void _mVUflagPass(mV, u32 startPC, u32 sCount, u32 found, std::vector<u32>& v)
+/* Visited-PC set for _mVUflagPass recursion guard. Backed by a caller-owned
+   stack buffer sized to the VU's micro memory (one u32 per 8-byte slot), so
+   the set can never exceed microMemSize/8 distinct PCs and never allocates. */
+struct mVUflagVisited
 {
-	for (u32 i = 0; i < v.size(); i++)
+	u32* pc;
+	u32  count;
+};
+
+/* Scan through instructions and check if flags are read (FSxxx, FMxxx, FCxxx opcodes) */
+static void _mVUflagPass(mV, u32 startPC, u32 sCount, u32 found, mVUflagVisited& v)
+{
+	for (u32 i = 0; i < v.count; i++)
 	{
-		if (v[i] == startPC)
+		if (v.pc[i] == startPC)
 			return; /* Prevent infinite recursion */
 	}
-	v.push_back(startPC);
+	v.pc[v.count++] = startPC;
 
 	int oldPC = iPC;
 	int oldBranch = mVUbranch;
@@ -379,7 +388,12 @@ static void _mVUflagPass(mV, u32 startPC, u32 sCount, u32 found, std::vector<u32
 
 static void mVUflagPass(mV, u32 startPC, u32 sCount = 0, u32 found = 0)
 {
-	std::vector<u32> v;
+	/* At most microMemSize/8 distinct PCs can be visited (one per 8-byte
+	   instruction slot): 8192 for VU1 (0x4000), 2048 for VU0 (0x1000). */
+	u32 visitedPC[0x4000 / 8];
+	mVUflagVisited v;
+	v.pc    = visitedPC;
+	v.count = 0;
 	_mVUflagPass(mVU, startPC, sCount, found, v);
 }
 
