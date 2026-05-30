@@ -696,7 +696,7 @@ void Pcsx2Config::DEV9Options::LoadSave(SettingsWrapper& wrap)
 			LoadIPHelper(Mask, maskStr);
 			LoadIPHelper(Gateway, gatewayStr);
 			LoadIPHelper(DNS1, dns1Str);
-			LoadIPHelper(DNS1, dns1Str);
+			LoadIPHelper(DNS2, dns2Str);
 		}
 
 		SettingsWrapEntry(AutoMask);
