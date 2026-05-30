@@ -45,7 +45,6 @@ public:
 	Threading::UserspaceSemaphore semaXGkick;
 	std::atomic<unsigned int> vuCycles[4]; // Used for VU cycle stealing hack
 	u32 vuCycleIdx;  // Used for VU cycle stealing hack
-	u32 vuFBRST;
 
 	enum InterruptFlag {
 		InterruptFlagFinish = 1 << 0,
@@ -77,9 +76,6 @@ public:
 
 	// Get MTVU to start processing its packets if it isn't already
 	void KickStart();
-
-	// Used for assertions...
-	bool IsDone();
 
 	// Waits till MTVU is done processing
 	void WaitVU();

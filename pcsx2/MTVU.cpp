@@ -154,7 +154,7 @@ void VU_Thread::ExecuteRingBuffer(void)
 					s32 addr = Read();
 					vifRegs.top = Read();
 					vifRegs.itop = Read();
-					vuFBRST = Read();
+					Read(); // fbrst: consumed off the ring but unused
 					if (addr != -1)
 						vuRegs[1].VI[REG_TPC].UL = addr & 0x7FF;
 					CpuVU1->SetStartPC(vuRegs[1].VI[REG_TPC].UL << 3);
@@ -330,10 +330,10 @@ __fi void VU_Thread::WriteRegs(VIFregisters* src)
 // Used for vu cycle stealing hack
 u32 VU_Thread::Get_vuCycles()
 {
-	return (vuCycles[0].load(std::memory_order_acquire) +
-			vuCycles[1].load(std::memory_order_acquire) +
-			vuCycles[2].load(std::memory_order_acquire) +
-			vuCycles[3].load(std::memory_order_acquire)) >>
+	return (vuCycles[0].load(std::memory_order_relaxed) +
+			vuCycles[1].load(std::memory_order_relaxed) +
+			vuCycles[2].load(std::memory_order_relaxed) +
+			vuCycles[3].load(std::memory_order_relaxed)) >>
 		   2;
 }
 
@@ -434,11 +434,6 @@ void VU_Thread::Get_MTVUChanges()
 void VU_Thread::KickStart()
 {
 	semaEvent.NotifyOfWork();
-}
-
-bool VU_Thread::IsDone()
-{
-	return GetReadPos() == GetWritePos();
 }
 
 void VU_Thread::WaitVU()
