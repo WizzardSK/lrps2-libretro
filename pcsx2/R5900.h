@@ -28,13 +28,6 @@ extern bool g_SkipBiosHack;
 extern bool g_GameStarted;
 extern bool g_GameLoading;
 
-// --------------------------------------------------------------------------------------
-//  EE Bios function name tables.
-// --------------------------------------------------------------------------------------
-namespace R5900 {
-extern const char* const bios[256];
-}
-
 extern s32 EEsCycle;
 extern u32 EEoCycle;
 
