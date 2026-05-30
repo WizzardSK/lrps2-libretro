@@ -593,8 +593,26 @@ endef
 
 ifeq ($(IS_X86),1)
 ifeq ($(ENABLE_MULTI_ISA),1)
-   $(foreach src,$(MULTI_ISA_UNSHARED_SRC),\
-     $(foreach tier,$(MULTI_ISA_TIERS),\
+   # ODR / link-order safety (the requirement that protects SSE4-or-earlier
+   # hosts):
+   #
+   # Each tier object is compiled with a different -m flag, so any inline
+   # function pulled in from a shared header (STL helpers, etc.) is emitted as
+   # a weak/COMDAT symbol with the SAME mangled name in every tier object, but
+   # with potentially tier-specific instructions in its body. The linker keeps
+   # the FIRST such weak symbol it sees and discards the rest. If an AVX2-built
+   # copy were kept and then executed on an SSE4 CPU (which happens because the
+   # isa_sse4 dispatch path still calls these shared inlines), it would issue
+   # an illegal instruction and crash -- exactly the regression we must avoid.
+   #
+   # Therefore ALL sse4 objects must precede ALL avx objects, which must
+   # precede ALL avx2 objects, in the order presented to ar/ld, so the
+   # SSE4-safe copy of every shared inline wins. We accumulate the objects
+   # tier-outer (sse4 group, then avx group, then avx2 group) to guarantee
+   # this globally -- not merely per-file. This mirrors cmake building
+   # GS-sse4 / GS-avx / GS-avx2 as separate archives linked oldest-first.
+   $(foreach tier,$(MULTI_ISA_TIERS),\
+     $(foreach src,$(MULTI_ISA_UNSHARED_SRC),\
        $(eval $(call MULTI_ISA_template,$(src),$(tier)))))
 endif
 endif
