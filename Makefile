@@ -515,15 +515,26 @@ include Makefile.common
 ENABLE_MULTI_ISA ?= 0
 
 # ---------------------------------------------------------------------------
-# Multi-ISA tier flags (GCC/clang). Defined here, before the object
-# generation below consumes them. Feature flags rather than -march so the
-# compiler can still inline shared helpers across tiers (per cmake). MSVC/
-# MinGW tier maps are added in a later commit.
+# Multi-ISA tier flags. Defined here, before the object generation below
+# consumes them.
+#
+# GCC/clang (incl. MinGW, which is GCC): use feature flags rather than -march
+# so the compiler can still inline shared helpers across tiers (per cmake).
+# MSVC: use /arch:. There is no /arch:SSE4.1 -- SSE2 is MSVC's implicit x64
+# baseline and SSE3/SSSE3/SSE4.1 intrinsics are available without an /arch:
+# flag, so the sse4 tier takes no extra flag. /arch:AVX and /arch:AVX2 enable
+# the wider tiers.
 ifeq ($(IS_X86),1)
 ifeq ($(ENABLE_MULTI_ISA),1)
-   MULTI_ISA_FLAGS_sse4 := -msse4.1
-   MULTI_ISA_FLAGS_avx  := -msse4.1 -mavx
-   MULTI_ISA_FLAGS_avx2 := -msse4.1 -mavx -mavx2 -mbmi -mbmi2 -mfma
+   ifneq (,$(findstring msvc,$(platform)))
+      MULTI_ISA_FLAGS_sse4 :=
+      MULTI_ISA_FLAGS_avx  := /arch:AVX
+      MULTI_ISA_FLAGS_avx2 := /arch:AVX2
+   else
+      MULTI_ISA_FLAGS_sse4 := -msse4.1
+      MULTI_ISA_FLAGS_avx  := -msse4.1 -mavx
+      MULTI_ISA_FLAGS_avx2 := -msse4.1 -mavx -mavx2 -mbmi -mbmi2 -mfma
+   endif
    # Tiers in oldest->newest order. Link/archive order MUST follow this so the
    # linker resolves shared inline (ODR-duplicated) symbols to the SSE4-safe
    # copy; see the ordering note where tier objects are archived.
