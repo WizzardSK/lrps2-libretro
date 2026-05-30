@@ -139,6 +139,20 @@ static void UNPACK_V4_5(u32 *dest, const u32* src)
 #define _upk				(UNPACKFUNCTYPE)
 #define _unpk(usn, bits)	(UNPACKFUNCTYPE_##usn##bits)
 
+// Placeholder for invalid VN/VL unpack combinations. These slots in
+// VIFfuncTable were previously NULL; if a game (or a malformed transfer) ever
+// selected one, the unpack dispatch would call through a NULL pointer and
+// crash. Warn once and do nothing instead, so an invalid unpack is survivable.
+static void UNPACK_Invalid(u32* dest, const void* src)
+{
+	static bool warned = false;
+	if (!warned)
+	{
+		warned = true;
+		Console.Warning("[VIF] Invalid unpack format encountered; ignoring.");
+	}
+}
+
 #define UnpackFuncSet( vt, idx, mode, usn, doMask ) \
 	(UNPACKFUNCTYPE)_unpk(u,32)		UNPACK_##vt<idx, mode, doMask, u32>, \
 	(UNPACKFUNCTYPE)_unpk(usn,16)	UNPACK_##vt<idx, mode, doMask, usn##16>, \
@@ -148,24 +162,24 @@ static void UNPACK_V4_5(u32 *dest, const u32* src)
 	(UNPACKFUNCTYPE)_unpk(u,32) UNPACK_V4_5<idx, doMask> \
 
 #define UnpackModeSet(idx, mode) \
-	UnpackFuncSet( S,  idx, mode, s, 0 ), NULL,  \
-	UnpackFuncSet( V2, idx, mode, s, 0 ), NULL,  \
-	UnpackFuncSet( V4, idx, mode, s, 0 ), NULL,  \
+	UnpackFuncSet( S,  idx, mode, s, 0 ), (UNPACKFUNCTYPE)UNPACK_Invalid,  \
+	UnpackFuncSet( V2, idx, mode, s, 0 ), (UNPACKFUNCTYPE)UNPACK_Invalid,  \
+	UnpackFuncSet( V4, idx, mode, s, 0 ), (UNPACKFUNCTYPE)UNPACK_Invalid,  \
 	UnpackFuncSet( V4, idx, mode, s, 0 ), UnpackV4_5set(idx, 0), \
  \
-	UnpackFuncSet( S,  idx, mode, s, 1 ), NULL,  \
-	UnpackFuncSet( V2, idx, mode, s, 1 ), NULL,  \
-	UnpackFuncSet( V4, idx, mode, s, 1 ), NULL,  \
+	UnpackFuncSet( S,  idx, mode, s, 1 ), (UNPACKFUNCTYPE)UNPACK_Invalid,  \
+	UnpackFuncSet( V2, idx, mode, s, 1 ), (UNPACKFUNCTYPE)UNPACK_Invalid,  \
+	UnpackFuncSet( V4, idx, mode, s, 1 ), (UNPACKFUNCTYPE)UNPACK_Invalid,  \
 	UnpackFuncSet( V4, idx, mode, s, 1 ), UnpackV4_5set(idx, 1), \
  \
-	UnpackFuncSet( S,  idx, mode, u, 0 ), NULL,  \
-	UnpackFuncSet( V2, idx, mode, u, 0 ), NULL,  \
-	UnpackFuncSet( V4, idx, mode, u, 0 ), NULL,  \
+	UnpackFuncSet( S,  idx, mode, u, 0 ), (UNPACKFUNCTYPE)UNPACK_Invalid,  \
+	UnpackFuncSet( V2, idx, mode, u, 0 ), (UNPACKFUNCTYPE)UNPACK_Invalid,  \
+	UnpackFuncSet( V4, idx, mode, u, 0 ), (UNPACKFUNCTYPE)UNPACK_Invalid,  \
 	UnpackFuncSet( V4, idx, mode, u, 0 ), UnpackV4_5set(idx, 0), \
  \
-	UnpackFuncSet( S,  idx, mode, u, 1 ), NULL,  \
-	UnpackFuncSet( V2, idx, mode, u, 1 ), NULL,  \
-	UnpackFuncSet( V4, idx, mode, u, 1 ), NULL,  \
+	UnpackFuncSet( S,  idx, mode, u, 1 ), (UNPACKFUNCTYPE)UNPACK_Invalid,  \
+	UnpackFuncSet( V2, idx, mode, u, 1 ), (UNPACKFUNCTYPE)UNPACK_Invalid,  \
+	UnpackFuncSet( V4, idx, mode, u, 1 ), (UNPACKFUNCTYPE)UNPACK_Invalid,  \
 	UnpackFuncSet( V4, idx, mode, u, 1 ), UnpackV4_5set(idx, 1)
 
 alignas(16) const UNPACKFUNCTYPE VIFfuncTable[2][4][4 * 4 * 2 * 2] =
