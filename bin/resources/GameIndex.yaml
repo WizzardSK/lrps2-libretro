@@ -1648,7 +1648,6 @@ SCAJ-20129:
   roundModes:
     eeRoundMode: 0 # Fixes broken load triggers.
   gsHWFixes:
-    getSkipCount: "GSC_SteambotChronicles" # Causes green (incorrect) water but removes depth and blur issues.
     roundSprite: 1 # Fixes colored 3D anaglyph bleeding effects.
     halfPixelOffset: 2 # Aligns effects.
     nativeScaling: 1 # Helps align effects.
@@ -6967,7 +6966,6 @@ SCKA-20058:
   roundModes:
     eeRoundMode: 0 # Fixes broken load triggers.
   gsHWFixes:
-    getSkipCount: "GSC_SteambotChronicles" # Causes green (incorrect) water but removes depth and blur issues.
     roundSprite: 1 # Fixes colored 3D anaglyph bleeding effects.
     halfPixelOffset: 2 # Aligns effects.
     nativeScaling: 1 # Helps align effects.
@@ -23921,7 +23919,6 @@ SLES-54138:
   roundModes:
     eeRoundMode: 0 # Fixes broken load triggers.
   gsHWFixes:
-    getSkipCount: "GSC_SteambotChronicles" # Causes green (incorrect) water but removes depth and blur issues.
     roundSprite: 1 # Fixes colored 3D anaglyph bleeding effects.
     halfPixelOffset: 2 # Aligns effects.
     nativeScaling: 1 # Helps align effects.
@@ -24583,7 +24580,6 @@ SLES-54335:
   roundModes:
     eeRoundMode: 0 # Fixes broken load triggers.
   gsHWFixes:
-    getSkipCount: "GSC_SteambotChronicles" # Causes green (incorrect) water but removes depth and blur issues.
     roundSprite: 1 # Fixes colored 3D anaglyph bleeding effects.
     halfPixelOffset: 2 # Aligns effects.
     nativeScaling: 1 # Helps align effects.
@@ -32819,7 +32815,6 @@ SLPM-60255:
   roundModes:
     eeRoundMode: 0 # Fixes broken load triggers.
   gsHWFixes:
-    getSkipCount: "GSC_SteambotChronicles" # Causes green (incorrect) water but removes depth and blur issues.
     roundSprite: 1 # Fixes colored 3D anaglyph bleeding effects.
     halfPixelOffset: 2 # Aligns effects.
     nativeScaling: 1 # Helps align effects.
@@ -32873,7 +32868,6 @@ SLPM-60266:
   roundModes:
     eeRoundMode: 0 # Fixes broken load triggers.
   gsHWFixes:
-    getSkipCount: "GSC_SteambotChronicles" # Causes green (incorrect) water but removes depth and blur issues.
     roundSprite: 1 # Fixes colored 3D anaglyph bleeding effects.
     halfPixelOffset: 2 # Aligns effects.
     nativeScaling: 1 # Helps align effects.
@@ -49050,7 +49044,6 @@ SLPS-25457:
   roundModes:
     eeRoundMode: 0 # Fixes broken load triggers.
   gsHWFixes:
-    getSkipCount: "GSC_SteambotChronicles" # Causes green (incorrect) water but removes depth and blur issues.
     roundSprite: 1 # Fixes colored 3D anaglyph bleeding effects.
     halfPixelOffset: 2 # Aligns effects.
     nativeScaling: 1 # Helps align effects.
@@ -50004,7 +49997,6 @@ SLPS-25683:
   roundModes:
     eeRoundMode: 0 # Fixes broken load triggers.
   gsHWFixes:
-    getSkipCount: "GSC_SteambotChronicles" # Causes green (incorrect) water but removes depth and blur issues.
     roundSprite: 1 # Fixes colored 3D anaglyph bleeding effects.
     halfPixelOffset: 2 # Aligns effects.
     nativeScaling: 1 # Helps align effects.
@@ -59283,7 +59275,6 @@ SLUS-21344:
     eeRoundMode: 0 # Fixes broken load triggers.
   compat: 5
   gsHWFixes:
-    getSkipCount: "GSC_SteambotChronicles" # Causes green (incorrect) water but removes depth and blur issues.
     roundSprite: 1 # Fixes colored 3D anaglyph bleeding effects.
     halfPixelOffset: 2 # Aligns effects.
     nativeScaling: 1 # Helps align effects.
@@ -62823,7 +62814,6 @@ SLUS-28061:
   roundModes:
     eeRoundMode: 0 # Fixes broken load triggers.
   gsHWFixes:
-    getSkipCount: "GSC_SteambotChronicles" # Causes green (incorrect) water but removes depth and blur issues.
     roundSprite: 1 # Fixes colored 3D anaglyph bleeding effects.
     halfPixelOffset: 2 # Aligns effects.
     nativeScaling: 1 # Helps align effects.
@@ -63590,7 +63580,6 @@ SLUS-29188:
   roundModes:
     eeRoundMode: 0 # Fixes broken load triggers.
   gsHWFixes:
-    getSkipCount: "GSC_SteambotChronicles" # Causes green (incorrect) water but removes depth and blur issues.
     roundSprite: 1 # Fixes colored 3D anaglyph bleeding effects.
     halfPixelOffset: 2 # Aligns effects.
     nativeScaling: 1 # Helps align effects.

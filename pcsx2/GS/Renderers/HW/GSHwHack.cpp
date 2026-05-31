@@ -639,27 +639,6 @@ bool GSHwHack::GSC_UrbanReign(GSRendererHW& r, int& skip)
 	return true;
 }
 
-bool GSHwHack::GSC_SteambotChronicles(GSRendererHW& r, int& skip)
-{
-	if (skip == 0)
-	{
-		// Author: miseru99 on forums.pcsx2.net
-		if (RTME && RTPSM == PSMCT16S)
-		{
-			if (RFBP == 0x1180)
-			{
-				skip = 1; // 1 deletes some of the glitched effects
-			}
-			else if (RFBP == 0)
-			{
-				skip = 100; // deletes most others(too high deletes the buggy sea completely;c, too low causes glitches to be visible)
-			}
-		}
-	}
-
-	return true;
-}
-
 bool GSHwHack::GSC_NFSUndercover(GSRendererHW& r, int& skip)
 {
 	// NFS Undercover does a weird texture shuffle by page, which really isn't supported by our TC.
@@ -1514,7 +1493,6 @@ const GSHwHack::Entry<GSRendererHW::GSC_Ptr> GSHwHack::s_get_skip_count_function
 
 	// Channel Effect
 	CRC_F(GSC_GiTS),
-	CRC_F(GSC_SteambotChronicles),
 
 	// Depth Issue
 	CRC_F(GSC_BurnoutGames),
