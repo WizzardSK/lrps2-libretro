@@ -4175,13 +4175,25 @@ void GSRendererHW::EmulateTextureShuffleAndFbmask(GSTextureCache::Target* rt, GS
 		u32 process_ba = 0;
 		bool shuffle_across = true;
 
-		ConvertSpriteTextureShuffle(process_rg, process_ba, shuffle_across, rt, tex);
+		ConvertSpriteTextureShuffle(rt, tex);
+
+		// Derive the per-channel shader flags from the classifier result
+		// instead of the old conversion out-params.
+		if (m_texture_shuffle_info.channels & TextureShuffleChannels_ReadRedGreen)
+			process_rg |= SHUFFLE_READ;
+		if (m_texture_shuffle_info.channels & TextureShuffleChannels_ReadBlueAlpha)
+			process_ba |= SHUFFLE_READ;
+		if (m_texture_shuffle_info.channels & TextureShuffleChannels_WriteRedGreen)
+			process_rg |= SHUFFLE_WRITE;
+		if (m_texture_shuffle_info.channels & TextureShuffleChannels_WriteBlueAlpha)
+			process_ba |= SHUFFLE_WRITE;
+		shuffle_across = (m_texture_shuffle_info.channels & TextureShuffleChannels_ShuffleAcross) != 0;
 
 		// If date is enabled you need to test the green channel instead of the alpha channel.
 		// Only enable this code in DATE mode to reduce the number of shaders.
 		m_conf.ps.write_rg = (process_rg & SHUFFLE_WRITE) && features.texture_barrier && m_cached_ctx.TEST.DATE;
-		m_conf.ps.real16src = m_copy_16bit_to_target_shuffle;
-		m_conf.ps.shuffle_same = m_same_group_texture_shuffle;
+		m_conf.ps.real16src = m_texture_shuffle_info.real_16_bit_source;
+		m_conf.ps.shuffle_same = m_texture_shuffle_info.SameGroupShuffle();
 		// Please bang my head against the wall!
 		// 1/ Reduce the frame mask to a 16 bit format
 		const u32 m = m_cached_ctx.FRAME.FBMSK & GSLocalMemory::m_psm[m_cached_ctx.FRAME.PSM].fmsk;
