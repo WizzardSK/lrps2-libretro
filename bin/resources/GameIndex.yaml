@@ -10417,6 +10417,8 @@ SCUS-97402:
   compat: 5
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
+  gameFixes:
+    - OPHFlagHack # Game polls GIF_STAT waiting for OPH to clear; without this it spins forever (black screen).
   gsHWFixes:
     halfPixelOffset: 4 # Fixes post positioning.
     nativeScaling: 2 # Fixes post effects.
