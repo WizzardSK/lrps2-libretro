@@ -46,20 +46,6 @@ static bool s_nativeres;
 // Partial level, broken on all renderers.
 ////////////////////////////////////////////////////////////////////////////////
 
-bool GSHwHack::GSC_GiTS(GSRendererHW& r, int& skip)
-{
-	if (skip == 0)
-	{
-		if (RTME && RFBP == 0x03000 && RFPSM == PSMCT32 && RTPSM == PSMT8)
-		{
-			// Channel effect not properly supported yet
-			skip = 9;
-		}
-	}
-
-	return true;
-}
-
 // Channel effect not properly supported yet
 bool GSHwHack::GSC_Manhunt2(GSRendererHW& r, int& skip)
 {
@@ -1350,7 +1336,6 @@ const GSHwHack::Entry<GSRendererHW::GSC_Ptr> GSHwHack::s_get_skip_count_function
 	CRC_F(GSC_MetalGearSolid3),
 
 	// Channel Effect
-	CRC_F(GSC_GiTS),
 
 	// Depth Issue
 	CRC_F(GSC_BurnoutGames),

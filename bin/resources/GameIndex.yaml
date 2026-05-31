@@ -116,7 +116,6 @@ PAPX-90020:
     estimateTextureRegion: 1 # Improves performance and reduces hash cache size.
     halfPixelOffset: 4 # Aligns post effects.
     nativeScaling: 1 # Fixes post effects.
-    getSkipCount: "GSC_GiTS"
 PAPX-90201:
   name: "Fantavision [Trial]"
   region: "NTSC-J"
@@ -1287,7 +1286,6 @@ SCAJ-20072:
     estimateTextureRegion: 1 # Improves performance and reduces hash cache size.
     halfPixelOffset: 4 # Aligns post effects.
     nativeScaling: 1 # Fixes post effects.
-    getSkipCount: "GSC_GiTS"
 SCAJ-20073:
   name: "Jak and Daxter II"
   region: "NTSC-Unk"
@@ -6740,7 +6738,6 @@ SCKA-20027:
     estimateTextureRegion: 1 # Improves performance and reduces hash cache size.
     halfPixelOffset: 4 # Aligns post effects.
     nativeScaling: 1 # Fixes post effects.
-    getSkipCount: "GSC_GiTS"
 SCKA-20028:
   name: "Ico [PlayStation2 Big Hit Series]"
   region: "NTSC-K"
@@ -8111,7 +8108,6 @@ SCPS-15064:
     estimateTextureRegion: 1 # Improves performance and reduces hash cache size.
     halfPixelOffset: 4 # Aligns post effects.
     nativeScaling: 1 # Fixes post effects.
-    getSkipCount: "GSC_GiTS"
   patches:
     A5768F53:
       content: |-
@@ -20556,7 +20552,6 @@ SLES-53020:
     estimateTextureRegion: 1 # Improves performance and reduces hash cache size.
     halfPixelOffset: 4 # Aligns post effects.
     nativeScaling: 1 # Fixes post effects.
-    getSkipCount: "GSC_GiTS"
   patches:
     BF6F101F:
       content: |-
@@ -57069,7 +57064,6 @@ SLUS-21006:
     estimateTextureRegion: 1 # Improves performance and reduces hash cache size.
     halfPixelOffset: 4 # Aligns post effects.
     nativeScaling: 1 # Fixes post effects.
-    getSkipCount: "GSC_GiTS"
   patches:
     default:
       content: |-
@@ -63220,7 +63214,6 @@ SLUS-29123:
     estimateTextureRegion: 1 # Improves performance and reduces hash cache size.
     halfPixelOffset: 4 # Aligns post effects.
     nativeScaling: 1 # Fixes post effects.
-    getSkipCount: "GSC_GiTS"
 SLUS-29124:
   name: "Fight Club [Demo]"
   region: "NTSC-U"
