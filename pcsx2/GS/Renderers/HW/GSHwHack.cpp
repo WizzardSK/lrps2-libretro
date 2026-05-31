@@ -46,31 +46,6 @@ static bool s_nativeres;
 // Partial level, broken on all renderers.
 ////////////////////////////////////////////////////////////////////////////////
 
-bool GSHwHack::GSC_DeathByDegreesTekkenNinaWilliams(GSRendererHW& r, int& skip)
-{
-	// Note: Game also has issues with texture shuffle not supported on strange clamp mode.
-	// See https://forums.pcsx2.net/Thread-GSDX-Texture-Cache-Bug-Report-Death-By-Degrees-SLUS-20934-NTSC
-	if (skip == 0)
-	{
-		if (!s_nativeres && RTME && RFBP == 0 && RTBP0 == 0x34a0 && RTPSM == PSMCT32)
-		{
-			// Don't enable hack on native res if crc is below aggressive.
-			// Upscaling issue similar to Tekken 5.
-			skip = 1; // Animation pane
-		}
-	}
-	else
-	{
-		if (!s_nativeres && RTME && (RFBP | RTBP0 | RFPSM | RTPSM) && RFBMSK == 0x00FFFFFF)
-		{
-			// Needs to be further tested so assume it's related with the upscaling hack.
-			skip = 1; // Animation speed
-		}
-	}
-
-	return true;
-}
-
 bool GSHwHack::GSC_GiTS(GSRendererHW& r, int& skip)
 {
 	if (skip == 0)
@@ -1384,7 +1359,6 @@ const GSHwHack::Entry<GSRendererHW::GSC_Ptr> GSHwHack::s_get_skip_count_function
 	CRC_F(GSC_Tekken5),
 
 	// Texture shuffle
-	CRC_F(GSC_DeathByDegreesTekkenNinaWilliams), // + Upscaling issues
 	CRC_F(GSC_BigMuthaTruckers),
 
 	// Upscaling hacks

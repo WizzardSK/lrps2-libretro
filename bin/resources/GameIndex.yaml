@@ -1550,7 +1550,6 @@ SCAJ-20116:
     alignSprite: 1 # Fixes FMV lines.
     cpuSpriteRenderBW: 2 # Prevents Death By VRAM explosion.
     cpuSpriteRenderLevel: 2 # Needed for above.
-    getSkipCount: "GSC_DeathByDegreesTekkenNinaWilliams"
 SCAJ-20117:
   name: "Fu-un Bakumatsu-den"
   region: "NTSC-Unk"
@@ -5303,7 +5302,6 @@ SCES-52586:
     alignSprite: 1 # Fixes FMV lines.
     cpuSpriteRenderBW: 2 # Prevents Death By VRAM explosion.
     cpuSpriteRenderLevel: 2 # Needed for above.
-    getSkipCount: "GSC_DeathByDegreesTekkenNinaWilliams"
 SCES-52596:
   name: "This is Football 2005"
   region: "PAL-Unk"
@@ -5404,7 +5402,6 @@ SCES-53053:
     alignSprite: 1 # Fixes FMV lines.
     cpuSpriteRenderBW: 2 # Prevents Death By VRAM explosion.
     cpuSpriteRenderLevel: 2 # Needed for above.
-    getSkipCount: "GSC_DeathByDegreesTekkenNinaWilliams"
 SCES-53054:
   name: "Death by Degrees"
   region: "PAL-E-G"
@@ -5413,7 +5410,6 @@ SCES-53054:
     alignSprite: 1 # Fixes FMV lines.
     cpuSpriteRenderBW: 2 # Prevents Death By VRAM explosion.
     cpuSpriteRenderLevel: 2 # Needed for above.
-    getSkipCount: "GSC_DeathByDegreesTekkenNinaWilliams"
 SCES-53055:
   name: "Eyetoy - Antigrav"
   region: "PAL-M5"
@@ -6826,7 +6822,6 @@ SCKA-20039:
     alignSprite: 1 # Fixes FMV lines.
     cpuSpriteRenderBW: 2 # Prevents Death By VRAM explosion.
     cpuSpriteRenderLevel: 2 # Needed for above.
-    getSkipCount: "GSC_DeathByDegreesTekkenNinaWilliams"
 SCKA-20040:
   name: "Jak 3"
   region: "NTSC-K"
@@ -32812,7 +32807,6 @@ SLPM-60257:
     alignSprite: 1 # Fixes FMV lines.
     cpuSpriteRenderBW: 2 # Prevents Death By VRAM explosion.
     cpuSpriteRenderLevel: 2 # Needed for above.
-    getSkipCount: "GSC_DeathByDegreesTekkenNinaWilliams"
 SLPM-60258:
   name: "The Typing of the Dead - Zombie Panic"
   region: "NTSC-J"
@@ -48895,7 +48889,6 @@ SLPS-25422:
     alignSprite: 1 # Fixes FMV lines.
     cpuSpriteRenderBW: 2 # Prevents Death By VRAM explosion.
     cpuSpriteRenderLevel: 2 # Needed for above.
-    getSkipCount: "GSC_DeathByDegreesTekkenNinaWilliams"
 SLPS-25423:
   name: "Kaitou Apricot - Complete Edition [Limited Edition]"
   region: "NTSC-J"
@@ -56631,7 +56624,6 @@ SLUS-20934:
     alignSprite: 1 # Fixes FMV lines.
     cpuSpriteRenderBW: 2 # Prevents Death By VRAM explosion.
     cpuSpriteRenderLevel: 2 # Needed for above.
-    getSkipCount: "GSC_DeathByDegreesTekkenNinaWilliams"
 SLUS-20935:
   name: "IHRA Professional Drag Racing 2005"
   region: "NTSC-U"
