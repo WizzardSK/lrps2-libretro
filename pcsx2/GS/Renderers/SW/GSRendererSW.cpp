@@ -96,7 +96,7 @@ GSTexture* GSRendererSW::GetOutput(int i, float& scale, int& y_offset)
 	GSVector4i framebufferRect = PCRTCDisplays.GetFramebufferRect(i);
 
 	// Try to avoid broken/incomplete setups which are probably ingnored on console, but can cause us problems.
-	if (framebufferRect.rempty() || curFramebuffer.FBW == 0)
+	if (framebufferRect.rempty() || curFramebuffer.FBW == 0 || framebufferSize.x < 0 || framebufferSize.y < 0)
 		return nullptr;
 
 	const int w = curFramebuffer.FBW * 64;
