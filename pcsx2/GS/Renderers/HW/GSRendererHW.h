@@ -130,6 +130,88 @@ private:
 	GSVector4i GetSplitTextureShuffleDrawRect() const;
 	u32 GetEffectiveTextureShuffleFbmsk() const;
 
+	// --- Texture shuffle classification (ported from upstream refactor 06616ec98). ---
+	// Internal enum for classifying texture shuffles.
+	enum class TextureShuffleType
+	{
+		None,
+		Copy,
+		Offset,
+		RegionRepeat8,
+		RegionRepeat16,
+		Reverse,
+		Swizzle,
+		SwizzleTex32,
+		TwoPixel,
+		GappedSwizzle,
+		HackShuffle,
+	};
+
+	// Enum for determining which channels to read/write in a texture shuffle.
+	enum TextureShuffleChannels : u32
+	{
+		TextureShuffleChannels_None = 0x0,
+		TextureShuffleChannels_RedToBlue = 0x1,
+		TextureShuffleChannels_BlueToRed = 0x2,
+		TextureShuffleChannels_GreenToAlpha = 0x4,
+		TextureShuffleChannels_AlphaToGreen = 0x8,
+		TextureShuffleChannels_RedCopy = 0x10,
+		TextureShuffleChannels_GreenCopy = 0x20,
+		TextureShuffleChannels_BlueCopy = 0x40,
+		TextureShuffleChannels_AlphaCopy = 0x80,
+		TextureShuffleChannels_BlueToAlpha = 0x100,
+
+		TextureShuffleChannels_ReadRed = TextureShuffleChannels_RedToBlue | TextureShuffleChannels_RedCopy,
+		TextureShuffleChannels_ReadGreen = TextureShuffleChannels_GreenToAlpha | TextureShuffleChannels_GreenCopy,
+		TextureShuffleChannels_ReadBlue = TextureShuffleChannels_BlueToRed | TextureShuffleChannels_BlueCopy |
+		                                  TextureShuffleChannels_BlueToAlpha,
+		TextureShuffleChannels_ReadAlpha = TextureShuffleChannels_AlphaToGreen | TextureShuffleChannels_AlphaCopy,
+
+		TextureShuffleChannels_WriteRed = TextureShuffleChannels_BlueToRed | TextureShuffleChannels_RedCopy,
+		TextureShuffleChannels_WriteGreen = TextureShuffleChannels_AlphaToGreen | TextureShuffleChannels_GreenCopy,
+		TextureShuffleChannels_WriteBlue = TextureShuffleChannels_RedToBlue | TextureShuffleChannels_BlueCopy,
+		TextureShuffleChannels_WriteAlpha = TextureShuffleChannels_GreenToAlpha | TextureShuffleChannels_AlphaCopy |
+		                                    TextureShuffleChannels_BlueToAlpha,
+
+		TextureShuffleChannels_ReadRedGreen = TextureShuffleChannels_ReadRed | TextureShuffleChannels_ReadGreen,
+		TextureShuffleChannels_ReadBlueAlpha = TextureShuffleChannels_ReadBlue | TextureShuffleChannels_ReadAlpha,
+
+		TextureShuffleChannels_WriteRedGreen = TextureShuffleChannels_WriteRed | TextureShuffleChannels_WriteGreen,
+		TextureShuffleChannels_WriteBlueAlpha = TextureShuffleChannels_WriteBlue | TextureShuffleChannels_WriteAlpha,
+
+		TextureShuffleChannels_ShuffleAcross = TextureShuffleChannels_RedToBlue | TextureShuffleChannels_GreenToAlpha |
+		                                       TextureShuffleChannels_BlueToRed | TextureShuffleChannels_AlphaToGreen |
+		                                       TextureShuffleChannels_BlueToAlpha,
+
+		// It's not actually possible to do a C16->C16 texture shuffle of B to A as they are the same group
+		// However you can do it by using C32 and offsetting the target vertices to point to B A, then mask as appropriate.
+		TextureShuffleChannels_SameGroup = TextureShuffleChannels_BlueToAlpha,
+	};
+
+	// Intermediate struct for texture shuffle detection.
+	struct TextureShuffleInfo
+	{
+		TextureShuffleType type = TextureShuffleType::None;
+		TextureShuffleChannels channels = TextureShuffleChannels_None;
+		bool real_16_bit_source = false;
+
+		operator bool() const
+		{
+			return type != TextureShuffleType::None;
+		}
+
+		void Disable()
+		{
+			type = TextureShuffleType::None;
+		}
+
+		bool SameGroupShuffle() const
+		{
+			return (channels & TextureShuffleChannels_SameGroup) != 0;
+		}
+	};
+
+
 	static GSVector4i GetDrawRectForPages(u32 bw, u32 psm, u32 num_pages);
 	bool TryToResolveSinglePageFramebuffer(GIFRegFRAME& FRAME, bool only_next_draw);
 
@@ -180,6 +262,14 @@ private:
 	u32 m_split_texture_shuffle_pages_high = 0;
 	u32 m_split_texture_shuffle_start_FBP = 0;
 	u32 m_split_texture_shuffle_start_TBP = 0;
+
+	// Ported texture-shuffle classification state (upstream refactor 06616ec98).
+	// Introduced alongside the legacy m_texture_shuffle / m_copy_16bit_to_target_shuffle /
+	// m_same_group_texture_shuffle bools; detection/conversion are migrated onto this in
+	// later stages, after which the legacy bools are removed.
+	TextureShuffleInfo m_texture_shuffle_info;
+	bool m_process_texture = false;
+	bool m_downscale_source = false;
 	u32 m_split_texture_shuffle_fbw = 0;
 
 	u32 m_last_channel_shuffle_fbmsk = 0;
