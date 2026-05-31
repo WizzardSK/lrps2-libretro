@@ -311,11 +311,9 @@ public:
 	void Lines2Sprites();
 	bool VerifyIndices();
 	void ExpandLineIndices();
-	void ConvertSpriteTextureShuffle(u32& process_rg, u32& process_ba, bool& shuffle_across, GSTextureCache::Target* rt, GSTextureCache::Source* tex);
 
-	/* New texture-shuffle quad conversion (ported from upstream refactor
-	 * 06616ec98), consuming m_texture_shuffle_info. Coexists with the legacy
-	 * overload above until stage 4; not yet called (stage 3b rewires). */
+	/* Texture-shuffle quad conversion (ported from upstream refactor
+	 * 06616ec98), consuming m_texture_shuffle_info. */
 	template<u32 primclass, bool fst>
 	void ConvertSpriteTextureShuffleImpl(GSTextureCache::Target* rt, GSTextureCache::Source* tex);
 	void ConvertSpriteTextureShuffle(GSTextureCache::Target* rt, GSTextureCache::Source* tex);
