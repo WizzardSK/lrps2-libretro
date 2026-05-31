@@ -4333,6 +4333,258 @@ GSVector2i GSState::GSPCRTCRegs::GetResolution()
 	return resolution;
 }
 
+
+// --------------------------------------------------------------------------------------
+//  Vertex / quad utility functions
+// --------------------------------------------------------------------------------------
+// Ported from upstream refactor 26bd916e3 ("GS: Add utility functions for
+// vertices/quads"), used by the texture-shuffle detection refactor.
+//
+// Fork adaptations:
+//  - The GS_TRIANGLE_CLASS path of GetQuadCornersImpl (which detects when two
+//    triangles form a quad via AreTrianglesQuad/TriangleOrdering) is stubbed to
+//    return false. The fork's shuffle detection is sprite-class only, matching
+//    its current behaviour; triangle-quad detection and AreTrianglesQuad are a
+//    separate prerequisite that can be ported later if triangle shuffles are
+//    wanted. The sprite path is faithful.
+//  - The GEN_TMPL_SELECT_* macros' unreachable else branch used pxFail(), which
+//    the fork's GS does not provide; it is dropped (the branch is unreachable
+//    because m_primclass is sprite or triangle for these calls).
+
+__fi GSVector4 GSState::GetXYWindow(const GSVertex& v)
+{
+	return GSVector4(GetVertexXY(v) - m_context->scissor.xyof.xyxy()) / 16.0f;
+}
+
+template<bool fst>
+__fi GSVector4 GSState::GetTexCoordsImpl(const GSVertex& v, float q)
+{
+	if constexpr (fst)
+	{
+		return GSVector4(GetVertexUV(v)) / 16.0f;
+	}
+	else
+	{
+		const float tw = static_cast<float>(1 << m_context->TEX0.TW);
+		const float th = static_cast<float>(1 << m_context->TEX0.TH);
+		const GSVector4 tex_size(tw, th, tw, th);
+		return GSVector4(GetVertexST(v) / q * tex_size);
+	}
+}
+
+template<bool fst>
+__fi GSVector4 GSState::GetTexCoordsImpl(const GSVertex& v)
+{
+	return GetTexCoordsImpl<fst>(v, v.RGBAQ.Q);
+}
+
+__fi GSVector4 GSState::GetTexCoords(const GSVertex& v, float q)
+{
+	if (PRIM->FST)
+	{
+		return GetTexCoordsImpl<true>(v, q);
+	}
+	else
+	{
+		return GetTexCoordsImpl<false>(v, q);
+	}
+}
+
+__fi GSVector4 GSState::GetTexCoords(const GSVertex& v)
+{
+	return GetTexCoords(v, v.RGBAQ.Q);
+}
+
+template<u32 primclass, bool tme, bool fst>
+bool GSState::GetQuadCornersImpl(const GSVertex* v, const u16* i, GSVertex& vout0, GSVertex& vout1)
+{
+	static_assert(primclass == GS_SPRITE_CLASS || primclass == GS_TRIANGLE_CLASS);
+
+	if constexpr (primclass == GS_TRIANGLE_CLASS)
+	{
+		// Triangle-quad detection (AreTrianglesQuad/TriangleOrdering) is not
+		// ported yet; the fork's shuffle detection is sprite-class only.
+		return false;
+	}
+	else
+	{
+		// primclass == GS_SPRITE_CLASS
+		vout0 = v[i[0]];
+		vout1 = v[i[1]];
+	}
+
+	return true;
+}
+
+template<u32 primclass>
+void GSState::GetQuadBBoxWindowImpl(const GSVertex& v0, const GSVertex& v1, GSVector4& xyout)
+{
+	const GSVector4 xy0 = GetXYWindow(v0);
+	const GSVector4 xy1 = GetXYWindow(v1);
+
+	xyout = xy0.min(xy1).xyzw(xy0.max(xy1));
+}
+
+template<u32 primclass, bool tme, bool fst>
+void GSState::GetQuadBBoxWindowImpl(const GSVertex& v0, const GSVertex& v1, GSVector4& xyout, GSVector4& texout, bool keep_tex_order)
+{
+	if constexpr (!tme)
+	{
+		GetQuadBBoxWindowImpl<primclass>(v0, v1, xyout);
+		return;
+	}
+
+	GSVector4 xy0 = GetXYWindow(v0);
+	GSVector4 xy1 = GetXYWindow(v1);
+	GSVector4 tex0 = GetTexCoordsImpl<fst>(v0, primclass == GS_SPRITE_CLASS ? v1.RGBAQ.Q : v0.RGBAQ.Q);
+	GSVector4 tex1 = GetTexCoordsImpl<fst>(v1, v1.RGBAQ.Q);
+
+	if (!keep_tex_order)
+	{
+		xyout = xy0.min(xy1).xyzw(xy0.max(xy1));
+		texout = tex0.min(tex1).xyzw(tex0.max(tex1));
+	}
+	else
+	{
+		xyout = xy0.xyzw(xy1);
+		texout = tex0.xyzw(tex1);
+
+		const int swap = (xy0 > xy1).mask();
+
+		if (swap & 1)
+		{
+			xyout = xyout.zyxw();
+			texout = texout.zyxw();
+		}
+
+		if (swap & 2)
+		{
+			xyout = xyout.xwzy();
+			texout = texout.xwzy();
+		}
+	}
+}
+
+#define GEN_TMPL_SELECT_1(func, ...) \
+if (m_vt.m_primclass == GS_TRIANGLE_CLASS) \
+{ \
+	func<GS_TRIANGLE_CLASS>(__VA_ARGS__); \
+} \
+else if (m_vt.m_primclass == GS_SPRITE_CLASS) \
+{ \
+	func<GS_SPRITE_CLASS>(__VA_ARGS__); \
+}
+
+
+#define GEN_TMPL_SELECT_2(func, ...) \
+if (m_vt.m_primclass == GS_TRIANGLE_CLASS) \
+{ \
+	if (PRIM->TME) \
+	{ \
+		if (PRIM->FST) \
+		{ \
+			return func<GS_TRIANGLE_CLASS, true, true>(__VA_ARGS__); \
+		} \
+		else \
+		{ \
+			return func<GS_TRIANGLE_CLASS, true, false>(__VA_ARGS__); \
+		} \
+	} \
+	else \
+	{ \
+		return func<GS_TRIANGLE_CLASS>(__VA_ARGS__); \
+	} \
+} \
+else if (m_vt.m_primclass == GS_SPRITE_CLASS) \
+{ \
+	if (PRIM->TME) \
+	{ \
+		if (PRIM->FST) \
+		{ \
+			return func<GS_SPRITE_CLASS, true, true>(__VA_ARGS__); \
+		} \
+		else \
+		{ \
+			return func<GS_SPRITE_CLASS, true, false>(__VA_ARGS__); \
+		} \
+	} \
+	else \
+	{ \
+		return func<GS_SPRITE_CLASS>(__VA_ARGS__); \
+	} \
+}
+
+bool GSState::GetQuadCorners(const GSVertex* v, const u16* i, GSVertex& vout0, GSVertex& vout1)
+{
+	GEN_TMPL_SELECT_2(GetQuadCornersImpl, v, i, vout0, vout1);
+	return false;
+}
+
+void GSState::GetQuadBBoxWindow(const GSVertex& v0, const GSVertex& v1, GSVector4& xyout)
+{
+	GEN_TMPL_SELECT_1(GetQuadBBoxWindowImpl, v0, v1, xyout);
+}
+
+void GSState::GetQuadBBoxWindow(const GSVertex& v0, const GSVertex& v1, GSVector4& xyout, GSVector4& texout, bool keep_tex_order)
+{
+	GEN_TMPL_SELECT_2(GetQuadBBoxWindowImpl, v0, v1, xyout, texout, keep_tex_order);
+}
+
+#undef GEN_TMPL_SELECT_2
+#undef GEN_TMPL_SELECT_1
+
+void GSState::GetQuadRasterizedPoints(GSVector4& xy, GSVector4& tex, bool keep_order)
+{
+	// Swap so that coordinates are top-left and bottom-right.
+	const int swap = (xy.xyxy() > xy.zwzw()).mask();
+
+	if (swap & 1)
+	{
+		xy = xy.zyxw();
+		tex = tex.zyxw();
+	}
+
+	if (swap & 2)
+	{
+		xy = xy.xwzy();
+		tex = tex.xwzy();
+	}
+
+	const GSVector4 grad = (tex.zwzw() - tex.xyxy()) / (xy.zwzw() - xy.xyxy());
+
+	// Round XY to contained pixels. Omit bottom-right pixels on the edge.
+	GSVector4 xy_round = xy.ceil().xyzw(xy.floor());
+	const GSVector4 bottom_right = GSVector4::zero().xyzw(xy == xy_round);
+	xy_round = xy_round.blend32(xy_round - GSVector4(1.0f), bottom_right);
+
+	// Interpolate texture coords.
+	tex += grad * (xy_round - xy);
+
+	xy = xy_round;
+
+	// Swap back to original order if needed.
+	if (keep_order)
+	{
+		if (swap & 1)
+		{
+			xy = xy.zyxw();
+			tex = tex.zyxw();
+		}
+
+		if (swap & 2)
+		{
+			xy = xy.xwzy();
+			tex = tex.xwzy();
+		}
+	}
+}
+
+void GSState::GetQuadRasterizedPoints(GSVector4& xy, bool keep_order)
+{
+	GSVector4 tex_ignore;
+	GetQuadRasterizedPoints(xy, tex_ignore, keep_order);
+}
+
 GSVector4i GSState::GSPCRTCRegs::GetFramebufferRect(int display)
 {
 	if (display == -1)

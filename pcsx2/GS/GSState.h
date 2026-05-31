@@ -226,6 +226,32 @@ public:
 	const GSDrawingEnvironment* m_draw_env = &m_env;
 	GSDrawingContext* m_context = nullptr;
 	GSVector4i temp_draw_rect = {};
+
+	// Vertex / quad utility functions (ported from upstream refactor 26bd916e3),
+	// used by the texture-shuffle detection refactor. The triangle-class path of
+	// GetQuadCornersImpl is stubbed (sprite-class only) in the fork.
+	GSVector4 GetXYWindow(const GSVertex& v);
+	template<bool fst>
+	GSVector4 GetTexCoordsImpl(const GSVertex& v, float q);
+	template<bool fst>
+	GSVector4 GetTexCoordsImpl(const GSVertex& v);
+	GSVector4 GetTexCoords(const GSVertex& v, float q);
+	GSVector4 GetTexCoords(const GSVertex& v);
+
+	template<u32 primclass, bool tme = false, bool fst = false>
+	static bool GetQuadCornersImpl(const GSVertex* v, const u16* i, GSVertex& vout0, GSVertex& vout1);
+	bool GetQuadCorners(const GSVertex* v, const u16* i, GSVertex& vout0, GSVertex& vout1);
+
+	template<u32 primclass>
+	void GetQuadBBoxWindowImpl(const GSVertex& v0, const GSVertex& v1, GSVector4& xyout);
+	template<u32 primclass, bool tme = false, bool fst = false>
+	void GetQuadBBoxWindowImpl(const GSVertex& v0, const GSVertex& v1, GSVector4& xyout, GSVector4& texout, bool keep_tex_order = true);
+	void GetQuadBBoxWindow(const GSVertex& v0, const GSVertex& v1, GSVector4& xyout);
+	void GetQuadBBoxWindow(const GSVertex& v0, const GSVertex& v1, GSVector4& xyout, GSVector4& texout, bool keep_tex_order = true);
+
+	static void GetQuadRasterizedPoints(GSVector4& xy, bool keep_order = true);
+	static void GetQuadRasterizedPoints(GSVector4& xy, GSVector4& tex, bool keep_order = true);
+
 	bool m_scissor_invalid = false;
 	bool m_nativeres = false;
 	bool m_mipmap = false;
