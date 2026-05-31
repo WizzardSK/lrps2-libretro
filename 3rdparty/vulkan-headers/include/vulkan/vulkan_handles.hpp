@@ -932,6 +932,17 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   struct AndroidHardwareBufferFormatProperties2ANDROID;
 #endif /*VK_USE_PLATFORM_ANDROID_KHR*/
 
+  //=== VK_AMD_gpa_interface ===
+  struct GpaPerfBlockPropertiesAMD;
+  struct PhysicalDeviceGpaFeaturesAMD;
+  struct PhysicalDeviceGpaPropertiesAMD;
+  struct PhysicalDeviceGpaProperties2AMD;
+  struct GpaPerfCounterAMD;
+  struct GpaSampleBeginInfoAMD;
+  struct GpaDeviceClockModeInfoAMD;
+  struct GpaDeviceGetClockInfoAMD;
+  struct GpaSessionCreateInfoAMD;
+
 #if defined( VK_ENABLE_BETA_EXTENSIONS )
   //=== VK_AMDX_shader_enqueue ===
   struct PhysicalDeviceShaderEnqueueFeaturesAMDX;
@@ -947,7 +958,6 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   //=== VK_EXT_descriptor_heap ===
   struct HostAddressRangeEXT;
   struct HostAddressRangeConstEXT;
-  struct DeviceAddressRangeEXT;
   struct TexelBufferDescriptorInfoEXT;
   struct ImageDescriptorInfoEXT;
   struct ResourceDescriptorInfoEXT;
@@ -1099,6 +1109,9 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   //=== VK_QCOM_cooperative_matrix_conversion ===
   struct PhysicalDeviceCooperativeMatrixConversionFeaturesQCOM;
 
+  //=== VK_QCOM_elapsed_timer_query ===
+  struct PhysicalDeviceElapsedTimerQueryFeaturesQCOM;
+
   //=== VK_EXT_external_memory_host ===
   struct ImportMemoryHostPointerInfoEXT;
   struct MemoryHostPointerPropertiesEXT;
@@ -1213,6 +1226,14 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
 
   //=== VK_AMD_device_coherent_memory ===
   struct PhysicalDeviceCoherentMemoryFeaturesAMD;
+
+  //=== VK_KHR_shader_constant_data ===
+  struct PhysicalDeviceShaderConstantDataFeaturesKHR;
+
+  //=== VK_KHR_shader_abort ===
+  struct PhysicalDeviceShaderAbortFeaturesKHR;
+  struct DeviceFaultShaderAbortMessageInfoKHR;
+  struct PhysicalDeviceShaderAbortPropertiesKHR;
 
   //=== VK_EXT_shader_image_atomic_int64 ===
   struct PhysicalDeviceShaderImageAtomicInt64FeaturesEXT;
@@ -1372,6 +1393,22 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   struct PhysicalDeviceDiagnosticsConfigFeaturesNV;
   struct DeviceDiagnosticsConfigCreateInfoNV;
 
+  //=== VK_QCOM_queue_perf_hint ===
+  struct PerfHintInfoQCOM;
+  struct PhysicalDeviceQueuePerfHintFeaturesQCOM;
+  struct PhysicalDeviceQueuePerfHintPropertiesQCOM;
+
+  //=== VK_QCOM_image_processing3 ===
+  struct PhysicalDeviceImageProcessing3FeaturesQCOM;
+
+  //=== VK_QCOM_shader_multiple_wait_queues ===
+  struct PhysicalDeviceShaderMultipleWaitQueuesFeaturesQCOM;
+  struct PhysicalDeviceShaderMultipleWaitQueuesPropertiesQCOM;
+
+  //=== VK_EXT_shader_split_barrier ===
+  struct PhysicalDeviceShaderSplitBarrierFeaturesEXT;
+  struct PhysicalDeviceShaderSplitBarrierPropertiesEXT;
+
 #if defined( VK_ENABLE_BETA_EXTENSIONS )
   //=== VK_NV_cuda_kernel_launch ===
   struct CudaModuleCreateInfoNV;
@@ -1410,7 +1447,6 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
 
   //=== VK_EXT_descriptor_buffer ===
   struct PhysicalDeviceDescriptorBufferPropertiesEXT;
-  struct PhysicalDeviceDescriptorBufferDensityMapPropertiesEXT;
   struct PhysicalDeviceDescriptorBufferFeaturesEXT;
   struct DescriptorAddressInfoEXT;
   struct DescriptorBufferBindingInfoEXT;
@@ -1423,6 +1459,28 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   struct SamplerCaptureDescriptorDataInfoEXT;
   struct OpaqueCaptureDescriptorDataCreateInfoEXT;
   struct AccelerationStructureCaptureDescriptorDataInfoEXT;
+  struct PhysicalDeviceDescriptorBufferDensityMapPropertiesEXT;
+
+  //=== VK_KHR_device_address_commands ===
+  struct DeviceAddressRangeKHR;
+  using DeviceAddressRangeEXT = DeviceAddressRangeKHR;
+  struct StridedDeviceAddressRangeKHR;
+  struct DeviceMemoryCopyKHR;
+  struct CopyDeviceMemoryInfoKHR;
+  struct DeviceMemoryImageCopyKHR;
+  struct CopyDeviceMemoryImageInfoKHR;
+  struct MemoryRangeBarriersInfoKHR;
+  struct MemoryRangeBarrierKHR;
+  struct PhysicalDeviceDeviceAddressCommandsFeaturesKHR;
+  struct BindIndexBuffer3InfoKHR;
+  struct BindVertexBuffer3InfoKHR;
+  struct DrawIndirect2InfoKHR;
+  struct DrawIndirectCount2InfoKHR;
+  struct DispatchIndirect2InfoKHR;
+  struct ConditionalRenderingBeginInfo2EXT;
+  struct BindTransformFeedbackBuffer2InfoEXT;
+  struct MemoryMarkerInfoAMD;
+  struct AccelerationStructureCreateInfo2KHR;
 
   //=== VK_EXT_graphics_pipeline_library ===
   struct PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT;
@@ -1488,9 +1546,6 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   struct PhysicalDeviceFaultFeaturesEXT;
   struct DeviceFaultCountsEXT;
   struct DeviceFaultInfoEXT;
-  struct DeviceFaultAddressInfoEXT;
-  struct DeviceFaultVendorInfoEXT;
-  struct DeviceFaultVendorBinaryHeaderVersionOneEXT;
 
   //=== VK_EXT_rgba10x6_formats ===
   struct PhysicalDeviceRGBA10X6FormatsFeaturesEXT;
@@ -1628,7 +1683,6 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   struct CopyMicromapInfoEXT;
   struct MicromapBuildSizesInfoEXT;
   struct AccelerationStructureTrianglesOpacityMicromapEXT;
-  struct MicromapTriangleEXT;
 
 #if defined( VK_ENABLE_BETA_EXTENSIONS )
   //=== VK_NV_displacement_micromap ===
@@ -1656,6 +1710,8 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   struct DeviceQueueShaderCoreControlCreateInfoARM;
   struct PhysicalDeviceSchedulingControlsFeaturesARM;
   struct PhysicalDeviceSchedulingControlsPropertiesARM;
+  struct DispatchParametersARM;
+  struct PhysicalDeviceSchedulingControlsDispatchParametersPropertiesARM;
 
   //=== VK_EXT_image_sliced_view_of_3d ===
   struct PhysicalDeviceImageSlicedViewOf3DFeaturesEXT;
@@ -1955,6 +2011,10 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   struct PhysicalDeviceDataGraphOperationSupportARM;
   struct DataGraphPipelineConstantTensorSemiStructuredSparsityInfoARM;
 
+  //=== VK_ARM_data_graph_instruction_set_tosa ===
+  struct DataGraphTOSANameQualityARM;
+  struct QueueFamilyDataGraphTOSAPropertiesARM;
+
   //=== VK_QCOM_multiview_per_view_render_areas ===
   struct PhysicalDeviceMultiviewPerViewRenderAreasFeaturesQCOM;
   struct MultiviewPerViewRenderAreasRenderPassBeginInfoQCOM;
@@ -2054,7 +2114,6 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   struct TileMemorySizeInfoQCOM;
 
   //=== VK_KHR_copy_memory_indirect ===
-  struct StridedDeviceAddressRangeKHR;
   struct CopyMemoryIndirectCommandKHR;
   using CopyMemoryIndirectCommandNV = CopyMemoryIndirectCommandKHR;
   struct CopyMemoryIndirectInfoKHR;
@@ -2186,6 +2245,18 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   struct GeneratedCommandsShaderInfoEXT;
   struct WriteIndirectExecutionSetShaderEXT;
 
+  //=== VK_KHR_device_fault ===
+  struct PhysicalDeviceFaultFeaturesKHR;
+  struct PhysicalDeviceFaultPropertiesKHR;
+  struct DeviceFaultInfoKHR;
+  struct DeviceFaultDebugInfoKHR;
+  struct DeviceFaultAddressInfoKHR;
+  using DeviceFaultAddressInfoEXT = DeviceFaultAddressInfoKHR;
+  struct DeviceFaultVendorInfoKHR;
+  using DeviceFaultVendorInfoEXT = DeviceFaultVendorInfoKHR;
+  struct DeviceFaultVendorBinaryHeaderVersionOneKHR;
+  using DeviceFaultVendorBinaryHeaderVersionOneEXT = DeviceFaultVendorBinaryHeaderVersionOneKHR;
+
   //=== VK_KHR_maintenance8 ===
   struct MemoryBarrierAccessFlags3KHR;
   struct PhysicalDeviceMaintenance8FeaturesKHR;
@@ -2258,6 +2329,13 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   struct PerformanceCounterDescriptionARM;
   struct RenderPassPerformanceCountersByRegionBeginInfoARM;
 
+  //=== VK_ARM_shader_instrumentation ===
+  struct PhysicalDeviceShaderInstrumentationFeaturesARM;
+  struct PhysicalDeviceShaderInstrumentationPropertiesARM;
+  struct ShaderInstrumentationCreateInfoARM;
+  struct ShaderInstrumentationMetricDescriptionARM;
+  struct ShaderInstrumentationMetricDataHeaderARM;
+
   //=== VK_EXT_vertex_attribute_robustness ===
   struct PhysicalDeviceVertexAttributeRobustnessFeaturesEXT;
 
@@ -2275,11 +2353,9 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   struct PhysicalDeviceRobustness2PropertiesKHR;
   using PhysicalDeviceRobustness2PropertiesEXT = PhysicalDeviceRobustness2PropertiesKHR;
 
-#if defined( VK_ENABLE_BETA_EXTENSIONS )
   //=== VK_NV_present_metering ===
   struct SetPresentConfigNV;
   struct PhysicalDevicePresentMeteringFeaturesNV;
-#endif /*VK_ENABLE_BETA_EXTENSIONS*/
 
   //=== VK_EXT_fragment_density_map_offset ===
   struct PhysicalDeviceFragmentDensityMapOffsetFeaturesEXT;
@@ -2295,6 +2371,15 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   //=== VK_KHR_present_mode_fifo_latest_ready ===
   struct PhysicalDevicePresentModeFifoLatestReadyFeaturesKHR;
   using PhysicalDevicePresentModeFifoLatestReadyFeaturesEXT = PhysicalDevicePresentModeFifoLatestReadyFeaturesKHR;
+
+  //=== VK_KHR_opacity_micromap ===
+  struct AccelerationStructureGeometryMicromapDataKHR;
+  struct MicromapUsageKHR;
+  struct PhysicalDeviceOpacityMicromapFeaturesKHR;
+  struct PhysicalDeviceOpacityMicromapPropertiesKHR;
+  struct MicromapTriangleKHR;
+  using MicromapTriangleEXT = MicromapTriangleKHR;
+  struct AccelerationStructureTrianglesOpacityMicromapKHR;
 
   //=== VK_EXT_shader_64bit_indexing ===
   struct PhysicalDeviceShader64BitIndexingFeaturesEXT;
@@ -2317,6 +2402,17 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   struct RenderingAttachmentFlagsInfoKHR;
   struct ResolveImageModeInfoKHR;
 
+  //=== VK_ARM_data_graph_optical_flow ===
+  struct PhysicalDeviceDataGraphOpticalFlowFeaturesARM;
+  struct QueueFamilyDataGraphOpticalFlowPropertiesARM;
+  struct DataGraphPipelineOpticalFlowCreateInfoARM;
+  struct DataGraphOpticalFlowImageFormatPropertiesARM;
+  struct DataGraphOpticalFlowImageFormatInfoARM;
+  struct DataGraphPipelineOpticalFlowDispatchInfoARM;
+  struct DataGraphPipelineResourceInfoImageLayoutARM;
+  struct DataGraphPipelineSingleNodeCreateInfoARM;
+  struct DataGraphPipelineSingleNodeConnectionARM;
+
   //=== VK_EXT_shader_long_vector ===
   struct PhysicalDeviceShaderLongVectorFeaturesEXT;
   struct PhysicalDeviceShaderLongVectorPropertiesEXT;
@@ -2331,6 +2427,10 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   struct ComputeOccupancyPriorityParametersNV;
   struct PhysicalDeviceComputeOccupancyPriorityFeaturesNV;
 
+  //=== VK_KHR_maintenance11 ===
+  struct PhysicalDeviceMaintenance11FeaturesKHR;
+  struct QueueFamilyOptimalImageTransferGranularityPropertiesKHR;
+
   //=== VK_EXT_shader_subgroup_partitioned ===
   struct PhysicalDeviceShaderSubgroupPartitionedFeaturesEXT;
 
@@ -2341,6 +2441,21 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
 
   //=== VK_VALVE_shader_mixed_float_dot_product ===
   struct PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE;
+
+  //=== VK_SEC_throttle_hint ===
+  struct ThrottleHintSubmitInfoSEC;
+  struct PhysicalDeviceThrottleHintFeaturesSEC;
+
+  //=== VK_ARM_data_graph_neural_accelerator_statistics ===
+  struct PhysicalDeviceDataGraphNeuralAcceleratorStatisticsFeaturesARM;
+  struct DataGraphPipelineNeuralStatisticsCreateInfoARM;
+  struct DataGraphPipelineSessionNeuralStatisticsCreateInfoARM;
+
+  //=== VK_EXT_primitive_restart_index ===
+  struct PhysicalDevicePrimitiveRestartIndexFeaturesEXT;
+
+  //=== VK_NV_cooperative_matrix_decode_vector ===
+  struct PhysicalDeviceCooperativeMatrixDecodeVectorFeaturesNV;
 
   //===================================
   //=== HANDLE forward declarations ===
@@ -2404,6 +2519,9 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   //=== VK_EXT_debug_utils ===
   class DebugUtilsMessengerEXT;
 
+  //=== VK_AMD_gpa_interface ===
+  class GpaSessionAMD;
+
   //=== VK_EXT_descriptor_heap ===
   class TensorARM;
 
@@ -2462,6 +2580,9 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   class IndirectCommandsLayoutEXT;
   class IndirectExecutionSetEXT;
 
+  //=== VK_ARM_shader_instrumentation ===
+  class ShaderInstrumentationARM;
+
   typedef void( VKAPI_PTR * PFN_VoidFunction )();
 
 #ifndef VULKAN_HPP_NO_SMART_HANDLE
@@ -2480,6 +2601,15 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   using UniqueInstance = UniqueHandle<Instance, VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>;
 
   template <typename Dispatch>
+  class UniqueHandleTraits<PhysicalDevice, Dispatch>
+  {
+  public:
+    using deleter = detail::DummyDestroy<Instance, Dispatch>;
+  };
+
+  using UniquePhysicalDevice = UniqueHandle<PhysicalDevice, VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>;
+
+  template <typename Dispatch>
   class UniqueHandleTraits<Device, Dispatch>
   {
   public:
@@ -2487,6 +2617,15 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   };
 
   using UniqueDevice = UniqueHandle<Device, VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>;
+
+  template <typename Dispatch>
+  class UniqueHandleTraits<Queue, Dispatch>
+  {
+  public:
+    using deleter = detail::DummyDestroy<Device, Dispatch>;
+  };
+
+  using UniqueQueue = UniqueHandle<Queue, VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>;
 
   template <typename Dispatch>
   class UniqueHandleTraits<DeviceMemory, Dispatch>
@@ -2734,10 +2873,19 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   class UniqueHandleTraits<DisplayKHR, Dispatch>
   {
   public:
-    using deleter = detail::ObjectDestroy<PhysicalDevice, Dispatch>;
+    using deleter = detail::ObjectRelease<PhysicalDevice, Dispatch>;
   };
 
   using UniqueDisplayKHR = UniqueHandle<DisplayKHR, VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>;
+
+  template <typename Dispatch>
+  class UniqueHandleTraits<DisplayModeKHR, Dispatch>
+  {
+  public:
+    using deleter = detail::DummyDestroy<PhysicalDevice, Dispatch>;
+  };
+
+  using UniqueDisplayModeKHR = UniqueHandle<DisplayModeKHR, VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>;
 
   //=== VK_EXT_debug_report ===
   template <typename Dispatch>
@@ -2797,6 +2945,16 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
 
   using UniqueDebugUtilsMessengerEXT = UniqueHandle<DebugUtilsMessengerEXT, VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>;
 
+  //=== VK_AMD_gpa_interface ===
+  template <typename Dispatch>
+  class UniqueHandleTraits<GpaSessionAMD, Dispatch>
+  {
+  public:
+    using deleter = detail::ObjectDestroy<Device, Dispatch>;
+  };
+
+  using UniqueGpaSessionAMD = UniqueHandle<GpaSessionAMD, VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>;
+
   //=== VK_EXT_descriptor_heap ===
   template <typename Dispatch>
   class UniqueHandleTraits<TensorARM, Dispatch>
@@ -2842,7 +3000,7 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   class UniqueHandleTraits<PerformanceConfigurationINTEL, Dispatch>
   {
   public:
-    using deleter = detail::ObjectDestroy<Device, Dispatch>;
+    using deleter = detail::ObjectRelease<Device, Dispatch>;
   };
 
   using UniquePerformanceConfigurationINTEL = UniqueHandle<PerformanceConfigurationINTEL, VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>;
@@ -2988,6 +3146,16 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   };
 
   using UniqueIndirectExecutionSetEXT = UniqueHandle<IndirectExecutionSetEXT, VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>;
+
+  //=== VK_ARM_shader_instrumentation ===
+  template <typename Dispatch>
+  class UniqueHandleTraits<ShaderInstrumentationARM, Dispatch>
+  {
+  public:
+    using deleter = detail::ObjectDestroy<Device, Dispatch>;
+  };
+
+  using UniqueShaderInstrumentationARM = UniqueHandle<ShaderInstrumentationARM, VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>;
 #endif /*VULKAN_HPP_NO_SMART_HANDLE*/
 
   //===============
@@ -3737,6 +3905,92 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     static VULKAN_HPP_CONST_OR_CONSTEXPR bool value = true;
   };
 
+  // wrapper class for handle VkGpaSessionAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/VkGpaSessionAMD.html
+  class GpaSessionAMD
+  {
+  public:
+    using CType      = VkGpaSessionAMD;
+    using NativeType = VkGpaSessionAMD;
+
+    static VULKAN_HPP_CONST_OR_CONSTEXPR ObjectType               objectType            = ObjectType::eGpaSessionAMD;
+    static VULKAN_HPP_CONST_OR_CONSTEXPR DebugReportObjectTypeEXT debugReportObjectType = DebugReportObjectTypeEXT::eUnknown;
+
+  public:
+    GpaSessionAMD() VULKAN_HPP_NOEXCEPT {}  // = default; - try to workaround a compiler issue
+
+    GpaSessionAMD( GpaSessionAMD const & rhs )             = default;
+    GpaSessionAMD & operator=( GpaSessionAMD const & rhs ) = default;
+
+#if !defined( VULKAN_HPP_HANDLES_MOVE_EXCHANGE )
+    GpaSessionAMD( GpaSessionAMD && rhs )             = default;
+    GpaSessionAMD & operator=( GpaSessionAMD && rhs ) = default;
+#else
+    GpaSessionAMD( GpaSessionAMD && rhs ) VULKAN_HPP_NOEXCEPT : m_gpaSessionAMD( exchange( rhs.m_gpaSessionAMD, {} ) ) {}
+
+    GpaSessionAMD & operator=( GpaSessionAMD && rhs ) VULKAN_HPP_NOEXCEPT
+    {
+      m_gpaSessionAMD = exchange( rhs.m_gpaSessionAMD, {} );
+      return *this;
+    }
+#endif
+
+    VULKAN_HPP_CONSTEXPR GpaSessionAMD( std::nullptr_t ) VULKAN_HPP_NOEXCEPT {}
+
+    VULKAN_HPP_TYPESAFE_EXPLICIT GpaSessionAMD( VkGpaSessionAMD gpaSessionAMD ) VULKAN_HPP_NOEXCEPT : m_gpaSessionAMD( gpaSessionAMD ) {}
+
+#if ( VULKAN_HPP_TYPESAFE_CONVERSION == 1 )
+    GpaSessionAMD & operator=( VkGpaSessionAMD gpaSessionAMD ) VULKAN_HPP_NOEXCEPT
+    {
+      m_gpaSessionAMD = gpaSessionAMD;
+      return *this;
+    }
+#endif
+
+    GpaSessionAMD & operator=( std::nullptr_t ) VULKAN_HPP_NOEXCEPT
+    {
+      m_gpaSessionAMD = {};
+      return *this;
+    }
+
+    VULKAN_HPP_TYPESAFE_EXPLICIT operator VkGpaSessionAMD() const VULKAN_HPP_NOEXCEPT
+    {
+      return m_gpaSessionAMD;
+    }
+
+    explicit operator bool() const VULKAN_HPP_NOEXCEPT
+    {
+      return m_gpaSessionAMD != VK_NULL_HANDLE;
+    }
+
+    bool operator!() const VULKAN_HPP_NOEXCEPT
+    {
+      return m_gpaSessionAMD == VK_NULL_HANDLE;
+    }
+
+  private:
+    VkGpaSessionAMD m_gpaSessionAMD = {};
+  };
+
+  template <>
+  struct CppType<ObjectType, ObjectType::eGpaSessionAMD>
+  {
+    using Type = GpaSessionAMD;
+  };
+
+#if ( VK_USE_64_BIT_PTR_DEFINES == 1 )
+  template <>
+  struct CppType<VkGpaSessionAMD, VK_NULL_HANDLE>
+  {
+    using Type = GpaSessionAMD;
+  };
+#endif
+
+  template <>
+  struct isVulkanHandleType<GpaSessionAMD>
+  {
+    static VULKAN_HPP_CONST_OR_CONSTEXPR bool value = true;
+  };
+
   // wrapper class for handle VkQueryPool, see https://registry.khronos.org/vulkan/specs/latest/man/html/VkQueryPool.html
   class QueryPool
   {
@@ -3825,6 +4079,98 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
 
   template <>
   struct isVulkanHandleType<QueryPool>
+  {
+    static VULKAN_HPP_CONST_OR_CONSTEXPR bool value = true;
+  };
+
+  // wrapper class for handle VkShaderInstrumentationARM, see https://registry.khronos.org/vulkan/specs/latest/man/html/VkShaderInstrumentationARM.html
+  class ShaderInstrumentationARM
+  {
+  public:
+    using CType      = VkShaderInstrumentationARM;
+    using NativeType = VkShaderInstrumentationARM;
+
+    static VULKAN_HPP_CONST_OR_CONSTEXPR ObjectType               objectType            = ObjectType::eShaderInstrumentationARM;
+    static VULKAN_HPP_CONST_OR_CONSTEXPR DebugReportObjectTypeEXT debugReportObjectType = DebugReportObjectTypeEXT::eUnknown;
+
+  public:
+    ShaderInstrumentationARM() VULKAN_HPP_NOEXCEPT {}  // = default; - try to workaround a compiler issue
+
+    ShaderInstrumentationARM( ShaderInstrumentationARM const & rhs )             = default;
+    ShaderInstrumentationARM & operator=( ShaderInstrumentationARM const & rhs ) = default;
+
+#if !defined( VULKAN_HPP_HANDLES_MOVE_EXCHANGE )
+    ShaderInstrumentationARM( ShaderInstrumentationARM && rhs )             = default;
+    ShaderInstrumentationARM & operator=( ShaderInstrumentationARM && rhs ) = default;
+#else
+    ShaderInstrumentationARM( ShaderInstrumentationARM && rhs ) VULKAN_HPP_NOEXCEPT
+      : m_shaderInstrumentationARM( exchange( rhs.m_shaderInstrumentationARM, {} ) )
+    {
+    }
+
+    ShaderInstrumentationARM & operator=( ShaderInstrumentationARM && rhs ) VULKAN_HPP_NOEXCEPT
+    {
+      m_shaderInstrumentationARM = exchange( rhs.m_shaderInstrumentationARM, {} );
+      return *this;
+    }
+#endif
+
+    VULKAN_HPP_CONSTEXPR ShaderInstrumentationARM( std::nullptr_t ) VULKAN_HPP_NOEXCEPT {}
+
+    VULKAN_HPP_TYPESAFE_EXPLICIT ShaderInstrumentationARM( VkShaderInstrumentationARM shaderInstrumentationARM ) VULKAN_HPP_NOEXCEPT
+      : m_shaderInstrumentationARM( shaderInstrumentationARM )
+    {
+    }
+
+#if ( VULKAN_HPP_TYPESAFE_CONVERSION == 1 )
+    ShaderInstrumentationARM & operator=( VkShaderInstrumentationARM shaderInstrumentationARM ) VULKAN_HPP_NOEXCEPT
+    {
+      m_shaderInstrumentationARM = shaderInstrumentationARM;
+      return *this;
+    }
+#endif
+
+    ShaderInstrumentationARM & operator=( std::nullptr_t ) VULKAN_HPP_NOEXCEPT
+    {
+      m_shaderInstrumentationARM = {};
+      return *this;
+    }
+
+    VULKAN_HPP_TYPESAFE_EXPLICIT operator VkShaderInstrumentationARM() const VULKAN_HPP_NOEXCEPT
+    {
+      return m_shaderInstrumentationARM;
+    }
+
+    explicit operator bool() const VULKAN_HPP_NOEXCEPT
+    {
+      return m_shaderInstrumentationARM != VK_NULL_HANDLE;
+    }
+
+    bool operator!() const VULKAN_HPP_NOEXCEPT
+    {
+      return m_shaderInstrumentationARM == VK_NULL_HANDLE;
+    }
+
+  private:
+    VkShaderInstrumentationARM m_shaderInstrumentationARM = {};
+  };
+
+  template <>
+  struct CppType<ObjectType, ObjectType::eShaderInstrumentationARM>
+  {
+    using Type = ShaderInstrumentationARM;
+  };
+
+#if ( VK_USE_64_BIT_PTR_DEFINES == 1 )
+  template <>
+  struct CppType<VkShaderInstrumentationARM, VK_NULL_HANDLE>
+  {
+    using Type = ShaderInstrumentationARM;
+  };
+#endif
+
+  template <>
+  struct isVulkanHandleType<ShaderInstrumentationARM>
   {
     static VULKAN_HPP_CONST_OR_CONSTEXPR bool value = true;
   };
@@ -5518,6 +5864,12 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     // wrapper function for command vkCmdSetBlendConstants, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdSetBlendConstants.html
     template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdSetBlendConstants ), bool>::type = true>
     void setBlendConstants( float const blendConstants[4], Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdSetBlendConstants, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdSetBlendConstants.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdSetBlendConstants ), bool>::type = true>
+    void setBlendConstants( std::array<float, 4> const & blendConstants,
+                            Dispatch const & d           VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
     // wrapper function for command vkCmdSetDepthBounds, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdSetDepthBounds.html
     template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdSetDepthBounds ), bool>::type = true>
@@ -6523,6 +6875,56 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
                                    Dispatch const & d         VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
 #endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
+    //=== VK_AMD_gpa_interface ===
+
+#ifdef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdBeginGpaSessionAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdBeginGpaSessionAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdBeginGpaSessionAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result beginGpaSessionAMD( GpaSessionAMD      gpaSession,
+                                                    Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#else
+    // wrapper function for command vkCmdBeginGpaSessionAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdBeginGpaSessionAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdBeginGpaSessionAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD_WHEN_NO_EXCEPTIONS typename ResultValueType<void>::type
+      beginGpaSessionAMD( GpaSessionAMD gpaSession, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#endif /*VULKAN_HPP_DISABLE_ENHANCED_MODE*/
+
+#ifdef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdEndGpaSessionAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdEndGpaSessionAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdEndGpaSessionAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result endGpaSessionAMD( GpaSessionAMD      gpaSession,
+                                                  Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#else
+    // wrapper function for command vkCmdEndGpaSessionAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdEndGpaSessionAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdEndGpaSessionAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD_WHEN_NO_EXCEPTIONS typename ResultValueType<void>::type
+      endGpaSessionAMD( GpaSessionAMD gpaSession, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#endif /*VULKAN_HPP_DISABLE_ENHANCED_MODE*/
+
+    // wrapper function for command vkCmdBeginGpaSampleAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdBeginGpaSampleAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdBeginGpaSampleAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result beginGpaSampleAMD( GpaSessionAMD                 gpaSession,
+                                                   GpaSampleBeginInfoAMD const * pGpaSampleBeginInfo,
+                                                   uint32_t *                    pSampleID,
+                                                   Dispatch const & d            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdBeginGpaSampleAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdBeginGpaSampleAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdBeginGpaSampleAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD typename ResultValueType<uint32_t>::type beginGpaSampleAMD( GpaSessionAMD                 gpaSession,
+                                                                                     GpaSampleBeginInfoAMD const & gpaSampleBeginInfo,
+                                                                                     Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdEndGpaSampleAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdEndGpaSampleAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdEndGpaSampleAMD ), bool>::type = true>
+    void endGpaSampleAMD( GpaSessionAMD gpaSession, uint32_t sampleID, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+
+    // wrapper function for command vkCmdCopyGpaSessionResultsAMD, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdCopyGpaSessionResultsAMD.html
+    template <typename Dispatch                                                                   = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdCopyGpaSessionResultsAMD ), bool>::type = true>
+    void copyGpaSessionResultsAMD( GpaSessionAMD gpaSession, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+
 #if defined( VK_ENABLE_BETA_EXTENSIONS )
     //=== VK_AMDX_shader_enqueue ===
 
@@ -7078,9 +7480,9 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdSetFragmentShadingRateKHR.html
     template <typename Dispatch                                                                    = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
               typename std::enable_if<IS_DISPATCHED( vkCmdSetFragmentShadingRateKHR ), bool>::type = true>
-    void setFragmentShadingRateKHR( Extent2D const &                       fragmentSize,
-                                    FragmentShadingRateCombinerOpKHR const combinerOps[2],
-                                    Dispatch const & d                     VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+    void setFragmentShadingRateKHR( Extent2D const &                                        fragmentSize,
+                                    std::array<FragmentShadingRateCombinerOpKHR, 2> const & combinerOps,
+                                    Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
 #endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
     //=== VK_KHR_dynamic_rendering_local_read ===
@@ -7434,6 +7836,305 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
                                                   uint32_t           set,
                                                   Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
 
+    //=== VK_KHR_device_address_commands ===
+
+    // wrapper function for command vkCmdBindIndexBuffer3KHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdBindIndexBuffer3KHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdBindIndexBuffer3KHR ), bool>::type = true>
+    void bindIndexBuffer3KHR( BindIndexBuffer3InfoKHR const * pInfo, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdBindIndexBuffer3KHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdBindIndexBuffer3KHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdBindIndexBuffer3KHR ), bool>::type = true>
+    void bindIndexBuffer3KHR( BindIndexBuffer3InfoKHR const & info, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdBindVertexBuffers3KHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdBindVertexBuffers3KHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdBindVertexBuffers3KHR ), bool>::type = true>
+    void bindVertexBuffers3KHR( uint32_t                         firstBinding,
+                                uint32_t                         bindingCount,
+                                BindVertexBuffer3InfoKHR const * pBindingInfos,
+                                Dispatch const & d               VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdBindVertexBuffers3KHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdBindVertexBuffers3KHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdBindVertexBuffers3KHR ), bool>::type = true>
+    void bindVertexBuffers3KHR( uint32_t                                           firstBinding,
+                                ArrayProxy<BindVertexBuffer3InfoKHR const> const & bindingInfos,
+                                Dispatch const & d                                 VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdDrawIndirect2KHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDrawIndirect2KHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdDrawIndirect2KHR ), bool>::type = true>
+    void drawIndirect2KHR( DrawIndirect2InfoKHR const * pInfo, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdDrawIndirect2KHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDrawIndirect2KHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdDrawIndirect2KHR ), bool>::type = true>
+    void drawIndirect2KHR( DrawIndirect2InfoKHR const & info, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdDrawIndexedIndirect2KHR, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDrawIndexedIndirect2KHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdDrawIndexedIndirect2KHR ), bool>::type = true>
+    void drawIndexedIndirect2KHR( DrawIndirect2InfoKHR const * pInfo, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdDrawIndexedIndirect2KHR, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDrawIndexedIndirect2KHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdDrawIndexedIndirect2KHR ), bool>::type = true>
+    void drawIndexedIndirect2KHR( DrawIndirect2InfoKHR const & info, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdDispatchIndirect2KHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDispatchIndirect2KHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdDispatchIndirect2KHR ), bool>::type = true>
+    void dispatchIndirect2KHR( DispatchIndirect2InfoKHR const * pInfo, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdDispatchIndirect2KHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDispatchIndirect2KHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdDispatchIndirect2KHR ), bool>::type = true>
+    void dispatchIndirect2KHR( DispatchIndirect2InfoKHR const & info, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdCopyMemoryKHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdCopyMemoryKHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdCopyMemoryKHR ), bool>::type = true>
+    void copyMemoryKHR( CopyDeviceMemoryInfoKHR const * pCopyMemoryInfo,
+                        Dispatch const & d              VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdCopyMemoryKHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdCopyMemoryKHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdCopyMemoryKHR ), bool>::type = true>
+    void copyMemoryKHR( Optional<CopyDeviceMemoryInfoKHR const> copyMemoryInfo VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                        Dispatch const & d                                     VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdCopyMemoryToImageKHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdCopyMemoryToImageKHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdCopyMemoryToImageKHR ), bool>::type = true>
+    void copyMemoryToImageKHR( CopyDeviceMemoryImageInfoKHR const * pCopyMemoryInfo,
+                               Dispatch const & d                   VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdCopyMemoryToImageKHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdCopyMemoryToImageKHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdCopyMemoryToImageKHR ), bool>::type = true>
+    void copyMemoryToImageKHR( Optional<CopyDeviceMemoryImageInfoKHR const> copyMemoryInfo VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                               Dispatch const & d                                          VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdCopyImageToMemoryKHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdCopyImageToMemoryKHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdCopyImageToMemoryKHR ), bool>::type = true>
+    void copyImageToMemoryKHR( CopyDeviceMemoryImageInfoKHR const * pCopyMemoryInfo,
+                               Dispatch const & d                   VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdCopyImageToMemoryKHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdCopyImageToMemoryKHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdCopyImageToMemoryKHR ), bool>::type = true>
+    void copyImageToMemoryKHR( Optional<CopyDeviceMemoryImageInfoKHR const> copyMemoryInfo VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                               Dispatch const & d                                          VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdUpdateMemoryKHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdUpdateMemoryKHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdUpdateMemoryKHR ), bool>::type = true>
+    void updateMemoryKHR( DeviceAddressRangeKHR const * pDstRange,
+                          AddressCommandFlagsKHR        dstFlags,
+                          DeviceSize                    dataSize,
+                          void const *                  pData,
+                          Dispatch const & d            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdUpdateMemoryKHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdUpdateMemoryKHR.html
+    template <typename DataType,
+              typename Dispatch                                                          = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdUpdateMemoryKHR ), bool>::type = true>
+    void updateMemoryKHR( DeviceAddressRangeKHR const &      dstRange,
+                          AddressCommandFlagsKHR             dstFlags,
+                          ArrayProxy<DataType const> const & data,
+                          Dispatch const & d                 VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdFillMemoryKHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdFillMemoryKHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdFillMemoryKHR ), bool>::type = true>
+    void fillMemoryKHR( DeviceAddressRangeKHR const * pDstRange,
+                        AddressCommandFlagsKHR        dstFlags,
+                        uint32_t                      data,
+                        Dispatch const & d            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdFillMemoryKHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdFillMemoryKHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdFillMemoryKHR ), bool>::type = true>
+    void fillMemoryKHR( DeviceAddressRangeKHR const & dstRange,
+                        AddressCommandFlagsKHR        dstFlags,
+                        uint32_t                      data,
+                        Dispatch const & d            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdCopyQueryPoolResultsToMemoryKHR, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdCopyQueryPoolResultsToMemoryKHR.html
+    template <typename Dispatch                                                                          = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdCopyQueryPoolResultsToMemoryKHR ), bool>::type = true>
+    void copyQueryPoolResultsToMemoryKHR( QueryPool                            queryPool,
+                                          uint32_t                             firstQuery,
+                                          uint32_t                             queryCount,
+                                          StridedDeviceAddressRangeKHR const * pDstRange,
+                                          AddressCommandFlagsKHR               dstFlags,
+                                          QueryResultFlags                     queryResultFlags,
+                                          Dispatch const & d                   VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdCopyQueryPoolResultsToMemoryKHR, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdCopyQueryPoolResultsToMemoryKHR.html
+    template <typename Dispatch                                                                          = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdCopyQueryPoolResultsToMemoryKHR ), bool>::type = true>
+    void copyQueryPoolResultsToMemoryKHR( QueryPool                            queryPool,
+                                          uint32_t                             firstQuery,
+                                          uint32_t                             queryCount,
+                                          StridedDeviceAddressRangeKHR const & dstRange,
+                                          AddressCommandFlagsKHR dstFlags      VULKAN_HPP_DEFAULT_ASSIGNMENT( {} ),
+                                          QueryResultFlags queryResultFlags    VULKAN_HPP_DEFAULT_ASSIGNMENT( {} ),
+                                          Dispatch const & d                   VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdDrawIndirectCount2KHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDrawIndirectCount2KHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdDrawIndirectCount2KHR ), bool>::type = true>
+    void drawIndirectCount2KHR( DrawIndirectCount2InfoKHR const * pInfo,
+                                Dispatch const & d                VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdDrawIndirectCount2KHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDrawIndirectCount2KHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdDrawIndirectCount2KHR ), bool>::type = true>
+    void drawIndirectCount2KHR( DrawIndirectCount2InfoKHR const & info, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdDrawIndexedIndirectCount2KHR, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDrawIndexedIndirectCount2KHR.html
+    template <typename Dispatch                                                                       = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdDrawIndexedIndirectCount2KHR ), bool>::type = true>
+    void drawIndexedIndirectCount2KHR( DrawIndirectCount2InfoKHR const * pInfo,
+                                       Dispatch const & d                VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdDrawIndexedIndirectCount2KHR, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDrawIndexedIndirectCount2KHR.html
+    template <typename Dispatch                                                                       = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdDrawIndexedIndirectCount2KHR ), bool>::type = true>
+    void drawIndexedIndirectCount2KHR( DrawIndirectCount2InfoKHR const & info,
+                                       Dispatch const & d                VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdBeginConditionalRendering2EXT, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdBeginConditionalRendering2EXT.html
+    template <typename Dispatch                                                                        = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdBeginConditionalRendering2EXT ), bool>::type = true>
+    void beginConditionalRendering2EXT( ConditionalRenderingBeginInfo2EXT const * pConditionalRenderingBegin,
+                                        Dispatch const & d                        VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdBeginConditionalRendering2EXT, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdBeginConditionalRendering2EXT.html
+    template <typename Dispatch                                                                        = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdBeginConditionalRendering2EXT ), bool>::type = true>
+    void beginConditionalRendering2EXT( ConditionalRenderingBeginInfo2EXT const & conditionalRenderingBegin,
+                                        Dispatch const & d                        VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdBindTransformFeedbackBuffers2EXT, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdBindTransformFeedbackBuffers2EXT.html
+    template <typename Dispatch                                                                           = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdBindTransformFeedbackBuffers2EXT ), bool>::type = true>
+    void bindTransformFeedbackBuffers2EXT( uint32_t                                    firstBinding,
+                                           uint32_t                                    bindingCount,
+                                           BindTransformFeedbackBuffer2InfoEXT const * pBindingInfos,
+                                           Dispatch const & d                          VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdBindTransformFeedbackBuffers2EXT, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdBindTransformFeedbackBuffers2EXT.html
+    template <typename Dispatch                                                                           = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdBindTransformFeedbackBuffers2EXT ), bool>::type = true>
+    void bindTransformFeedbackBuffers2EXT( uint32_t                                                                   firstBinding,
+                                           ArrayProxy<BindTransformFeedbackBuffer2InfoEXT const> const & bindingInfos VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                                           Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdBeginTransformFeedback2EXT, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdBeginTransformFeedback2EXT.html
+    template <typename Dispatch                                                                     = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdBeginTransformFeedback2EXT ), bool>::type = true>
+    void beginTransformFeedback2EXT( uint32_t                                    firstCounterRange,
+                                     uint32_t                                    counterRangeCount,
+                                     BindTransformFeedbackBuffer2InfoEXT const * pCounterInfos,
+                                     Dispatch const & d                          VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdBeginTransformFeedback2EXT, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdBeginTransformFeedback2EXT.html
+    template <typename Dispatch                                                                     = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdBeginTransformFeedback2EXT ), bool>::type = true>
+    void beginTransformFeedback2EXT( uint32_t                                                                   firstCounterRange,
+                                     ArrayProxy<BindTransformFeedbackBuffer2InfoEXT const> const & counterInfos VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                                     Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdEndTransformFeedback2EXT, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdEndTransformFeedback2EXT.html
+    template <typename Dispatch                                                                   = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdEndTransformFeedback2EXT ), bool>::type = true>
+    void endTransformFeedback2EXT( uint32_t                                    firstCounterRange,
+                                   uint32_t                                    counterRangeCount,
+                                   BindTransformFeedbackBuffer2InfoEXT const * pCounterInfos,
+                                   Dispatch const & d                          VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdEndTransformFeedback2EXT, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdEndTransformFeedback2EXT.html
+    template <typename Dispatch                                                                   = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdEndTransformFeedback2EXT ), bool>::type = true>
+    void endTransformFeedback2EXT( uint32_t                                                                   firstCounterRange,
+                                   ArrayProxy<BindTransformFeedbackBuffer2InfoEXT const> const & counterInfos VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                                   Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdDrawIndirectByteCount2EXT, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDrawIndirectByteCount2EXT.html
+    template <typename Dispatch                                                                    = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdDrawIndirectByteCount2EXT ), bool>::type = true>
+    void drawIndirectByteCount2EXT( uint32_t                                    instanceCount,
+                                    uint32_t                                    firstInstance,
+                                    BindTransformFeedbackBuffer2InfoEXT const * pCounterInfo,
+                                    uint32_t                                    counterOffset,
+                                    uint32_t                                    vertexStride,
+                                    Dispatch const & d                          VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdDrawIndirectByteCount2EXT, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDrawIndirectByteCount2EXT.html
+    template <typename Dispatch                                                                    = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdDrawIndirectByteCount2EXT ), bool>::type = true>
+    void drawIndirectByteCount2EXT( uint32_t                                    instanceCount,
+                                    uint32_t                                    firstInstance,
+                                    BindTransformFeedbackBuffer2InfoEXT const & counterInfo,
+                                    uint32_t                                    counterOffset,
+                                    uint32_t                                    vertexStride,
+                                    Dispatch const & d                          VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdDrawMeshTasksIndirect2EXT, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDrawMeshTasksIndirect2EXT.html
+    template <typename Dispatch                                                                    = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdDrawMeshTasksIndirect2EXT ), bool>::type = true>
+    void drawMeshTasksIndirect2EXT( DrawIndirect2InfoKHR const * pInfo, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdDrawMeshTasksIndirect2EXT, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDrawMeshTasksIndirect2EXT.html
+    template <typename Dispatch                                                                    = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdDrawMeshTasksIndirect2EXT ), bool>::type = true>
+    void drawMeshTasksIndirect2EXT( DrawIndirect2InfoKHR const & info, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdDrawMeshTasksIndirectCount2EXT, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDrawMeshTasksIndirectCount2EXT.html
+    template <typename Dispatch                                                                         = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdDrawMeshTasksIndirectCount2EXT ), bool>::type = true>
+    void drawMeshTasksIndirectCount2EXT( DrawIndirectCount2InfoKHR const * pInfo,
+                                         Dispatch const & d                VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdDrawMeshTasksIndirectCount2EXT, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdDrawMeshTasksIndirectCount2EXT.html
+    template <typename Dispatch                                                                         = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdDrawMeshTasksIndirectCount2EXT ), bool>::type = true>
+    void drawMeshTasksIndirectCount2EXT( DrawIndirectCount2InfoKHR const & info,
+                                         Dispatch const & d                VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkCmdWriteMarkerToMemoryAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdWriteMarkerToMemoryAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdWriteMarkerToMemoryAMD ), bool>::type = true>
+    void writeMarkerToMemoryAMD( MemoryMarkerInfoAMD const * pInfo, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdWriteMarkerToMemoryAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdWriteMarkerToMemoryAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCmdWriteMarkerToMemoryAMD ), bool>::type = true>
+    void writeMarkerToMemoryAMD( MemoryMarkerInfoAMD const & info, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
     //=== VK_NV_fragment_shading_rate_enums ===
 
     // wrapper function for command vkCmdSetFragmentShadingRateEnumNV, see
@@ -7443,6 +8144,15 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     void setFragmentShadingRateEnumNV( FragmentShadingRateNV                  shadingRate,
                                        FragmentShadingRateCombinerOpKHR const combinerOps[2],
                                        Dispatch const & d                     VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdSetFragmentShadingRateEnumNV, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdSetFragmentShadingRateEnumNV.html
+    template <typename Dispatch                                                                       = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdSetFragmentShadingRateEnumNV ), bool>::type = true>
+    void setFragmentShadingRateEnumNV( FragmentShadingRateNV                                   shadingRate,
+                                       std::array<FragmentShadingRateCombinerOpKHR, 2> const & combinerOps,
+                                       Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
     //=== VK_EXT_mesh_shader ===
 
@@ -7739,6 +8449,23 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     template <typename Dispatch                                                                    = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
               typename std::enable_if<IS_DISPATCHED( vkCmdDrawClusterIndirectHUAWEI ), bool>::type = true>
     void drawClusterIndirectHUAWEI( Buffer buffer, DeviceSize offset, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+
+    //=== VK_ARM_scheduling_controls ===
+
+    // wrapper function for command vkCmdSetDispatchParametersARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdSetDispatchParametersARM.html
+    template <typename Dispatch                                                                   = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdSetDispatchParametersARM ), bool>::type = true>
+    void setDispatchParametersARM( DispatchParametersARM const * pDispatchParameters,
+                                   Dispatch const & d            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCmdSetDispatchParametersARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdSetDispatchParametersARM.html
+    template <typename Dispatch                                                                   = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdSetDispatchParametersARM ), bool>::type = true>
+    void setDispatchParametersARM( DispatchParametersARM const & dispatchParameters,
+                                   Dispatch const & d            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
     //=== VK_NV_copy_memory_indirect ===
 
@@ -8389,6 +9116,21 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
                                       Dispatch const & d               VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
 #endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
+    //=== VK_ARM_shader_instrumentation ===
+
+    // wrapper function for command vkCmdBeginShaderInstrumentationARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdBeginShaderInstrumentationARM.html
+    template <typename Dispatch                                                                        = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdBeginShaderInstrumentationARM ), bool>::type = true>
+    void beginShaderInstrumentationARM( ShaderInstrumentationARM instrumentation,
+                                        Dispatch const & d       VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+
+    // wrapper function for command vkCmdEndShaderInstrumentationARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdEndShaderInstrumentationARM.html
+    template <typename Dispatch                                                                      = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdEndShaderInstrumentationARM ), bool>::type = true>
+    void endShaderInstrumentationARM( Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+
     //=== VK_EXT_fragment_density_map_offset ===
 
     // wrapper function for command vkCmdEndRendering2EXT, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdEndRendering2EXT.html
@@ -8444,6 +9186,14 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     void setComputeOccupancyPriorityNV( ComputeOccupancyPriorityParametersNV const & parameters,
                                         Dispatch const & d                           VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
 #endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    //=== VK_EXT_primitive_restart_index ===
+
+    // wrapper function for command vkCmdSetPrimitiveRestartIndexEXT, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdSetPrimitiveRestartIndexEXT.html
+    template <typename Dispatch                                                                      = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCmdSetPrimitiveRestartIndexEXT ), bool>::type = true>
+    void setPrimitiveRestartIndexEXT( uint32_t primitiveRestartIndex, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
 
     operator VkCommandBuffer() const VULKAN_HPP_NOEXCEPT
     {
@@ -11278,6 +12028,19 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     VULKAN_HPP_NODISCARD_WHEN_NO_EXCEPTIONS typename ResultValueType<void>::type
       setPerformanceConfigurationINTEL( PerformanceConfigurationINTEL configuration, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
 #endif /*VULKAN_HPP_DISABLE_ENHANCED_MODE*/
+
+    //=== VK_QCOM_queue_perf_hint ===
+
+    // wrapper function for command vkQueueSetPerfHintQCOM, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkQueueSetPerfHintQCOM.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkQueueSetPerfHintQCOM ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result setPerfHintQCOM( PerfHintInfoQCOM const * pPerfHintInfo,
+                                                 Dispatch const & d       VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkQueueSetPerfHintQCOM, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkQueueSetPerfHintQCOM.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkQueueSetPerfHintQCOM ), bool>::type = true>
+    VULKAN_HPP_NODISCARD_WHEN_NO_EXCEPTIONS typename ResultValueType<void>::type
+      setPerfHintQCOM( PerfHintInfoQCOM const & perfHintInfo, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
     //=== VK_KHR_synchronization2 ===
 
@@ -14857,7 +15620,7 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     template <typename Dispatch                                                                                 = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
               typename std::enable_if<IS_DISPATCHED( vkGetAndroidHardwareBufferPropertiesANDROID ), bool>::type = true>
     VULKAN_HPP_NODISCARD Result
-      getAndroidHardwareBufferPropertiesANDROID( const struct AHardwareBuffer *           buffer,
+      getAndroidHardwareBufferPropertiesANDROID( struct AHardwareBuffer const *           buffer,
                                                  AndroidHardwareBufferPropertiesANDROID * pProperties,
                                                  Dispatch const & d                       VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
 #  ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
@@ -14866,7 +15629,7 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     template <typename Dispatch                                                                                 = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
               typename std::enable_if<IS_DISPATCHED( vkGetAndroidHardwareBufferPropertiesANDROID ), bool>::type = true>
     VULKAN_HPP_NODISCARD typename ResultValueType<AndroidHardwareBufferPropertiesANDROID>::type
-      getAndroidHardwareBufferPropertiesANDROID( const struct AHardwareBuffer & buffer, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+      getAndroidHardwareBufferPropertiesANDROID( struct AHardwareBuffer const & buffer, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
     // wrapper function for command vkGetAndroidHardwareBufferPropertiesANDROID, see
     // https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetAndroidHardwareBufferPropertiesANDROID.html
     template <typename X,
@@ -14875,7 +15638,7 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
               typename Dispatch                                                                                 = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
               typename std::enable_if<IS_DISPATCHED( vkGetAndroidHardwareBufferPropertiesANDROID ), bool>::type = true>
     VULKAN_HPP_NODISCARD typename ResultValueType<StructureChain<X, Y, Z...>>::type
-      getAndroidHardwareBufferPropertiesANDROID( const struct AHardwareBuffer & buffer, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+      getAndroidHardwareBufferPropertiesANDROID( struct AHardwareBuffer const & buffer, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
 #  endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
     // wrapper function for command vkGetMemoryAndroidHardwareBufferANDROID, see
@@ -14895,6 +15658,130 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
                                              Dispatch const & d                                VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
 #  endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 #endif   /*VK_USE_PLATFORM_ANDROID_KHR*/
+
+    //=== VK_AMD_gpa_interface ===
+
+    // wrapper function for command vkCreateGpaSessionAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCreateGpaSessionAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCreateGpaSessionAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result createGpaSessionAMD( GpaSessionCreateInfoAMD const * pCreateInfo,
+                                                     AllocationCallbacks const *     pAllocator,
+                                                     GpaSessionAMD *                 pGpaSession,
+                                                     Dispatch const & d              VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCreateGpaSessionAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCreateGpaSessionAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCreateGpaSessionAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD typename ResultValueType<GpaSessionAMD>::type
+      createGpaSessionAMD( GpaSessionCreateInfoAMD const &               createInfo,
+                           Optional<AllocationCallbacks const> allocator VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                           Dispatch const & d                            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#  ifndef VULKAN_HPP_NO_SMART_HANDLE
+    // wrapper function for command vkCreateGpaSessionAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkCreateGpaSessionAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkCreateGpaSessionAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD typename ResultValueType<UniqueHandle<GpaSessionAMD, Dispatch>>::type
+      createGpaSessionAMDUnique( GpaSessionCreateInfoAMD const &               createInfo,
+                                 Optional<AllocationCallbacks const> allocator VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                                 Dispatch const & d                            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#  endif /* VULKAN_HPP_NO_SMART_HANDLE */
+#endif   /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkDestroyGpaSessionAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkDestroyGpaSessionAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkDestroyGpaSessionAMD ), bool>::type = true>
+    void destroyGpaSessionAMD( GpaSessionAMD               gpaSession,
+                               AllocationCallbacks const * pAllocator,
+                               Dispatch const & d          VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkDestroyGpaSessionAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkDestroyGpaSessionAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkDestroyGpaSessionAMD ), bool>::type = true>
+    void destroyGpaSessionAMD( GpaSessionAMD gpaSession                      VULKAN_HPP_DEFAULT_ASSIGNMENT( {} ),
+                               Optional<AllocationCallbacks const> allocator VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                               Dispatch const & d                            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkDestroyGpaSessionAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkDestroyGpaSessionAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkDestroyGpaSessionAMD ), bool>::type = true>
+    void destroy( GpaSessionAMD               gpaSession,
+                  AllocationCallbacks const * pAllocator,
+                  Dispatch const & d          VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkDestroyGpaSessionAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkDestroyGpaSessionAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkDestroyGpaSessionAMD ), bool>::type = true>
+    void destroy( GpaSessionAMD                                 gpaSession,
+                  Optional<AllocationCallbacks const> allocator VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                  Dispatch const & d                            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkSetGpaDeviceClockModeAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkSetGpaDeviceClockModeAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkSetGpaDeviceClockModeAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result setGpaClockModeAMD( GpaDeviceClockModeInfoAMD * pInfo,
+                                                    Dispatch const & d          VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkSetGpaDeviceClockModeAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkSetGpaDeviceClockModeAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkSetGpaDeviceClockModeAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD typename ResultValueType<GpaDeviceClockModeInfoAMD>::type
+      setGpaClockModeAMD( Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkGetGpaDeviceClockInfoAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetGpaDeviceClockInfoAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkGetGpaDeviceClockInfoAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result getGpaClockInfoAMD( GpaDeviceGetClockInfoAMD * pInfo,
+                                                    Dispatch const & d         VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkGetGpaDeviceClockInfoAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetGpaDeviceClockInfoAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkGetGpaDeviceClockInfoAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD typename ResultValueType<GpaDeviceGetClockInfoAMD>::type
+      getGpaClockInfoAMD( Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+#ifdef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkGetGpaSessionStatusAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetGpaSessionStatusAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkGetGpaSessionStatusAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result getGpaSessionStatusAMD( GpaSessionAMD      gpaSession,
+                                                        Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#else
+    // wrapper function for command vkGetGpaSessionStatusAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetGpaSessionStatusAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkGetGpaSessionStatusAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD_WHEN_NO_EXCEPTIONS typename ResultValueType<void>::type
+      getGpaSessionStatusAMD( GpaSessionAMD gpaSession, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#endif /*VULKAN_HPP_DISABLE_ENHANCED_MODE*/
+
+    // wrapper function for command vkGetGpaSessionResultsAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetGpaSessionResultsAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkGetGpaSessionResultsAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result getGpaSessionResultsAMD( GpaSessionAMD      gpaSession,
+                                                         uint32_t           sampleID,
+                                                         size_t *           pSizeInBytes,
+                                                         void *             pData,
+                                                         Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkGetGpaSessionResultsAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetGpaSessionResultsAMD.html
+    template <typename Uint8_tAllocator                                                                               = std::allocator<uint8_t>,
+              typename Dispatch                                                                                       = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<std::is_same<typename Uint8_tAllocator::value_type, uint8_t>::value, int>::type = 0,
+              typename std::enable_if<IS_DISPATCHED( vkGetGpaSessionResultsAMD ), bool>::type                         = true>
+    VULKAN_HPP_NODISCARD typename ResultValueType<std::vector<uint8_t, Uint8_tAllocator>>::type
+      getGpaSessionResultsAMD( GpaSessionAMD gpaSession, uint32_t sampleID, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+    // wrapper function for command vkGetGpaSessionResultsAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetGpaSessionResultsAMD.html
+    template <typename Uint8_tAllocator                                                                               = std::allocator<uint8_t>,
+              typename Dispatch                                                                                       = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<std::is_same<typename Uint8_tAllocator::value_type, uint8_t>::value, int>::type = 0,
+              typename std::enable_if<IS_DISPATCHED( vkGetGpaSessionResultsAMD ), bool>::type                         = true>
+    VULKAN_HPP_NODISCARD typename ResultValueType<std::vector<uint8_t, Uint8_tAllocator>>::type
+      getGpaSessionResultsAMD( GpaSessionAMD            gpaSession,
+                               uint32_t                 sampleID,
+                               Uint8_tAllocator const & uint8_tAllocator,
+                               Dispatch const & d       VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+#ifdef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkResetGpaSessionAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkResetGpaSessionAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkResetGpaSessionAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result resetGpaSessionAMD( GpaSessionAMD      gpaSession,
+                                                    Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#else
+    // wrapper function for command vkResetGpaSessionAMD, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkResetGpaSessionAMD.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkResetGpaSessionAMD ), bool>::type = true>
+    VULKAN_HPP_NODISCARD_WHEN_NO_EXCEPTIONS typename ResultValueType<void>::type
+      resetGpaSessionAMD( GpaSessionAMD gpaSession, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#endif /*VULKAN_HPP_DISABLE_ENHANCED_MODE*/
 
 #if defined( VK_ENABLE_BETA_EXTENSIONS )
     //=== VK_AMDX_shader_enqueue ===
@@ -15805,14 +16692,14 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     template <typename Dispatch                                                                                    = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
               typename std::enable_if<IS_DISPATCHED( vkGetAccelerationStructureMemoryRequirementsNV ), bool>::type = true>
     void getAccelerationStructureMemoryRequirementsNV( AccelerationStructureMemoryRequirementsInfoNV const * pInfo,
-                                                       MemoryRequirements2KHR *                              pMemoryRequirements,
+                                                       MemoryRequirements2 *                                 pMemoryRequirements,
                                                        Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
 #ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
     // wrapper function for command vkGetAccelerationStructureMemoryRequirementsNV, see
     // https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetAccelerationStructureMemoryRequirementsNV.html
     template <typename Dispatch                                                                                    = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
               typename std::enable_if<IS_DISPATCHED( vkGetAccelerationStructureMemoryRequirementsNV ), bool>::type = true>
-    VULKAN_HPP_NODISCARD MemoryRequirements2KHR getAccelerationStructureMemoryRequirementsNV(
+    VULKAN_HPP_NODISCARD MemoryRequirements2 getAccelerationStructureMemoryRequirementsNV(
       AccelerationStructureMemoryRequirementsInfoNV const & info, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
     // wrapper function for command vkGetAccelerationStructureMemoryRequirementsNV, see
     // https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetAccelerationStructureMemoryRequirementsNV.html
@@ -17198,6 +18085,37 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
                                                               Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
 #endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
+    //=== VK_KHR_device_address_commands ===
+
+    // wrapper function for command vkCreateAccelerationStructure2KHR, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCreateAccelerationStructure2KHR.html
+    template <typename Dispatch                                                                       = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCreateAccelerationStructure2KHR ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result createAccelerationStructure2KHR( AccelerationStructureCreateInfo2KHR const * pCreateInfo,
+                                                                 AllocationCallbacks const *                 pAllocator,
+                                                                 AccelerationStructureKHR *                  pAccelerationStructure,
+                                                                 Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCreateAccelerationStructure2KHR, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCreateAccelerationStructure2KHR.html
+    template <typename Dispatch                                                                       = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCreateAccelerationStructure2KHR ), bool>::type = true>
+    VULKAN_HPP_NODISCARD typename ResultValueType<AccelerationStructureKHR>::type
+      createAccelerationStructure2KHR( AccelerationStructureCreateInfo2KHR const &   createInfo,
+                                       Optional<AllocationCallbacks const> allocator VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                                       Dispatch const & d                            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#  ifndef VULKAN_HPP_NO_SMART_HANDLE
+    // wrapper function for command vkCreateAccelerationStructure2KHR, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCreateAccelerationStructure2KHR.html
+    template <typename Dispatch                                                                       = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCreateAccelerationStructure2KHR ), bool>::type = true>
+    VULKAN_HPP_NODISCARD typename ResultValueType<UniqueHandle<AccelerationStructureKHR, Dispatch>>::type
+      createAccelerationStructure2KHRUnique( AccelerationStructureCreateInfo2KHR const &   createInfo,
+                                             Optional<AllocationCallbacks const> allocator VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                                             Dispatch const & d                            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#  endif /* VULKAN_HPP_NO_SMART_HANDLE */
+#endif   /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
     //=== VK_EXT_device_fault ===
 
     // wrapper function for command vkGetDeviceFaultInfoEXT, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetDeviceFaultInfoEXT.html
@@ -17438,14 +18356,14 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
 
     // wrapper function for command vkGetPipelinePropertiesEXT, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetPipelinePropertiesEXT.html
     template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkGetPipelinePropertiesEXT ), bool>::type = true>
-    VULKAN_HPP_NODISCARD Result getPipelinePropertiesEXT( PipelineInfoEXT const * pPipelineInfo,
+    VULKAN_HPP_NODISCARD Result getPipelinePropertiesEXT( PipelineInfoKHR const * pPipelineInfo,
                                                           BaseOutStructure *      pPipelineProperties,
                                                           Dispatch const & d      VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
 #ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
     // wrapper function for command vkGetPipelinePropertiesEXT, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetPipelinePropertiesEXT.html
     template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkGetPipelinePropertiesEXT ), bool>::type = true>
     VULKAN_HPP_NODISCARD typename ResultValueType<BaseOutStructure>::type
-      getPipelinePropertiesEXT( PipelineInfoEXT const & pipelineInfo, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+      getPipelinePropertiesEXT( PipelineInfoKHR const & pipelineInfo, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
 #endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
     //=== VK_EXT_opacity_micromap ===
@@ -17793,7 +18711,7 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     // https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetNativeBufferPropertiesOHOS.html
     template <typename Dispatch                                                                     = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
               typename std::enable_if<IS_DISPATCHED( vkGetNativeBufferPropertiesOHOS ), bool>::type = true>
-    VULKAN_HPP_NODISCARD Result getNativeBufferPropertiesOHOS( const struct OH_NativeBuffer * buffer,
+    VULKAN_HPP_NODISCARD Result getNativeBufferPropertiesOHOS( struct OH_NativeBuffer const * buffer,
                                                                NativeBufferPropertiesOHOS *   pProperties,
                                                                Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
 #  ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
@@ -17802,7 +18720,7 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     template <typename Dispatch                                                                     = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
               typename std::enable_if<IS_DISPATCHED( vkGetNativeBufferPropertiesOHOS ), bool>::type = true>
     VULKAN_HPP_NODISCARD typename ResultValueType<NativeBufferPropertiesOHOS>::type
-      getNativeBufferPropertiesOHOS( const struct OH_NativeBuffer & buffer, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+      getNativeBufferPropertiesOHOS( struct OH_NativeBuffer const & buffer, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
     // wrapper function for command vkGetNativeBufferPropertiesOHOS, see
     // https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetNativeBufferPropertiesOHOS.html
     template <typename X,
@@ -17811,7 +18729,7 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
               typename Dispatch                                                                     = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
               typename std::enable_if<IS_DISPATCHED( vkGetNativeBufferPropertiesOHOS ), bool>::type = true>
     VULKAN_HPP_NODISCARD typename ResultValueType<StructureChain<X, Y, Z...>>::type
-      getNativeBufferPropertiesOHOS( const struct OH_NativeBuffer & buffer, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+      getNativeBufferPropertiesOHOS( struct OH_NativeBuffer const & buffer, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
 #  endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
     // wrapper function for command vkGetMemoryNativeBufferOHOS, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetMemoryNativeBufferOHOS.html
@@ -18891,7 +19809,7 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     // https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetScreenBufferPropertiesQNX.html
     template <typename Dispatch                                                                    = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
               typename std::enable_if<IS_DISPATCHED( vkGetScreenBufferPropertiesQNX ), bool>::type = true>
-    VULKAN_HPP_NODISCARD Result getScreenBufferPropertiesQNX( const struct _screen_buffer * buffer,
+    VULKAN_HPP_NODISCARD Result getScreenBufferPropertiesQNX( struct _screen_buffer const * buffer,
                                                               ScreenBufferPropertiesQNX *   pProperties,
                                                               Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
 #  ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
@@ -18900,7 +19818,7 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     template <typename Dispatch                                                                    = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
               typename std::enable_if<IS_DISPATCHED( vkGetScreenBufferPropertiesQNX ), bool>::type = true>
     VULKAN_HPP_NODISCARD typename ResultValueType<ScreenBufferPropertiesQNX>::type
-      getScreenBufferPropertiesQNX( const struct _screen_buffer & buffer, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+      getScreenBufferPropertiesQNX( struct _screen_buffer const & buffer, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
     // wrapper function for command vkGetScreenBufferPropertiesQNX, see
     // https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetScreenBufferPropertiesQNX.html
     template <typename X,
@@ -18909,7 +19827,7 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
               typename Dispatch                                                                    = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
               typename std::enable_if<IS_DISPATCHED( vkGetScreenBufferPropertiesQNX ), bool>::type = true>
     VULKAN_HPP_NODISCARD typename ResultValueType<StructureChain<X, Y, Z...>>::type
-      getScreenBufferPropertiesQNX( const struct _screen_buffer & buffer, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+      getScreenBufferPropertiesQNX( struct _screen_buffer const & buffer, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
 #  endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 #endif   /*VK_USE_PLATFORM_SCREEN_QNX*/
 
@@ -19241,6 +20159,37 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
                                               Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
 #endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
+    //=== VK_KHR_device_fault ===
+
+    // wrapper function for command vkGetDeviceFaultReportsKHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetDeviceFaultReportsKHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkGetDeviceFaultReportsKHR ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result getFaultReportsKHR( uint64_t             timeout,
+                                                    uint32_t *           pFaultCounts,
+                                                    DeviceFaultInfoKHR * pFaultInfo,
+                                                    Dispatch const & d   VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkGetDeviceFaultReportsKHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetDeviceFaultReportsKHR.html
+    template <typename DeviceFaultInfoKHRAllocator = std::allocator<DeviceFaultInfoKHR>,
+              typename Dispatch                    = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<std::is_same<typename DeviceFaultInfoKHRAllocator::value_type, DeviceFaultInfoKHR>::value, int>::type = 0,
+              typename std::enable_if<IS_DISPATCHED( vkGetDeviceFaultReportsKHR ), bool>::type                                              = true>
+    VULKAN_HPP_NODISCARD ResultValue<std::vector<DeviceFaultInfoKHR, DeviceFaultInfoKHRAllocator>>
+                         getFaultReportsKHR( uint64_t timeout, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+    // wrapper function for command vkGetDeviceFaultReportsKHR, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetDeviceFaultReportsKHR.html
+    template <typename DeviceFaultInfoKHRAllocator = std::allocator<DeviceFaultInfoKHR>,
+              typename Dispatch                    = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<std::is_same<typename DeviceFaultInfoKHRAllocator::value_type, DeviceFaultInfoKHR>::value, int>::type = 0,
+              typename std::enable_if<IS_DISPATCHED( vkGetDeviceFaultReportsKHR ), bool>::type                                              = true>
+    VULKAN_HPP_NODISCARD ResultValue<std::vector<DeviceFaultInfoKHR, DeviceFaultInfoKHRAllocator>> getFaultReportsKHR(
+      uint64_t timeout, DeviceFaultInfoKHRAllocator const & deviceFaultInfoKHRAllocator, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkGetDeviceFaultDebugInfoKHR, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetDeviceFaultDebugInfoKHR.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkGetDeviceFaultDebugInfoKHR ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result getFaultDebugInfoKHR( DeviceFaultDebugInfoKHR * pDebugInfo,
+                                                      Dispatch const & d        VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+
 #if defined( VK_USE_PLATFORM_METAL_EXT )
     //=== VK_EXT_external_memory_metal ===
 
@@ -19274,6 +20223,88 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
       ExternalMemoryHandleTypeFlagBits handleType, HandleType const & handle, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
 #  endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 #endif   /*VK_USE_PLATFORM_METAL_EXT*/
+
+    //=== VK_ARM_shader_instrumentation ===
+
+    // wrapper function for command vkCreateShaderInstrumentationARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCreateShaderInstrumentationARM.html
+    template <typename Dispatch                                                                      = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCreateShaderInstrumentationARM ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result createShaderInstrumentationARM( ShaderInstrumentationCreateInfoARM const * pCreateInfo,
+                                                                AllocationCallbacks const *                pAllocator,
+                                                                ShaderInstrumentationARM *                 pInstrumentation,
+                                                                Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkCreateShaderInstrumentationARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCreateShaderInstrumentationARM.html
+    template <typename Dispatch                                                                      = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCreateShaderInstrumentationARM ), bool>::type = true>
+    VULKAN_HPP_NODISCARD typename ResultValueType<ShaderInstrumentationARM>::type
+      createShaderInstrumentationARM( ShaderInstrumentationCreateInfoARM const &    createInfo,
+                                      Optional<AllocationCallbacks const> allocator VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                                      Dispatch const & d                            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#  ifndef VULKAN_HPP_NO_SMART_HANDLE
+    // wrapper function for command vkCreateShaderInstrumentationARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkCreateShaderInstrumentationARM.html
+    template <typename Dispatch                                                                      = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkCreateShaderInstrumentationARM ), bool>::type = true>
+    VULKAN_HPP_NODISCARD typename ResultValueType<UniqueHandle<ShaderInstrumentationARM, Dispatch>>::type
+      createShaderInstrumentationARMUnique( ShaderInstrumentationCreateInfoARM const &    createInfo,
+                                            Optional<AllocationCallbacks const> allocator VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                                            Dispatch const & d                            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#  endif /* VULKAN_HPP_NO_SMART_HANDLE */
+#endif   /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkDestroyShaderInstrumentationARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkDestroyShaderInstrumentationARM.html
+    template <typename Dispatch                                                                       = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkDestroyShaderInstrumentationARM ), bool>::type = true>
+    void destroyShaderInstrumentationARM( ShaderInstrumentationARM    instrumentation,
+                                          AllocationCallbacks const * pAllocator,
+                                          Dispatch const & d          VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkDestroyShaderInstrumentationARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkDestroyShaderInstrumentationARM.html
+    template <typename Dispatch                                                                       = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkDestroyShaderInstrumentationARM ), bool>::type = true>
+    void destroyShaderInstrumentationARM( ShaderInstrumentationARM instrumentation      VULKAN_HPP_DEFAULT_ASSIGNMENT( {} ),
+                                          Optional<AllocationCallbacks const> allocator VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                                          Dispatch const & d                            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkDestroyShaderInstrumentationARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkDestroyShaderInstrumentationARM.html
+    template <typename Dispatch                                                                       = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkDestroyShaderInstrumentationARM ), bool>::type = true>
+    void destroy( ShaderInstrumentationARM    instrumentation,
+                  AllocationCallbacks const * pAllocator,
+                  Dispatch const & d          VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkDestroyShaderInstrumentationARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkDestroyShaderInstrumentationARM.html
+    template <typename Dispatch                                                                       = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkDestroyShaderInstrumentationARM ), bool>::type = true>
+    void destroy( ShaderInstrumentationARM                      instrumentation,
+                  Optional<AllocationCallbacks const> allocator VULKAN_HPP_DEFAULT_ASSIGNMENT( nullptr ),
+                  Dispatch const & d                            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    // wrapper function for command vkGetShaderInstrumentationValuesARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetShaderInstrumentationValuesARM.html
+    template <typename Dispatch                                                                         = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkGetShaderInstrumentationValuesARM ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result getShaderInstrumentationValuesARM( ShaderInstrumentationARM            instrumentation,
+                                                                   uint32_t *                          pMetricBlockCount,
+                                                                   void *                              pMetricValues,
+                                                                   ShaderInstrumentationValuesFlagsARM flags,
+                                                                   Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+
+    // wrapper function for command vkClearShaderInstrumentationMetricsARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkClearShaderInstrumentationMetricsARM.html
+    template <typename Dispatch                                                                            = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkClearShaderInstrumentationMetricsARM ), bool>::type = true>
+    void clearShaderInstrumentationMetricsARM( ShaderInstrumentationARM instrumentation,
+                                               Dispatch const & d       VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
 
     operator VkDevice() const VULKAN_HPP_NOEXCEPT
     {
@@ -19822,7 +20853,7 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
               typename std::enable_if<std::is_same<typename StructureChainAllocator::value_type, StructureChain>::value, int>::type = 0,
               typename std::enable_if<IS_DISPATCHED( vkGetPhysicalDeviceQueueFamilyProperties2 ), bool>::type                       = true>
     VULKAN_HPP_NODISCARD std::vector<StructureChain, StructureChainAllocator>
-      getQueueFamilyProperties2( StructureChainAllocator & structureChainAllocator, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+      getQueueFamilyProperties2( StructureChainAllocator const & structureChainAllocator, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
 #endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
     // wrapper function for command vkGetPhysicalDeviceMemoryProperties2, see
@@ -20385,7 +21416,7 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
               typename std::enable_if<IS_DISPATCHED( vkGetPhysicalDeviceVideoFormatPropertiesKHR ), bool>::type                     = true>
     VULKAN_HPP_NODISCARD typename ResultValueType<std::vector<StructureChain, StructureChainAllocator>>::type
       getVideoFormatPropertiesKHR( PhysicalDeviceVideoFormatInfoKHR const & videoFormatInfo,
-                                   StructureChainAllocator &                structureChainAllocator,
+                                   StructureChainAllocator const &          structureChainAllocator,
                                    Dispatch const & d                       VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
 #endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
@@ -20554,7 +21585,8 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
               typename std::enable_if<std::is_same<typename StructureChainAllocator::value_type, StructureChain>::value, int>::type = 0,
               typename std::enable_if<IS_DISPATCHED( vkGetPhysicalDeviceQueueFamilyProperties2KHR ), bool>::type                    = true>
     VULKAN_HPP_NODISCARD std::vector<StructureChain, StructureChainAllocator>
-      getQueueFamilyProperties2KHR( StructureChainAllocator & structureChainAllocator, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+                         getQueueFamilyProperties2KHR( StructureChainAllocator const & structureChainAllocator,
+                                                       Dispatch const & d              VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
 #endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
     // wrapper function for command vkGetPhysicalDeviceMemoryProperties2KHR, see
@@ -20661,6 +21693,17 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkReleaseDisplayEXT ), bool>::type = true>
     VULKAN_HPP_NODISCARD_WHEN_NO_EXCEPTIONS typename ResultValueType<void>::type
       releaseDisplayEXT( DisplayKHR display, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#endif /*VULKAN_HPP_DISABLE_ENHANCED_MODE*/
+
+#ifdef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkReleaseDisplayEXT, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkReleaseDisplayEXT.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkReleaseDisplayEXT ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result release( DisplayKHR display, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#else
+    // wrapper function for command vkReleaseDisplayEXT, see https://registry.khronos.org/vulkan/specs/latest/man/html/vkReleaseDisplayEXT.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE, typename std::enable_if<IS_DISPATCHED( vkReleaseDisplayEXT ), bool>::type = true>
+    VULKAN_HPP_NODISCARD_WHEN_NO_EXCEPTIONS typename ResultValueType<void>::type release( DisplayKHR         display,
+                                                                                          Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
 #endif /*VULKAN_HPP_DISABLE_ENHANCED_MODE*/
 
 #if defined( VK_USE_PLATFORM_XLIB_XRANDR_EXT )
@@ -20865,7 +21908,7 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
               typename std::enable_if<IS_DISPATCHED( vkGetPhysicalDeviceSurfaceFormats2KHR ), bool>::type                           = true>
     VULKAN_HPP_NODISCARD typename ResultValueType<std::vector<StructureChain, StructureChainAllocator>>::type
       getSurfaceFormats2KHR( PhysicalDeviceSurfaceInfo2KHR const & surfaceInfo,
-                             StructureChainAllocator &             structureChainAllocator,
+                             StructureChainAllocator const &       structureChainAllocator,
                              Dispatch const & d                    VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
 #endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
@@ -20969,7 +22012,7 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
               typename std::enable_if<std::is_same<typename StructureChainAllocator::value_type, StructureChain>::value, int>::type = 0,
               typename std::enable_if<IS_DISPATCHED( vkGetDisplayModeProperties2KHR ), bool>::type                                  = true>
     VULKAN_HPP_NODISCARD typename ResultValueType<std::vector<StructureChain, StructureChainAllocator>>::type getDisplayModeProperties2KHR(
-      DisplayKHR display, StructureChainAllocator & structureChainAllocator, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+      DisplayKHR display, StructureChainAllocator const & structureChainAllocator, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
 #endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
     // wrapper function for command vkGetDisplayPlaneCapabilities2KHR, see
@@ -21510,6 +22553,28 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
       Dispatch const & d                                                VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
 #endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
+    //=== VK_ARM_data_graph_instruction_set_tosa ===
+
+    // wrapper function for command vkGetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkGetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result
+      getQueueFamilyDataGraphEngineOperationPropertiesARM( uint32_t                                  queueFamilyIndex,
+                                                           QueueFamilyDataGraphPropertiesARM const * pQueueFamilyDataGraphProperties,
+                                                           BaseOutStructure *                        pProperties,
+                                                           Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkGetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkGetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM ), bool>::type = true>
+    VULKAN_HPP_NODISCARD typename ResultValueType<BaseOutStructure>::type
+      getQueueFamilyDataGraphEngineOperationPropertiesARM( uint32_t                                  queueFamilyIndex,
+                                                           QueueFamilyDataGraphPropertiesARM const & queueFamilyDataGraphProperties,
+                                                           Dispatch const & d                        VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
     //=== VK_KHR_calibrated_timestamps ===
 
     // wrapper function for command vkGetPhysicalDeviceCalibrateableTimeDomainsKHR, see
@@ -21616,6 +22681,88 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
                                                           PerformanceCounterARMAllocator const &            performanceCounterARMAllocator,
                                                           PerformanceCounterDescriptionARMAllocator const & performanceCounterDescriptionARMAllocator,
                                                           Dispatch const & d                                VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    //=== VK_ARM_shader_instrumentation ===
+
+    // wrapper function for command vkEnumeratePhysicalDeviceShaderInstrumentationMetricsARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkEnumeratePhysicalDeviceShaderInstrumentationMetricsARM.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkEnumeratePhysicalDeviceShaderInstrumentationMetricsARM ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result
+      enumerateShaderInstrumentationMetricsARM( uint32_t *                                  pDescriptionCount,
+                                                ShaderInstrumentationMetricDescriptionARM * pDescriptions,
+                                                Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkEnumeratePhysicalDeviceShaderInstrumentationMetricsARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkEnumeratePhysicalDeviceShaderInstrumentationMetricsARM.html
+    template <typename ShaderInstrumentationMetricDescriptionARMAllocator = std::allocator<ShaderInstrumentationMetricDescriptionARM>,
+              typename Dispatch                                           = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<
+                std::is_same<typename ShaderInstrumentationMetricDescriptionARMAllocator::value_type, ShaderInstrumentationMetricDescriptionARM>::value,
+                int>::type                                                                                                   = 0,
+              typename std::enable_if<IS_DISPATCHED( vkEnumeratePhysicalDeviceShaderInstrumentationMetricsARM ), bool>::type = true>
+    VULKAN_HPP_NODISCARD
+      typename ResultValueType<std::vector<ShaderInstrumentationMetricDescriptionARM, ShaderInstrumentationMetricDescriptionARMAllocator>>::type
+      enumerateShaderInstrumentationMetricsARM( Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+    // wrapper function for command vkEnumeratePhysicalDeviceShaderInstrumentationMetricsARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkEnumeratePhysicalDeviceShaderInstrumentationMetricsARM.html
+    template <typename ShaderInstrumentationMetricDescriptionARMAllocator = std::allocator<ShaderInstrumentationMetricDescriptionARM>,
+              typename Dispatch                                           = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<
+                std::is_same<typename ShaderInstrumentationMetricDescriptionARMAllocator::value_type, ShaderInstrumentationMetricDescriptionARM>::value,
+                int>::type                                                                                                   = 0,
+              typename std::enable_if<IS_DISPATCHED( vkEnumeratePhysicalDeviceShaderInstrumentationMetricsARM ), bool>::type = true>
+    VULKAN_HPP_NODISCARD
+      typename ResultValueType<std::vector<ShaderInstrumentationMetricDescriptionARM, ShaderInstrumentationMetricDescriptionARMAllocator>>::type
+      enumerateShaderInstrumentationMetricsARM( ShaderInstrumentationMetricDescriptionARMAllocator const & shaderInstrumentationMetricDescriptionARMAllocator,
+                                                Dispatch const & d                                         VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+#endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+
+    //=== VK_ARM_data_graph_optical_flow ===
+
+    // wrapper function for command vkGetPhysicalDeviceQueueFamilyDataGraphOpticalFlowImageFormatsARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetPhysicalDeviceQueueFamilyDataGraphOpticalFlowImageFormatsARM.html
+    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<IS_DISPATCHED( vkGetPhysicalDeviceQueueFamilyDataGraphOpticalFlowImageFormatsARM ), bool>::type = true>
+    VULKAN_HPP_NODISCARD Result
+      getQueueFamilyDataGraphOpticalFlowImageFormatsARM( uint32_t                                       queueFamilyIndex,
+                                                         QueueFamilyDataGraphPropertiesARM const *      pQueueFamilyDataGraphProperties,
+                                                         DataGraphOpticalFlowImageFormatInfoARM const * pOpticalFlowImageFormatInfo,
+                                                         uint32_t *                                     pFormatCount,
+                                                         DataGraphOpticalFlowImageFormatPropertiesARM * pImageFormatProperties,
+                                                         Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+#ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
+    // wrapper function for command vkGetPhysicalDeviceQueueFamilyDataGraphOpticalFlowImageFormatsARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetPhysicalDeviceQueueFamilyDataGraphOpticalFlowImageFormatsARM.html
+    template <typename DataGraphOpticalFlowImageFormatPropertiesARMAllocator = std::allocator<DataGraphOpticalFlowImageFormatPropertiesARM>,
+              typename Dispatch                                              = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<
+                std::is_same<typename DataGraphOpticalFlowImageFormatPropertiesARMAllocator::value_type, DataGraphOpticalFlowImageFormatPropertiesARM>::value,
+                int>::type                                                                                                            = 0,
+              typename std::enable_if<IS_DISPATCHED( vkGetPhysicalDeviceQueueFamilyDataGraphOpticalFlowImageFormatsARM ), bool>::type = true>
+    VULKAN_HPP_NODISCARD
+      typename ResultValueType<std::vector<DataGraphOpticalFlowImageFormatPropertiesARM, DataGraphOpticalFlowImageFormatPropertiesARMAllocator>>::type
+      getQueueFamilyDataGraphOpticalFlowImageFormatsARM( uint32_t                                       queueFamilyIndex,
+                                                         QueueFamilyDataGraphPropertiesARM const &      queueFamilyDataGraphProperties,
+                                                         DataGraphOpticalFlowImageFormatInfoARM const & opticalFlowImageFormatInfo,
+                                                         Dispatch const & d                             VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
+    // wrapper function for command vkGetPhysicalDeviceQueueFamilyDataGraphOpticalFlowImageFormatsARM, see
+    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetPhysicalDeviceQueueFamilyDataGraphOpticalFlowImageFormatsARM.html
+    template <typename DataGraphOpticalFlowImageFormatPropertiesARMAllocator = std::allocator<DataGraphOpticalFlowImageFormatPropertiesARM>,
+              typename Dispatch                                              = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename std::enable_if<
+                std::is_same<typename DataGraphOpticalFlowImageFormatPropertiesARMAllocator::value_type, DataGraphOpticalFlowImageFormatPropertiesARM>::value,
+                int>::type                                                                                                            = 0,
+              typename std::enable_if<IS_DISPATCHED( vkGetPhysicalDeviceQueueFamilyDataGraphOpticalFlowImageFormatsARM ), bool>::type = true>
+    VULKAN_HPP_NODISCARD
+      typename ResultValueType<std::vector<DataGraphOpticalFlowImageFormatPropertiesARM, DataGraphOpticalFlowImageFormatPropertiesARMAllocator>>::type
+      getQueueFamilyDataGraphOpticalFlowImageFormatsARM(
+        uint32_t                                                      queueFamilyIndex,
+        QueueFamilyDataGraphPropertiesARM const &                     queueFamilyDataGraphProperties,
+        DataGraphOpticalFlowImageFormatInfoARM const &                opticalFlowImageFormatInfo,
+        DataGraphOpticalFlowImageFormatPropertiesARMAllocator const & dataGraphOpticalFlowImageFormatPropertiesARMAllocator,
+        Dispatch const & d                                            VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
 #endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
 
 #if defined( VK_USE_PLATFORM_UBM_SEC )
@@ -22652,6 +23799,13 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
     return static_cast<typename T::NativeType>( lhs ) != static_cast<typename T::NativeType>( rhs );
   }
 
+#if defined( VULKAN_HPP_HAS_SPACESHIP_OPERATOR )
+  template <typename T, typename std::enable_if<isVulkanHandleType<T>::value, int>::type = 0>
+  auto operator<=>( T const & lhs, T const & rhs )
+  {
+    return static_cast<typename T::NativeType>( lhs ) <=> static_cast<typename T::NativeType>( rhs );
+  }
+#else
   template <typename T, typename std::enable_if<isVulkanHandleType<T>::value, int>::type = 0>
   bool operator<( T const & lhs, T const & rhs )
   {
@@ -22675,6 +23829,7 @@ VULKAN_HPP_EXPORT namespace VULKAN_HPP_NAMESPACE
   {
     return static_cast<typename T::NativeType>( lhs ) >= static_cast<typename T::NativeType>( rhs );
   }
+#endif
 
   template <typename T, typename std::enable_if<isVulkanHandleType<T>::value, int>::type = 0>
   bool operator==( T const & v, std::nullptr_t )

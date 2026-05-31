@@ -27,7 +27,7 @@ export module vulkan;
 
 export import std;
 
-VULKAN_HPP_STATIC_ASSERT( VK_HEADER_VERSION == 344, "Wrong VK_HEADER_VERSION!" );
+VULKAN_HPP_STATIC_ASSERT( VK_HEADER_VERSION == 352, "Wrong VK_HEADER_VERSION!" );
 
 #if defined( _MSC_VER )
 #  pragma warning( push )
@@ -603,6 +603,20 @@ export
   using ::PFN_vkGetMemoryAndroidHardwareBufferANDROID;
 #endif /*VK_USE_PLATFORM_ANDROID_KHR*/
 
+  //=== VK_AMD_gpa_interface ===
+  using ::PFN_vkCmdBeginGpaSampleAMD;
+  using ::PFN_vkCmdBeginGpaSessionAMD;
+  using ::PFN_vkCmdCopyGpaSessionResultsAMD;
+  using ::PFN_vkCmdEndGpaSampleAMD;
+  using ::PFN_vkCmdEndGpaSessionAMD;
+  using ::PFN_vkCreateGpaSessionAMD;
+  using ::PFN_vkDestroyGpaSessionAMD;
+  using ::PFN_vkGetGpaDeviceClockInfoAMD;
+  using ::PFN_vkGetGpaSessionResultsAMD;
+  using ::PFN_vkGetGpaSessionStatusAMD;
+  using ::PFN_vkResetGpaSessionAMD;
+  using ::PFN_vkSetGpaDeviceClockModeAMD;
+
 #if defined( VK_ENABLE_BETA_EXTENSIONS )
   //=== VK_AMDX_shader_enqueue ===
   using ::PFN_vkCmdDispatchGraphAMDX;
@@ -876,6 +890,9 @@ export
   using ::PFN_vkGetEncodedVideoSessionParametersKHR;
   using ::PFN_vkGetPhysicalDeviceVideoEncodeQualityLevelPropertiesKHR;
 
+  //=== VK_QCOM_queue_perf_hint ===
+  using ::PFN_vkQueueSetPerfHintQCOM;
+
 #if defined( VK_ENABLE_BETA_EXTENSIONS )
   //=== VK_NV_cuda_kernel_launch ===
   using ::PFN_vkCmdCudaLaunchKernelNV;
@@ -916,6 +933,30 @@ export
   using ::PFN_vkGetImageOpaqueCaptureDescriptorDataEXT;
   using ::PFN_vkGetImageViewOpaqueCaptureDescriptorDataEXT;
   using ::PFN_vkGetSamplerOpaqueCaptureDescriptorDataEXT;
+
+  //=== VK_KHR_device_address_commands ===
+  using ::PFN_vkCmdBeginConditionalRendering2EXT;
+  using ::PFN_vkCmdBeginTransformFeedback2EXT;
+  using ::PFN_vkCmdBindIndexBuffer3KHR;
+  using ::PFN_vkCmdBindTransformFeedbackBuffers2EXT;
+  using ::PFN_vkCmdBindVertexBuffers3KHR;
+  using ::PFN_vkCmdCopyImageToMemoryKHR;
+  using ::PFN_vkCmdCopyMemoryKHR;
+  using ::PFN_vkCmdCopyMemoryToImageKHR;
+  using ::PFN_vkCmdCopyQueryPoolResultsToMemoryKHR;
+  using ::PFN_vkCmdDispatchIndirect2KHR;
+  using ::PFN_vkCmdDrawIndexedIndirect2KHR;
+  using ::PFN_vkCmdDrawIndexedIndirectCount2KHR;
+  using ::PFN_vkCmdDrawIndirect2KHR;
+  using ::PFN_vkCmdDrawIndirectByteCount2EXT;
+  using ::PFN_vkCmdDrawIndirectCount2KHR;
+  using ::PFN_vkCmdDrawMeshTasksIndirect2EXT;
+  using ::PFN_vkCmdDrawMeshTasksIndirectCount2EXT;
+  using ::PFN_vkCmdEndTransformFeedback2EXT;
+  using ::PFN_vkCmdFillMemoryKHR;
+  using ::PFN_vkCmdUpdateMemoryKHR;
+  using ::PFN_vkCmdWriteMarkerToMemoryAMD;
+  using ::PFN_vkCreateAccelerationStructure2KHR;
 
   //=== VK_NV_fragment_shading_rate_enums ===
   using ::PFN_vkCmdSetFragmentShadingRateEnumNV;
@@ -1035,6 +1076,9 @@ export
   using ::PFN_vkGetDeviceBufferMemoryRequirementsKHR;
   using ::PFN_vkGetDeviceImageMemoryRequirementsKHR;
   using ::PFN_vkGetDeviceImageSparseMemoryRequirementsKHR;
+
+  //=== VK_ARM_scheduling_controls ===
+  using ::PFN_vkCmdSetDispatchParametersARM;
 
   //=== VK_VALVE_descriptor_set_host_mapping ===
   using ::PFN_vkGetDescriptorSetHostMappingVALVE;
@@ -1177,6 +1221,9 @@ export
   using ::PFN_vkGetPhysicalDeviceQueueFamilyDataGraphProcessingEnginePropertiesARM;
   using ::PFN_vkGetPhysicalDeviceQueueFamilyDataGraphPropertiesARM;
 
+  //=== VK_ARM_data_graph_instruction_set_tosa ===
+  using ::PFN_vkGetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM;
+
   //=== VK_EXT_attachment_feedback_loop_dynamic_state ===
   using ::PFN_vkCmdSetAttachmentFeedbackLoopEnableEXT;
 
@@ -1235,6 +1282,10 @@ export
   using ::PFN_vkUpdateIndirectExecutionSetPipelineEXT;
   using ::PFN_vkUpdateIndirectExecutionSetShaderEXT;
 
+  //=== VK_KHR_device_fault ===
+  using ::PFN_vkGetDeviceFaultDebugInfoKHR;
+  using ::PFN_vkGetDeviceFaultReportsKHR;
+
 #if defined( VK_USE_PLATFORM_OHOS )
   //=== VK_OHOS_surface ===
   using ::PFN_vkCreateSurfaceOHOS;
@@ -1252,6 +1303,15 @@ export
   //=== VK_ARM_performance_counters_by_region ===
   using ::PFN_vkEnumeratePhysicalDeviceQueueFamilyPerformanceCountersByRegionARM;
 
+  //=== VK_ARM_shader_instrumentation ===
+  using ::PFN_vkClearShaderInstrumentationMetricsARM;
+  using ::PFN_vkCmdBeginShaderInstrumentationARM;
+  using ::PFN_vkCmdEndShaderInstrumentationARM;
+  using ::PFN_vkCreateShaderInstrumentationARM;
+  using ::PFN_vkDestroyShaderInstrumentationARM;
+  using ::PFN_vkEnumeratePhysicalDeviceShaderInstrumentationMetricsARM;
+  using ::PFN_vkGetShaderInstrumentationValuesARM;
+
   //=== VK_EXT_fragment_density_map_offset ===
   using ::PFN_vkCmdEndRendering2EXT;
 
@@ -1261,6 +1321,9 @@ export
   //=== VK_KHR_maintenance10 ===
   using ::PFN_vkCmdEndRendering2KHR;
 
+  //=== VK_ARM_data_graph_optical_flow ===
+  using ::PFN_vkGetPhysicalDeviceQueueFamilyDataGraphOpticalFlowImageFormatsARM;
+
   //=== VK_NV_compute_occupancy_priority ===
   using ::PFN_vkCmdSetComputeOccupancyPriorityNV;
 
@@ -1269,4 +1332,7 @@ export
   using ::PFN_vkCreateUbmSurfaceSEC;
   using ::PFN_vkGetPhysicalDeviceUbmPresentationSupportSEC;
 #endif /*VK_USE_PLATFORM_UBM_SEC*/
+
+  //=== VK_EXT_primitive_restart_index ===
+  using ::PFN_vkCmdSetPrimitiveRestartIndexEXT;
 }

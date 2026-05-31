@@ -198,7 +198,7 @@ VULKAN_HPP_COMPILE_WARNING( "This is a non-conforming implementation of C++ name
 #  else
 #    define VULKAN_HPP_CONSTEXPR_17
 #  endif
-#  if ( 201907 <= __cpp_constexpr ) && ( !defined( __GNUC__ ) || ( 110400 < GCC_VERSION ) )
+#  if ( 201907 <= __cpp_constexpr ) && ( !defined( __GNUC__ ) || ( 120000 <= GCC_VERSION ) )
 #    define VULKAN_HPP_CONSTEXPR_20 constexpr
 #  else
 #    define VULKAN_HPP_CONSTEXPR_20
@@ -254,6 +254,14 @@ VULKAN_HPP_COMPILE_WARNING( "This is a non-conforming implementation of C++ name
 #else
 #  define VULKAN_HPP_NODISCARD
 #  define VULKAN_HPP_NODISCARD_WHEN_NO_EXCEPTIONS
+#endif
+
+#if 17 <= VULKAN_HPP_CPP_VERSION
+#  define VULKAN_HPP_MAYBE_UNUSED [[maybe_unused]]
+#  define VULKAN_HPP_UNUSED( var )
+#else
+#  define VULKAN_HPP_MAYBE_UNUSED
+#  define VULKAN_HPP_UNUSED( var ) ( (void)( var ) )
 #endif
 
 #if !defined( VULKAN_HPP_NAMESPACE )
