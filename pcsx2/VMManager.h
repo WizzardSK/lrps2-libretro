@@ -81,6 +81,15 @@ namespace VMManager
 	/// Reloads settings, and applies any changes present.
 	void ApplySettings();
 
+	/// Returns true if a game is loaded whose GameDB fixes (gamefixes / GS
+	/// hardware fixes) have not yet been applied this session. This happens when
+	/// a savestate is loaded before the game has booted far enough for the normal
+	/// boot path (UpdateRunningGame) to run the GameDB apply - e.g. RetroArch's
+	/// Auto Load State. Cheap: no config rebuild, just a serial lookup + counter
+	/// check. Used to gate a one-shot ApplySettings() after state load so the fix
+	/// only runs when it is actually missing, not on every unserialize.
+	bool GameFixesNeedApplying();
+
 	/// Reloads cheats/patches. If verbose is set, the number of patches loaded will be shown in the OSD.
 	void ReloadPatches();
 

@@ -2447,6 +2447,16 @@ bool retro_unserialize(const void* data, size_t size)
 			"corrupt savestate (size=%zu)\n", size);
 		return false;
 	}
+
+	/* If the state was loaded before the game booted far enough for the normal
+	 * boot path to apply GameDB settings (e.g. RetroArch Auto Load State), the
+	 * per-game GS hardware fixes were never applied and the game can render
+	 * incorrectly (issue #127). Re-apply them once, and only when actually
+	 * missing - ApplySettings() rebuilds the whole config, so we must not run it
+	 * on every unserialize. */
+	if (VMManager::GameFixesNeedApplying())
+		VMManager::ApplySettings();
+
 	return true;
 }
 
