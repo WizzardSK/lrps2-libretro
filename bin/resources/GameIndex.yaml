@@ -1942,7 +1942,6 @@ SCAJ-20171:
   gsHWFixes:
     halfPixelOffset: 4 # Aligns post processing.
     nativeScaling: 2 # Fixes post effects.
-    getSkipCount: "GSC_ZettaiZetsumeiToshi2"
 SCAJ-20172:
   name: "Final Fantasy XII"
   region: "NTSC-Unk"
@@ -32801,14 +32800,12 @@ SLPM-60253:
   gsHWFixes:
     halfPixelOffset: 4 # Aligns post processing.
     nativeScaling: 2 # Fixes post effects.
-    getSkipCount: "GSC_ZettaiZetsumeiToshi2"
 SLPM-60254:
   name: "Zettai Zetsumei Toshi 2 - Itetsuita Kioku-tachi [Trial Type-A]"
   region: "NTSC-J"
   gsHWFixes:
     halfPixelOffset: 4 # Aligns post processing.
     nativeScaling: 2 # Fixes post effects.
-    getSkipCount: "GSC_ZettaiZetsumeiToshi2"
 SLPM-60255:
   name: "Ponkotsu Roman Daikatsugeki Bumpy Trot [Trial]"
   region: "NTSC-J"
@@ -32914,7 +32911,6 @@ SLPM-60273:
   region: "NTSC-J"
   gsHWFixes:
     cpuCLUTRender: 1 # Fixes some shading/shadows.
-    getSkipCount: "GSC_ZettaiZetsumeiToshi2"
 SLPM-60274:
   name: "Full House Kiss 2 [Trial]"
   region: "NTSC-J"
@@ -49638,7 +49634,6 @@ SLPS-25606:
   gsHWFixes:
     halfPixelOffset: 4 # Aligns post processing.
     nativeScaling: 2 # Fixes post effects.
-    getSkipCount: "GSC_ZettaiZetsumeiToshi2"
 SLPS-25607:
   name: "Makai Senki Disgaea 2 [Limited Edition]"
   region: "NTSC-J"
@@ -50685,7 +50680,6 @@ SLPS-25851:
   gsHWFixes:
     halfPixelOffset: 4 # Aligns post processing.
     nativeScaling: 2 # Fixes post effects.
-    getSkipCount: "GSC_ZettaiZetsumeiToshi2"
 SLPS-25852:
   name: "Sanyo Pachinko Paradise 13 [Irem Collection]"
   region: "NTSC-J"
