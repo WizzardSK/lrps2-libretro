@@ -29,7 +29,7 @@ extern bool g_GameStarted;
 extern bool g_GameLoading;
 
 extern s32 EEsCycle;
-extern u32 EEoCycle;
+extern u64 EEoCycle;
 
 union GPR_reg {   // Declare union type GPR register
 	u128 UQ;
@@ -134,8 +134,8 @@ struct cpuRegisters {
 	u32 code;			// current instruction
 	PERFregs PERF;
 	u32 eCycle[32];
-	u32 sCycle[32];		// for internal counters
-	u32 cycle;			// calculate cpucycles..
+	u64 sCycle[32];		// for internal counters
+	u64 cycle;			// calculate cpucycles..
 	u32 interrupt;
 	int branch;
 	int opmode;			// operating mode
@@ -144,10 +144,10 @@ struct cpuRegisters {
 	u32 pcWriteback;
 
 	// if cpuRegs.cycle is greater than this cycle, should check cpuEventTest for updates
-	u32 nextEventCycle;
-	u32 lastEventCycle;
-	u32 lastCOP0Cycle;
-	u32 lastPERFCycle[2];
+	u64 nextEventCycle;
+	u64 lastEventCycle;
+	u64 lastCOP0Cycle;
+	u64 lastPERFCycle[2];
 };
 
 // used for optimization
@@ -341,7 +341,7 @@ void cpuTlbMiss(u32 addr, u32 bd, u32 excode);
 extern void GoemonPreloadTlb();
 extern void GoemonUnloadTlb(u32 key);
 
-extern int  cpuTestCycle( u32 startCycle, s32 delta );
+extern int  cpuTestCycle( u64 startCycle, s32 delta );
 extern int cpuGetCycles(void);
 
 extern void _cpuEventTest_Shared(void);	// for internal use by the Dynarecs and Ints inside R5900:

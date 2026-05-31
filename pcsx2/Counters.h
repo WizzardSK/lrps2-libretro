@@ -72,20 +72,20 @@ struct Counter
 	};
 	u32 target, hold;
 	u32 rate, interrupt;
-	u32 startCycle;		// delta values should be signed.
+	u64 startCycle;		// delta values should be signed.
 };
 
 struct SyncCounter
 {
 	u32 Mode;
-	u32 startCycle;					// start cycle of timer
+	u64 startCycle;					// start cycle of timer
 	s32 deltaCycles;
 };
 
 extern Counter counters[4];
 
 extern s32 nextDeltaCounter;		// delta until the next counter event (must be signed)
-extern u32 nextStartCounter;
+extern u64 nextStartCounter;
 
 extern void rcntUpdate(void);
 

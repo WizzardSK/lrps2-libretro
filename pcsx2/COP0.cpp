@@ -341,7 +341,7 @@ namespace COP0 {
 
 			case 9:
 			{
-				u32 incr = cpuRegs.cycle - cpuRegs.lastCOP0Cycle;
+				s64 incr = cpuRegs.cycle - cpuRegs.lastCOP0Cycle;
 				if (incr == 0)
 					incr++;
 				cpuRegs.CP0.n.Count += incr;

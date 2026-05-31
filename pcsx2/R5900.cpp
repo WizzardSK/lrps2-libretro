@@ -40,7 +40,7 @@
 #include "R5900OpcodeTables.h"
 
 s32 EEsCycle;		// used to sync the IOP to the EE
-u32 EEoCycle;
+u64 EEoCycle;
 
 alignas(16) tlbs tlb[48];
 R5900cpu *Cpu = NULL;
@@ -188,11 +188,11 @@ __fi int cpuGetCycles(void)
 
 // tests the cpu cycle against the given start and delta values.
 // Returns true if the delta time has passed.
-__fi int cpuTestCycle(u32 startCycle, s32 delta)
+__fi int cpuTestCycle(u64 startCycle, s32 delta)
 {
 	// typecast the conditional to signed so that things don't explode
 	// if the startCycle is ahead of our current cpu cycle.
-	return (int)(cpuRegs.cycle - startCycle) >= delta;
+	return (s64)(cpuRegs.cycle - startCycle) >= delta;
 }
 
 static __fi void TESTINT(u8 n, void (*callback)())

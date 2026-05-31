@@ -89,7 +89,7 @@ Counter counters[4];
 static SyncCounter hsyncCounter;
 static SyncCounter vsyncCounter;
 
-u32 nextStartCounter; // records the cpuRegs.cycle value of the last call to rcntUpdate()
+u64 nextStartCounter; // records the cpuRegs.cycle value of the last call to rcntUpdate()
 s32 nextDeltaCounter; // delta from nextStartCounter, in cycles, until the next rcntUpdate()
 
 // For Analog/Double Strike and Interlace modes
@@ -408,7 +408,7 @@ void UpdateVSyncRate(bool force)
 }
 
 // FMV switch stuff
-extern uint eecount_on_last_vdec;
+extern u64 eecount_on_last_vdec;
 extern bool FMVstarted;
 extern bool EnableFMV;
 
@@ -489,7 +489,7 @@ static __fi void _cpuTestOverflow(int i)
 }
 
 // mode - 0 means hblank source, 8 means vblank source.
-static __fi void rcntStartGate(bool isVblank, u32 sCycle)
+static __fi void rcntStartGate(bool isVblank, u64 sCycle)
 {
 	int i;
 
@@ -550,7 +550,7 @@ static __fi void rcntStartGate(bool isVblank, u32 sCycle)
 }
 
 
-static __fi void VSyncStart(u32 sCycle)
+static __fi void VSyncStart(u64 sCycle)
 {
 	int i;
 	// Update vibration at the end of a frame.
@@ -595,7 +595,7 @@ static __fi void GSVSync(void)
 }
 
 // mode - 0 means hblank signal, 8 means vblank signal.
-static __fi void rcntEndGate(bool isVblank, u32 sCycle)
+static __fi void rcntEndGate(bool isVblank, u64 sCycle)
 {
 	int i;
 
@@ -635,7 +635,7 @@ static __fi void rcntEndGate(bool isVblank, u32 sCycle)
 	// rcntUpdate, since we're being called from there anyway.
 }
 
-static __fi void VSyncEnd(u32 sCycle)
+static __fi void VSyncEnd(u64 sCycle)
 {
 	hwIntcIrq(INTC_VBLANK_E); // HW Irq
 	psxVBlankEnd(); // psxCounters vBlank End

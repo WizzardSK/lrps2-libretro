@@ -70,7 +70,7 @@ static void _vu0Exec(VURegs* VU)
 	VU->code = ptr[1];
 	VU0regs_UPPER_OPCODE[VU->code & 0x3f](&uregs);
 
-	u32 cyclesBeforeOp = vuRegs[0].cycle - 1;
+	u64 cyclesBeforeOp = vuRegs[0].cycle - 1;
 
 	_vuTestUpperStalls(VU, &uregs);
 
@@ -238,7 +238,7 @@ void InterpVU0::Execute(u32 cycles)
 
 	vuRegs[0].VI[REG_TPC].UL <<= 3;
 	vuRegs[0].flags &= ~VUFLAG_MFLAGSET;
-	u32 startcycles  = vuRegs[0].cycle;
+	u64 startcycles  = vuRegs[0].cycle;
 	while ((vuRegs[0].cycle - startcycles) < cycles)
 	{
 		if (!(vuRegs[0].VI[REG_VPU_STAT].UL & 0x1))
@@ -261,7 +261,7 @@ void InterpVU0::Execute(u32 cycles)
 
 	if (EmuConfig.Speedhacks.EECycleRate != 0 && (!EmuConfig.Gamefixes.VUSyncHack || EmuConfig.Speedhacks.EECycleRate < 0))
 	{
-		u32 cycle_change = vuRegs[0].cycle - startcycles;
+		u64 cycle_change = vuRegs[0].cycle - startcycles;
 		vuRegs[0].cycle -= cycle_change;
 		switch (std::min(static_cast<int>(EmuConfig.Speedhacks.EECycleRate), static_cast<int>(cycle_change)))
 		{

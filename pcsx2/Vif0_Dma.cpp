@@ -120,7 +120,7 @@ __fi void vif0VUFinish(void)
 	// Sync up VU0 so we don't errantly wait.
 	while (vuRegs[0].VI[REG_VPU_STAT].UL & 0x1)
 	{
-		const int cycle_diff = static_cast<int>(cpuRegs.cycle - vuRegs[0].cycle);
+		const s64 cycle_diff = static_cast<int>(cpuRegs.cycle - vuRegs[0].cycle);
 
 		if ((EmuConfig.Gamefixes.VUSyncHack && cycle_diff < vuRegs[0].nextBlockCycles) || cycle_diff <= 0)
 			break;
@@ -136,7 +136,7 @@ __fi void vif0VUFinish(void)
 
 	if ((vuRegs[0].VI[REG_VPU_STAT].UL & 1))
 	{
-		int _cycles = vuRegs[0].cycle;
+		s64 _cycles = vuRegs[0].cycle;
 		vu0Finish();
 		_cycles = vuRegs[0].cycle - _cycles;
 		CPU_INT(VIF_VU0_FINISH, _cycles * BIAS);

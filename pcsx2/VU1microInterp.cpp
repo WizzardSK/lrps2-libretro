@@ -72,7 +72,7 @@ static void _vu1Exec(VURegs* VU)
 	VU->code = ptr[1];
 	VU1regs_UPPER_OPCODE[VU->code & 0x3f](&uregs);
 
-	u32 cyclesBeforeOp = vuRegs[1].cycle-1;
+	u64 cyclesBeforeOp = vuRegs[1].cycle-1;
 
 	_vuTestUpperStalls(VU, &uregs);
 
@@ -249,7 +249,7 @@ void InterpVU1::Execute(u32 cycles)
 	const FPControlRegisterBackup fpcr_backup(EmuConfig.Cpu.VU1FPCR);
 
 	vuRegs[1].VI[REG_TPC].UL <<= 3;
-	u32 startcycles = vuRegs[1].cycle;
+	u64 startcycles = vuRegs[1].cycle;
 
 	while ((vuRegs[1].cycle - startcycles) < cycles)
 	{

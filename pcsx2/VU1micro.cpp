@@ -39,7 +39,7 @@ void vu1Finish(bool add_cycles)
 		vu1Thread.Get_MTVUChanges();
 		return;
 	}
-	u32 vu1cycles = vuRegs[1].cycle;
+	u64 vu1cycles = vuRegs[1].cycle;
 	if(vuRegs[0].VI[REG_VPU_STAT].UL & 0x100)
 		CpuVU1->Execute(vu1RunCycles);
 	if (vuRegs[0].VI[REG_VPU_STAT].UL & 0x100)
