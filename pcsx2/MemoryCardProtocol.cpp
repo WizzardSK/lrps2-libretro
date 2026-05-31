@@ -184,18 +184,19 @@ void MemoryCardProtocol::WriteData()
 	const u8 writeLength = fifoIn.front();
 	fifoIn.pop_front();
 	u8 checksum = 0x00;
-	std::vector<u8> buf;
+	/* writeLength is a u8, so at most 255 bytes are ever buffered. */
+	u8 buf[256];
 
 	for (size_t writeCounter = 0; writeCounter < writeLength; writeCounter++)
 	{
 		const u8 writeByte = fifoIn.front();
 		fifoIn.pop_front();
 		checksum ^= writeByte;
-		buf.push_back(writeByte);
+		buf[writeCounter] = writeByte;
 		fifoOut.push_back(0x00);
 	}
 
-	FileMcd_Save(mcd->port, mcd->slot, buf.data(), mcd->transferAddr, buf.size());
+	FileMcd_Save(mcd->port, mcd->slot, buf, mcd->transferAddr, writeLength);
 	fifoOut.push_back(checksum);
 	fifoOut.push_back(mcd->term);
 
@@ -209,13 +210,14 @@ void MemoryCardProtocol::ReadData()
 	fifoIn.pop_front();
 	fifoOut.push_back(0x00);
 	fifoOut.push_back(0x2b);
-	std::vector<u8> buf;
-	buf.resize(readLength);
-	FileMcd_Read(mcd->port, mcd->slot, buf.data(), mcd->transferAddr, buf.size());
+	/* readLength is a u8, so at most 255 bytes are ever read. */
+	u8 buf[256];
+	FileMcd_Read(mcd->port, mcd->slot, buf, mcd->transferAddr, readLength);
 	u8 checksum = 0x00;
 
-	for (const u8 readByte : buf)
+	for (size_t i = 0; i < readLength; i++)
 	{
+		const u8 readByte = buf[i];
 		checksum ^= readByte;
 		fifoOut.push_back(readByte);
 	}
