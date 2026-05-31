@@ -192,7 +192,7 @@ __fi int cpuTestCycle(u64 startCycle, s32 delta)
 {
 	// typecast the conditional to signed so that things don't explode
 	// if the startCycle is ahead of our current cpu cycle.
-	return (s64)(cpuRegs.cycle - startCycle) >= delta;
+	return (int)(cpuRegs.cycle - startCycle) >= delta;
 }
 
 static __fi void TESTINT(u8 n, void (*callback)())
