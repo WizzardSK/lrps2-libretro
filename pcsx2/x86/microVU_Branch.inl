@@ -128,7 +128,7 @@ void mVUDTendProgram(mV, microFlagCycles* mFC, int isEbit)
 	}
 
 	if (EmuConfig.Gamefixes.VUSyncHack || EmuConfig.Gamefixes.FullVU0SyncHack)
-		xMOV(ptr32[&vuRegs[mVU.index].nextBlockCycles], 0);
+		xMOV(ptr64[&vuRegs[mVU.index].nextBlockCycles], 0);
 
 
 	xMOV(ptr32[&vuRegs[mVU.index].VI[REG_TPC].UL], xPC);
@@ -255,7 +255,7 @@ void mVUendProgram(mV, microFlagCycles* mFC, int isEbit)
 	if ((isEbit && isEbit != 3)) // Clear 'is busy' Flags
 	{
 		if (EmuConfig.Gamefixes.VUSyncHack || EmuConfig.Gamefixes.FullVU0SyncHack)
-			xMOV(ptr32[&vuRegs[mVU.index].nextBlockCycles], 0);
+			xMOV(ptr64[&vuRegs[mVU.index].nextBlockCycles], 0);
 		if (!mVU.index || !THREAD_VU1)
 		{
 			xAND(ptr32[&vuRegs[0].VI[REG_VPU_STAT].UL], (isVU1 ? ~0x100 : ~0x001)); // VBS0/VBS1 flag
@@ -264,7 +264,7 @@ void mVUendProgram(mV, microFlagCycles* mFC, int isEbit)
 	else if(isEbit)
 	{
 		if (EmuConfig.Gamefixes.VUSyncHack || EmuConfig.Gamefixes.FullVU0SyncHack)
-			xMOV(ptr32[&vuRegs[mVU.index].nextBlockCycles], 0);
+			xMOV(ptr64[&vuRegs[mVU.index].nextBlockCycles], 0);
 	}
 
 	if (isEbit != 2 && isEbit != 3) // Save PC, and Jump to Exit Point
