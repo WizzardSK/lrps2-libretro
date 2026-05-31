@@ -78,6 +78,8 @@ protected:
 	GSTexture* GetFeedbackOutput(float& scale) override;
 
 	void Draw() override;
+	template <u32 primclass>
+	void RewriteVerticesIfSTOverflow();
 	void Queue(GSRingHeap::SharedPtr<GSRasterizerData>& item);
 	void Sync(int reason);
 	void InvalidateVideoMem(const GIFRegBITBLTBUF& BITBLTBUF, const GSVector4i& r) override;

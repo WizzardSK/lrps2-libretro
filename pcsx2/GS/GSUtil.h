@@ -25,6 +25,18 @@ public:
 
 	static GS_PRIM_CLASS GetPrimClass(u32 prim);
 
+	static constexpr int GetClassVertexCount(u32 primclass)
+	{
+		switch (primclass)
+		{
+			case GS_POINT_CLASS:    return 1;
+			case GS_LINE_CLASS:     return 2;
+			case GS_TRIANGLE_CLASS: return 3;
+			case GS_SPRITE_CLASS:   return 2;
+			default:                return -1;
+		}
+	}
+
 	static const u32* HasSharedBitsPtr(u32 dpsm);
 	static bool HasSharedBits(u32 spsm, const u32* ptr);
 	static bool HasSharedBits(u32 spsm, u32 dpsm);
