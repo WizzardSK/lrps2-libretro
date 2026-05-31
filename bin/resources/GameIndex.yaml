@@ -1005,6 +1005,8 @@ SCAJ-20014:
 SCAJ-20015:
   name: "Shin Megami Tensei III - Nocturne"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 4 # Fixes bilinear on lighting effects.
   roundModes:
     eeRoundMode: 0 # Ladder glitch in "Assembly of Nihilo B11" level.
 SCAJ-20016:
@@ -1524,6 +1526,8 @@ SCAJ-20116:
 SCAJ-20117:
   name: "Fu-un Bakumatsu-den"
   region: "NTSC-Unk"
+  gsHWFixes:
+    halfPixelOffset: 5 # Fixes vertical lines.
 SCAJ-20118:
   name: "Radiata Stories"
   region: "NTSC-J"
@@ -2256,6 +2260,9 @@ SCCS-40010:
 SCCS-40011:
   name: "Armored Core 2 - Another Age"
   region: "NTSC-C"
+  gsHWFixes:
+    minimumBlendingLevel: 4 # Fixes cloud rendering.
+    halfPixelOffset: 2 # Fixes misaligned blur.
   clampModes:
     eeClampMode: 2 # Fixes Abnormal AI behavior.
 SCCS-40012:
@@ -3313,6 +3320,9 @@ SCED-52728:
 SCED-52759:
   name: "Killzone [Demo]"
   region: "PAL-M5"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
   gsHWFixes:
@@ -3342,6 +3352,9 @@ SCED-52841:
 SCED-52846:
   name: "Killzone [Demo]"
   region: "PAL-E"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
   gsHWFixes:
@@ -3413,6 +3426,8 @@ SCED-52880:
 SCED-52899:
   name: "Killzone [Bonus Disc]"
   region: "PAL-M5"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
   gsHWFixes:
@@ -4905,6 +4920,9 @@ SCES-51979:
 SCES-52004:
   name: "Killzone"
   region: "PAL-M6"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   compat: 5
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
@@ -5236,6 +5254,9 @@ SCES-52892:
 SCES-52893:
   name: "Killzone"
   region: "PAL-E-GR-R"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
   gsHWFixes:
@@ -6737,6 +6758,9 @@ SCKA-20047:
 SCKA-20048:
   name: "Killzone"
   region: "NTSC-K"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
   gsHWFixes:
@@ -6952,6 +6976,9 @@ SCKA-20075:
 SCKA-20078:
   name: "Killzone [PlayStation 2 Big Hit Series]"
   region: "NTSC-K"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
   gsHWFixes:
@@ -9046,6 +9073,9 @@ SCPS-55023:
 SCPS-55024:
   name: "Armored Core 2 - Another Age"
   region: "NTSC-J"
+  gsHWFixes:
+    minimumBlendingLevel: 4 # Fixes cloud rendering.
+    halfPixelOffset: 2 # Fixes misaligned blur.
   clampModes:
     eeClampMode: 2 # Fixes Abnormal AI behavior.
   memcardFilters:
@@ -10596,6 +10626,9 @@ SCUS-97430:
 SCUS-97431:
   name: "Killzone Public Beta V1.0"
   region: "NTSC-U"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
   gsHWFixes:
@@ -10604,6 +10637,9 @@ SCUS-97431:
 SCUS-97432:
   name: "Killzone [Regular Demo]"
   region: "NTSC-U"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
   gsHWFixes:
@@ -11044,6 +11080,9 @@ SCUS-97516:
 SCUS-97517:
   name: "Killzone [Greatest Hits]"
   region: "NTSC-U"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
   gsHWFixes:
@@ -12219,6 +12258,9 @@ SLED-52891:
 SLED-52899:
   name: "Killzone [Bonus Disc]"
   region: "PAL-M5"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
   gsHWFixes:
@@ -14780,6 +14822,10 @@ SLES-50903:
 SLES-50905:
   name: "Armored Core 2 - Another Age"
   region: "PAL-E"
+  gsHWFixes:
+    minimumBlendingLevel: 4 # Fixes cloud rendering.
+    halfPixelOffset: 2 # Fixes misaligned blur.
+  # Save import option was removed from PAL release.
   clampModes:
     eeClampMode: 2 # Fixes Abnormal AI behavior.
   # Save import option was removed from PAL release.
@@ -17296,6 +17342,8 @@ SLES-51980:
 SLES-51981:
   name: "ShellShock - Nam '67"
   region: "PAL-E"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
   gsHWFixes:
@@ -17303,6 +17351,8 @@ SLES-51981:
 SLES-51982:
   name: "ShellShock - Nam '67"
   region: "PAL-M3"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
   gsHWFixes:
@@ -18049,6 +18099,10 @@ SLES-52341:
 SLES-52342:
   name: "Worms - Forts Under Siege"
   region: "PAL-E-F"
+  gsHWFixes:
+    PCRTCOverscan: 1 # Centers game output.
+  gameFixes:
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   compat: 5
 SLES-52343:
   name: "Midway Arcade Treasures"
@@ -19203,6 +19257,10 @@ SLES-52733:
 SLES-52734:
   name: "Worms Forts - Under Siege"
   region: "PAL-M5"
+  gsHWFixes:
+    PCRTCOverscan: 1 # Centers game output.
+  gameFixes:
+    - BlitInternalFPSHack # Fixes internal FPS detection.
 SLES-52737:
   name: "Obscure"
   region: "PAL-E"
@@ -20906,6 +20964,8 @@ SLES-53362:
 SLES-53363:
   name: "Shin Megami Tensei - Lucifer's Call"
   region: "PAL-M3"
+  gsHWFixes:
+    halfPixelOffset: 4 # Fixes bilinear on lighting effects.
   compat: 5
   roundModes:
     eeRoundMode: 0 # Fixes commands not being visible.
@@ -24908,6 +24968,8 @@ SLES-54653:
 SLES-54655:
   name: "Cabela's African Safari"
   region: "PAL-A"
+  gsHWFixes:
+    getSkipCount: "GSC_SandGrainGames"
 SLES-54656:
   name: "EyeToy - Bob the Builder"
   region: "PAL-E"
@@ -26426,9 +26488,18 @@ SLES-55091:
 SLES-55102:
   name: "The History Channel - Battle for the Pacific"
   region: "PAL-E"
+  gsHWFixes:
+    minimumBlendingLevel: 2 # Fixes rendering in DirectX 11/12.
+    recommendedBlendingLevel: 4 # Fixes shine on guns and missing lighting on grass and trees.
+    halfPixelOffset: 5 # Fixes depth alignment.
+    nativeScaling: 1 # Fixes depth intensity.
+    textureInsideRT: 1 # Fixes depth blur.
+    getSkipCount: "GSC_SandGrainGames"
 SLES-55103:
   name: "Cabela's Big Game Hunter 2008"
   region: "PAL-E"
+  gsHWFixes:
+    getSkipCount: "GSC_SandGrainGames"
 SLES-55104:
   name: "UEFA Euro 2008 - Austria-Switzerland"
   region: "PAL-E"
@@ -28680,6 +28751,8 @@ SLKA-25073:
 SLKA-25076:
   name: "Jin Yeosin Jeonsaeng III - Nocturne"
   region: "NTSC-K"
+  gsHWFixes:
+    halfPixelOffset: 4 # Fixes bilinear on lighting effects.
   roundModes:
     eeRoundMode: 0 # Ladder glitch in "Assembly of Nihilo B11" level.
 SLKA-25077:
@@ -28990,6 +29063,8 @@ SLKA-25159:
 SLKA-25160:
   name: "Jin Yeosin Jeonsaeng III - Nocturne Maniax"
   region: "NTSC-K"
+  gsHWFixes:
+    halfPixelOffset: 4 # Fixes bilinear on lighting effects.
   roundModes:
     eeRoundMode: 0 # Ladder glitch in "Assembly of Nihilo B11" level.
 SLKA-25161:
@@ -29411,6 +29486,8 @@ SLKA-25255:
 SLKA-25257:
   name: "Fu-un Bakumatsu Den"
   region: "NTSC-K"
+  gsHWFixes:
+    halfPixelOffset: 5 # Fixes vertical lines.
 SLKA-25258:
   name: "The Story of the Hero Yoshitsune"
   region: "NTSC-K"
@@ -31767,6 +31844,8 @@ SLPM-60220:
 SLPM-60225:
   name: "Fuuun Shinsengumi"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 5 # Fixes vertical lines.
 SLPM-60226:
   name: "Shadow Hearts II"
   region: "NTSC-J"
@@ -32266,6 +32345,8 @@ SLPM-61095:
 SLPM-61096:
   name: "Fuuun Bakumatsuden"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 5 # Fixes vertical lines.
 SLPM-61097:
   name: "Dengeki PS2 PlayStation D75"
   region: "NTSC-J"
@@ -33438,6 +33519,8 @@ SLPM-62285:
 SLPM-62286:
   name: "Monster Bass"
   region: "NTSC-J"
+  gsHWFixes:
+    getSkipCount: "GSC_SandGrainGames"
 SLPM-62287:
   name: "Fire Pro Wrestling Z [with Toujien BOX]"
   region: "NTSC-J"
@@ -36160,11 +36243,15 @@ SLPM-65240:
 SLPM-65241:
   name: "Shin Megami Tensei III - Nocturne [Limited Edition]"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 4 # Fixes bilinear on lighting effects.
   roundModes:
     eeRoundMode: 0 # Ladder glitch in "Assembly of Nihilo B11" level.
 SLPM-65242:
   name: "Shin Megami Tensei III - Nocturne"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 4 # Fixes bilinear on lighting effects.
   roundModes:
     eeRoundMode: 0 # Ladder glitch in "Assembly of Nihilo B11" level.
 SLPM-65243:
@@ -36240,6 +36327,8 @@ SLPM-65257:
 SLPM-65259:
   name: "Shin Megami Tensei III - Nocturne TSUTAYA Original Version"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 4 # Fixes bilinear on lighting effects.
   roundModes:
     eeRoundMode: 0 # Ladder glitch in "Assembly of Nihilo B11" level.
 SLPM-65260:
@@ -37011,6 +37100,8 @@ SLPM-65461:
 SLPM-65462:
   name: "Shin Megami Tensei III - Nocturne Maniax"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 4 # Fixes bilinear on lighting effects.
   compat: 5
   roundModes:
     eeRoundMode: 0 # Ladder glitch in "Assembly of Nihilo B11" level.
@@ -37120,6 +37211,8 @@ SLPM-65493:
 SLPM-65494:
   name: "Fuuun Shinsengumi"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 5 # Fixes vertical lines.
 SLPM-65495:
   name: "Monster Hunter"
   region: "NTSC-J"
@@ -38343,6 +38436,8 @@ SLPM-65812:
 SLPM-65813:
   name: "Fu-un Bakumatsu Den"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 5 # Fixes vertical lines.
   compat: 5
 SLPM-65815:
   name: "Tom Clancy's Splinter Cell - Pandora Tomorrow"
@@ -39738,6 +39833,9 @@ SLPM-66150:
 SLPM-66151:
   name: "Killzone"
   region: "NTSC-J"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
   gsHWFixes:
@@ -42113,6 +42211,8 @@ SLPM-66679:
 SLPM-66681:
   name: "Shin Megami Tensei III - Nocturne Maniax Chronicle Edition"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 4 # Fixes bilinear on lighting effects.
   compat: 5
   roundModes:
     eeRoundMode: 0 # Ladder glitch in "Assembly of Nihilo B11" level.
@@ -43818,6 +43918,8 @@ SLPM-74201:
 SLPM-74202:
   name: "Fuuun Shinsengumi [PlayStation 2 the Best]"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 5 # Fixes vertical lines.
 SLPM-74204:
   name: "Shutokou Battle 01 [PlayStation 2 the Best]"
   region: "NTSC-J"
@@ -43829,6 +43931,8 @@ SLPM-74204:
 SLPM-74205:
   name: "Shin Megami Tensei III - Nocturne [PlayStation 2 the Best]"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 4 # Fixes bilinear on lighting effects.
   roundModes:
     eeRoundMode: 0 # Ladder glitch in "Assembly of Nihilo B11" level.
 SLPM-74206:
@@ -43910,6 +44014,8 @@ SLPM-74227:
 SLPM-74228:
   name: "Fuuun Bakumatsu-den [PlayStation 2 the Best]"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 5 # Fixes vertical lines.
 SLPM-74229:
   name: "BioHazard 4 [PlayStation 2 the Best]"
   region: "NTSC-J"
@@ -46094,6 +46200,9 @@ SLPS-25039:
 SLPS-25040:
   name: "Armored Core 2 - Another Age"
   region: "NTSC-J"
+  gsHWFixes:
+    minimumBlendingLevel: 4 # Fixes cloud rendering.
+    halfPixelOffset: 2 # Fixes misaligned blur.
   compat: 5
   clampModes:
     eeClampMode: 2 # Fixes Abnormal AI behavior.
@@ -48897,6 +49006,8 @@ SLPS-25731:
 SLPS-25732:
   name: "Armored Core 3"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 2 # Fixes misaligned blur.
 SLPS-25733:
   name: "Super Robot Taisen OG - Original Generations"
   region: "NTSC-J"
@@ -50199,6 +50310,8 @@ SLPS-73227:
 SLPS-73228:
   name: "Fuuun Bakumatsuden [PlayStation 2 the Best]"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 5 # Fixes vertical lines.
 SLPS-73229:
   name: "TearRing Saga Series - Berwick Saga [PlayStation 2 the Best]"
   region: "NTSC-J"
@@ -50518,6 +50631,9 @@ SLPS-73410:
 SLPS-73411:
   name: "Armored Core 2 - Another Age [PlayStation 2 the Best]"
   region: "NTSC-J"
+  gsHWFixes:
+    minimumBlendingLevel: 4 # Fixes cloud rendering.
+    halfPixelOffset: 2 # Fixes misaligned blur.
   clampModes:
     eeClampMode: 2 # Fixes Abnormal AI behavior.
   memcardFilters:
@@ -51615,6 +51731,9 @@ SLUS-20247:
 SLUS-20249:
   name: "Armored Core 2 - Another Age"
   region: "NTSC-U"
+  gsHWFixes:
+    minimumBlendingLevel: 4 # Fixes cloud rendering.
+    halfPixelOffset: 2 # Fixes misaligned blur.
   clampModes:
     eeClampMode: 2 # Fixes Abnormal AI behavior.
   memcardFilters: # Can import data from regular Armored Core 2.
@@ -54566,6 +54685,8 @@ SLUS-20827:
 SLUS-20828:
   name: "ShellShock - Nam '67"
   region: "NTSC-U"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
   compat: 5
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
@@ -55033,6 +55154,8 @@ SLUS-20910:
 SLUS-20911:
   name: "Shin Megami Tensei - Nocturne"
   region: "NTSC-U"
+  gsHWFixes:
+    halfPixelOffset: 4 # Fixes bilinear on lighting effects.
   compat: 5
   roundModes:
     eeRoundMode: 0 # Ladder glitch in "Assembly of Nihilo B11" level.
@@ -56124,6 +56247,8 @@ SLUS-21091:
 SLUS-21093:
   name: "Worms Forts - Under Siege!"
   region: "NTSC-U"
+  gameFixes:
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   compat: 5
 SLUS-21094:
   name: "Midway Arcade Treasures 3"
@@ -58014,6 +58139,8 @@ SLUS-21377:
 SLUS-21379:
   name: "Cabela's African Safari"
   region: "NTSC-U"
+  gsHWFixes:
+    getSkipCount: "GSC_SandGrainGames"
   compat: 5
 SLUS-21380:
   name: "Snoopy vs. The Red Baron"
@@ -59311,10 +59438,14 @@ SLUS-21623:
 SLUS-21624:
   name: "Cabela's Trophy Bucks"
   region: "NTSC-U"
+  gsHWFixes:
+    getSkipCount: "GSC_SandGrainGames"
   compat: 5
 SLUS-21625:
   name: "Cabela's Big Game Hunter III"
   region: "NTSC-U"
+  gsHWFixes:
+    getSkipCount: "GSC_SandGrainGames"
   compat: 5
 SLUS-21626:
   name: "Stuntman - Ignition"
@@ -59774,6 +59905,13 @@ SLUS-21711:
 SLUS-21712:
   name: "History Channel - Battle for the Pacific"
   region: "NTSC-U"
+  gsHWFixes:
+    minimumBlendingLevel: 2 # Fixes rendering in DirectX 11/12.
+    recommendedBlendingLevel: 4 # Fixes shine on guns and missing lighting on grass and trees.
+    halfPixelOffset: 5 # Fixes depth alignment.
+    nativeScaling: 1 # Fixes depth intensity.
+    textureInsideRT: 1 # Fixes depth blur.
+    getSkipCount: "GSC_SandGrainGames"
   compat: 5
 SLUS-21713:
   name: "Winter Sports 2008 - The Ultimate Challenge"
@@ -59791,6 +59929,8 @@ SLUS-21714:
 SLUS-21715:
   name: "Cabela's Monster Bass"
   region: "NTSC-U"
+  gsHWFixes:
+    getSkipCount: "GSC_SandGrainGames"
   compat: 5
 SLUS-21716:
   name: "The Spiderwick Chronicles"
@@ -60219,6 +60359,8 @@ SLUS-21788:
 SLUS-21789:
   name: "Cabela's Legendary Adventures"
   region: "NTSC-U"
+  gsHWFixes:
+    getSkipCount: "GSC_SandGrainGames"
   compat: 5
 SLUS-21790:
   name: "DreamWorks Shrek's Carnival Craze - Party Games"
@@ -61150,6 +61292,8 @@ SLUS-28044:
 SLUS-28045:
   name: "Shin Megami Tensei - Nocturne [Trade Demo]"
   region: "NTSC-U"
+  gsHWFixes:
+    halfPixelOffset: 4 # Fixes bilinear on lighting effects.
   roundModes:
     eeRoundMode: 0 # Ladder glitch in "Assembly of Nihilo B11" level.
 SLUS-28046:
@@ -62042,6 +62186,9 @@ TCES-51904:
 TCES-52004:
   name: "Killzone Beta Trial Code"
   region: "PAL-E"
+  gameFixes:
+    - IbitHack # Reduces VU recompilation.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   clampModes:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
   gsHWFixes:
