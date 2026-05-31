@@ -1081,6 +1081,508 @@ GSVector4i GSRendererHW::GetSplitTextureShuffleDrawRect() const
 	return r.insert64<0>(0).ralign<Align_Outside>(frame_psm.pgs);
 }
 
+/* --- Texture-shuffle detection (ported from upstream refactor 06616ec98). ---
+ * Populates m_texture_shuffle_info in parallel with the legacy detection; the
+ * result is not consumed yet (stage 3 rewires the conversion onto it). GL_INS/
+ * GL_PUSH debug logging and pxFail asserts are dropped (absent in the fork), the
+ * GS_TRIANGLE_CLASS path relies on the stubbed GetQuadCorners (sprite-only), and
+ * the raw 16-bit fbmsk is computed inline via Convert32BitTo16BitMask rather than
+ * through the fork's GetEffectiveTextureShuffleFbmsk, which returns a different
+ * (already-collapsed) value shape. */
+u32 GSRendererHW::Convert32BitTo16BitMask(u32 m)
+{
+	return ((m >> 3) & 0x1F) | ((m >> 6) & 0x3E0) | ((m >> 9) & 0x7C00) | ((m >> 16) & 0x8000);
+}
+
+template<u32 primclass, bool fst>
+GSRendererHW::TextureShuffleInfo GSRendererHW::DetectTextureShuffleImpl()
+{
+	static_assert(primclass == GS_SPRITE_CLASS || primclass == GS_TRIANGLE_CLASS);
+
+	const GIFRegFRAME& frame = m_context->FRAME;
+	const GIFRegTEX0& tex0 = m_context->TEX0;
+	const GIFRegCLAMP& clamp = m_context->CLAMP;
+	const GSLocalMemory::psm_t& frame_psm = GSLocalMemory::m_psm[frame.PSM];
+	const GSLocalMemory::psm_t& tex_psm = GSLocalMemory::m_psm[tex0.PSM];
+
+	const GSVertex* RESTRICT verts = m_vertex.buff;
+	const u16* RESTRICT index = m_index.buff;
+	constexpr u32 verts_per_quad = primclass == GS_SPRITE_CLASS ? 2 : 6;
+	const u32 num_quads = m_index.tail / verts_per_quad;
+
+	// Early exit if not texture mapping, not enough vertices to form a quad,
+	// or the RT is not a 16 bit format.
+	if (!PRIM->TME ||
+		(primclass == GS_SPRITE_CLASS && m_index.tail < 2) ||
+		(primclass == GS_TRIANGLE_CLASS && m_index.tail < 6) ||
+		(m_index.tail % verts_per_quad != 0) ||
+		(frame_psm.bpp != 16))
+	{
+		return { TextureShuffleType::None, TextureShuffleChannels_None };
+	}
+
+	const auto GetQuadXYUV = [&](u32 i, GSVector4i& xyout, GSVector4i& uvout) {
+		GSVertex v0, v1;
+		if (!GetQuadCorners(verts, index + verts_per_quad * i, v0, v1))
+			return false;
+
+		GSVector4 xy, uv;
+		GetQuadBBoxWindow(v0, v1, xy, uv);
+
+		GetQuadRasterizedPoints(xy, uv);
+
+		const GSVector4i exclusive(0, 0, 1, 1);
+		xyout = GSVector4i(xy) + exclusive;
+
+		// Swap order UV coords so that they are top-left and bottom-right before applying
+		// exclusive bias, and then swap back.
+		const int uvswap = (uv.xyxy() > uv.zwzw()).mask();
+		uvout = GSVector4i(uv.floor());
+		uvout = uvout.xyxy().runion(uvout.zwzw()) + exclusive;
+		if (uvswap & 1)
+			uvout = uvout.zyxw();
+		if (uvswap & 2)
+			uvout = uvout.xwzy();
+		
+		return true;
+	};
+
+	const auto Is8PixelReversal = [](const GSVector4i& xy, const GSVector4i& uv) {
+		const int x_pixels = xy.width();
+		return x_pixels == 8 && (xy.xxzz() == uv.zzxx()).alltrue();
+	};
+
+
+	int first_quad = 0;
+
+	GSVector4i xy;
+	GSVector4i uv;
+	if (!GetQuadXYUV(first_quad, xy, uv))
+		return { TextureShuffleType::None, TextureShuffleChannels_None };
+
+	// In some cases the first quad doesn't do any other than reversing the
+	// pixels in a single columns, so ignore such a quad.
+	if (Is8PixelReversal(xy, uv))
+	{
+		if (!GetQuadXYUV(++first_quad, xy, uv))
+			return { TextureShuffleType::None, TextureShuffleChannels_None };
+	}
+
+		xy.x, xy.y, xy.z, xy.w, uv.x, uv.y, uv.z, uv.w);
+
+	const int x_pixels = xy.width();
+	const int y_pixels = xy.height();
+	const int u_pixels = std::abs(uv.width());
+	const int v_pixels = std::abs(uv.height());
+
+	const int x_u_offset = std::abs(xy.x - uv.x) % 16;
+
+	// Handle the two pixel Powerdrome shuffle as a one-off, since
+	// it doesn't fit nicely into the other detection.
+	const bool two_pixel = x_pixels == 2 && y_pixels == 2 && u_pixels == 1 && v_pixels == 1 &&
+	                       tex_psm.bpp == 16 && frame_psm.bpp == 16 && num_quads == 1;
+
+	if (x_pixels != u_pixels && !two_pixel)
+	{
+		return { TextureShuffleType::None, TextureShuffleChannels_None };
+	}
+
+	if ((x_pixels % 8) != 0 && !two_pixel)
+	{
+		return { TextureShuffleType::None, TextureShuffleChannels_None };
+	}
+
+	const auto CheckSwizzleShuffle = [&]() {
+		// All the quads must be 8 x 8 pixels.
+		if (!(x_pixels == 8 && y_pixels == 8 && u_pixels == 8 && v_pixels == 8))
+			return false;
+
+		// Position and texture coords must be moving in opposite axes to swizzle.
+		GSVector4i xy_1, uv_1;
+		if (!GetQuadXYUV(first_quad + 1, xy_1, uv_1))
+			return false;
+
+		const GSVector4i dxy = (xy_1.xyxy() - xy.xyxy()).abs32();
+		const GSVector4i duv = (uv_1.xyxy() - uv.xyxy()).abs32();
+
+		return (dxy == duv.yxyx()).alltrue();
+	};
+
+	const auto CheckQuadOffsetXU = [&](
+		u32 offset, const GSVector4i& xy0, const GSVector4i& uv0,
+		const GSVector4i& xy1, const GSVector4i& uv1) {
+			// Check whether the two quads are offset by the given number of pixels. 
+			return
+				((std::abs(xy1.x - xy0.z) == offset) && (std::abs(uv1.x - uv0.z) == offset)) ||
+				((std::abs(xy0.x - xy1.z) == offset) && (std::abs(uv0.x - uv1.z) == offset));
+	};
+
+	// Checks that the next quad is offset by the specified pixels.
+	const auto CheckNextQuadOffsetXU = [&](u32 offset) {
+		GSVector4i xy_1, uv_1;
+		if (!GetQuadXYUV(first_quad + 1, xy_1, uv_1))
+			return false;
+
+		// Check both left-to-right and right-to-left ordering.
+		return CheckQuadOffsetXU(offset, xy, uv, xy_1, uv_1);
+	};
+
+	// Checks that the next quad is offset by the specified pixels.
+	const auto CheckGappedSwizzleShuffle = [&]() {
+		if (!CheckSwizzleShuffle())
+			return false;
+
+		GSVector4i xy_1, uv_1, xy_2, uv_2;
+		if (!GetQuadXYUV(first_quad + 1, xy_1, uv_1))
+			return false;
+		if (!GetQuadXYUV(first_quad + 2, xy_2, uv_2))
+			return false;
+
+		// The third quad should be offset 16 pixels vertically from the second.
+		return xy_2.y - xy_1.w == 16;
+	};
+
+	// Bitmask with lower bits all ones.
+	const auto HasLowerOnes = [](int x) { return x != 0 && (x & (x + 1)) == 0; };
+
+	const auto RegionRepeatClears8 = [&]() {
+		return !(clamp.MINU & 8) && HasLowerOnes(clamp.MINU | 8);
+	};
+
+	const auto RegionRepeatSets8 = [&]() {
+		return clamp.MAXU == 8;
+	};
+
+	const auto CheckRegionRepeat8 = [&]() {
+		// Region repeat mode for selecting specific columns by manipulating bit 3.
+		return (clamp.WMS == CLAMP_REGION_REPEAT) && (RegionRepeatClears8() || RegionRepeatSets8());
+	};
+
+	const auto CheckRegionRepeat16 = [&]() {
+		// Region repeat mode for selecting specific columns by manipulating bit 4.
+		return (clamp.WMS == CLAMP_REGION_REPEAT) && clamp.MINU == 0xF && ((clamp.MAXU & 0xF) == 0);
+	};
+
+	// Heuristics to determine the type of texture shuffle.
+	TextureShuffleType shuffle_type = TextureShuffleType::None;
+	if (tex_psm.bpp == 32)
+	{
+		// 32 bit source format.
+
+		// C32 -> C16 shuffle: usually copying B to A since that cannot be done with a C16 -> C16 shuffle.
+		if (CheckSwizzleShuffle() && frame.FBMSK == 0xFFFF)
+		{
+			shuffle_type = TextureShuffleType::SwizzleTex32;
+		}
+	}
+	else
+	{
+		// 16 bit source format.
+
+		if (two_pixel)
+		{
+			// TwoPixel shuffle: copying 1 source pixel into 4 pixels. Only known to be done by Powerdrome.
+			shuffle_type = TextureShuffleType::TwoPixel;
+		}
+		else if ((x_u_offset == 0) && (num_quads == 1 || CheckNextQuadOffsetXU(0) || CheckNextQuadOffsetXU(8)) &&
+			HasLowerOnes(frame.FBMSK) && tex0.TBP0 != frame.Block() && IsOpaque() && !m_vt.IsRealLinear())
+		{
+			// Copy shuffle: simply copying the same channel instead of swapping.
+			// Usually copying A so should have lower bits masked.
+			shuffle_type = TextureShuffleType::Copy;
+		}
+		else if (x_u_offset == 8 && (num_quads == 1 || CheckNextQuadOffsetXU(0) || CheckNextQuadOffsetXU(8)) &&
+			clamp.WMS != CLAMP_REGION_REPEAT)
+		{
+			// Offset shuffle: X and U offset, usually to copy G <-> A and/or R <-> B.
+			shuffle_type = TextureShuffleType::Offset;
+		}
+		else if (CheckRegionRepeat8())
+		{
+			// Region repeat 8 shuffle: region repeat is used to select the channel to copy by setting/clearing bit 3.
+			shuffle_type = TextureShuffleType::RegionRepeat8;
+		}
+		else if (CheckRegionRepeat16() && x_pixels == 16 && clamp.MAXU == xy.x && num_quads == 1)
+		{
+			// RegionRepeat16 shuffle: region repeat is used to select the channel to copy by setting/clearing bit 4.
+			shuffle_type = TextureShuffleType::RegionRepeat16;
+		}
+		else if ((x_u_offset == 0) && (x_pixels == 16) && (u_pixels == 16) &&
+			(xy.x < xy.z) != (uv.x < uv.z))
+		{
+			// Reverse shuffle: order of X and U is reversed so it effectively swaps R <-> B
+			// and/or G <-> A depending on the mask.
+			shuffle_type = TextureShuffleType::Reverse;
+		}
+		else if (CheckGappedSwizzleShuffle())
+		{
+			// Gapped swizzle: swizzle but with missing rows in between.
+			// Currently handled with a CRC hack for NFS Undercover.
+			shuffle_type = TextureShuffleType::GappedSwizzle;
+		}
+		else if (CheckSwizzleShuffle())
+		{
+			// Swizzles shuffle: swizzles between different formats.
+			shuffle_type = TextureShuffleType::Swizzle;
+		}
+	}
+
+	if (shuffle_type == TextureShuffleType::None)
+	{
+		return { shuffle_type, TextureShuffleChannels_None };
+	}
+
+	const u32 fbmsk16loc = Convert32BitTo16BitMask(m_cached_ctx.FRAME.FBMSK);
+	const u32 fbmsk16 = fbmsk16loc | (fbmsk16loc << 16);
+	const u32 rb_mask = (((fbmsk16 >> 0) & 0xFF) == 0xFF) ? 0 : 0xFFFFFF;
+	const u32 ga_mask = (((fbmsk16 >> 8) & 0xFF) == 0xFF) ? 0 : 0xFFFFFF;
+
+	u32 r_mask = rb_mask;
+	u32 g_mask = ga_mask;
+	u32 b_mask = rb_mask;
+	u32 a_mask = ga_mask;
+
+	// For 8 pixel wide strips, we will be writing to only R, G or B, A.
+	if (x_pixels <= 8)
+	{
+		const int x_offset = std::abs(xy.x) % 16;
+		if (x_offset == 0)
+		{
+			b_mask = 0;
+			a_mask = 0;
+		}
+		else if (x_offset == 8)
+		{
+			r_mask = 0;
+			g_mask = 0;
+		}
+		else
+		{
+		}
+	}
+
+	// Indicates that the group with R, G is being swapped with the group B, A.
+	const bool swap_columns = x_u_offset != 0 || shuffle_type == TextureShuffleType::Reverse;
+
+	// Determine bitmask of the channels being shuffled.
+	u32 shuffle_channels = 0;
+	
+	switch (shuffle_type)
+	{
+		case TextureShuffleType::TwoPixel:
+		case TextureShuffleType::Copy:
+		case TextureShuffleType::Offset:
+		case TextureShuffleType::Reverse:
+		case TextureShuffleType::GappedSwizzle:
+		case TextureShuffleType::Swizzle:
+		case TextureShuffleType::RegionRepeat16:
+		{
+			if (swap_columns)
+			{
+				shuffle_channels |= TextureShuffleChannels_RedToBlue & b_mask;
+				shuffle_channels |= TextureShuffleChannels_BlueToRed & r_mask;
+				shuffle_channels |= TextureShuffleChannels_GreenToAlpha & a_mask;
+				shuffle_channels |= TextureShuffleChannels_AlphaToGreen & g_mask;
+			}
+			else
+			{
+				shuffle_channels |= TextureShuffleChannels_RedCopy & r_mask;
+				shuffle_channels |= TextureShuffleChannels_BlueCopy & b_mask;
+				shuffle_channels |= TextureShuffleChannels_GreenCopy & g_mask;
+				shuffle_channels |= TextureShuffleChannels_AlphaCopy & a_mask;
+			}
+		}
+		break;
+
+		case TextureShuffleType::RegionRepeat8:
+		{
+			if (RegionRepeatClears8())
+			{
+				// Only reading from R, G.
+				shuffle_channels |= TextureShuffleChannels_RedCopy & r_mask;
+				shuffle_channels |= TextureShuffleChannels_RedToBlue & b_mask;
+				shuffle_channels |= TextureShuffleChannels_GreenCopy & g_mask;
+				shuffle_channels |= TextureShuffleChannels_GreenToAlpha & a_mask;
+			}
+			else if (RegionRepeatSets8())
+			{
+				// Only reading from B, A.
+				shuffle_channels |= TextureShuffleChannels_BlueCopy & r_mask;
+				shuffle_channels |= TextureShuffleChannels_BlueToRed & b_mask;
+				shuffle_channels |= TextureShuffleChannels_AlphaCopy & g_mask;
+				shuffle_channels |= TextureShuffleChannels_AlphaToGreen & a_mask;
+			}
+		}
+		break;
+
+		case TextureShuffleType::SwizzleTex32:
+		{
+			shuffle_channels = TextureShuffleChannels_BlueToAlpha;
+		}
+		break;
+
+		default:
+			break;
+	}
+
+	// Remove redundant channel copies in recursive draws.
+	if (frame.Block() == tex0.TBP0)
+	{
+		if (shuffle_channels & TextureShuffleChannels_RedCopy)
+		{
+			shuffle_channels &= ~TextureShuffleChannels_RedCopy;
+		}
+		if (shuffle_channels & TextureShuffleChannels_GreenCopy)
+		{
+			shuffle_channels &= ~TextureShuffleChannels_GreenCopy;
+		}
+		if (shuffle_channels & TextureShuffleChannels_BlueCopy)
+		{
+			shuffle_channels &= ~TextureShuffleChannels_BlueCopy;
+		}
+		if (shuffle_channels & TextureShuffleChannels_AlphaCopy)
+		{
+			shuffle_channels &= ~TextureShuffleChannels_AlphaCopy;
+		}
+	}
+
+	// Sometimes the game doesn't care about certain channels and draws
+	// wide quads that clobber them, so disable such writes for non-recursive draws.
+	const bool disable_clobber_write = frame.Block() != tex0.TBP0;
+
+	// Determine if quads are wide enough and X, U are offset so that clobbering happens.
+	const bool quad_mixes_16_pixel_groups =
+		x_u_offset == 8 && x_pixels >= 16 && shuffle_type != TextureShuffleType::RegionRepeat16;
+
+	if (disable_clobber_write && quad_mixes_16_pixel_groups)
+	{
+		const auto RoundPage = [](int x) { return (x + 32) & ~63; };
+
+		const int x_page_offset = xy.x - RoundPage(xy.x);
+		const int u_page_offset = uv.x - RoundPage(uv.x);
+
+		bool r_clobber = false;
+		bool g_clobber = false;
+		bool b_clobber = false;
+		bool a_clobber = false;
+
+		if ((x_page_offset == 0 && u_page_offset == 8) ||
+			(x_page_offset == -8 && u_page_offset == 0))
+		{
+			b_clobber = (shuffle_channels & TextureShuffleChannels_WriteBlue) != 0;
+			a_clobber = (shuffle_channels & TextureShuffleChannels_WriteAlpha) != 0;
+		}
+		else if ((x_page_offset == 8 && u_page_offset == 0) ||
+			(x_page_offset == 0 && u_page_offset == -8))
+		{
+			r_clobber = (shuffle_channels & TextureShuffleChannels_WriteRed) != 0;
+			g_clobber = (shuffle_channels & TextureShuffleChannels_WriteGreen) != 0;
+		}
+
+			r_clobber, g_clobber, b_clobber, a_clobber);
+
+		if (r_clobber)
+			shuffle_channels &= ~TextureShuffleChannels_WriteRed;
+		if (g_clobber)
+			shuffle_channels &= ~TextureShuffleChannels_WriteGreen;
+		if (b_clobber)
+			shuffle_channels &= ~TextureShuffleChannels_WriteBlue;
+		if (a_clobber)
+			shuffle_channels &= ~TextureShuffleChannels_WriteAlpha;
+	}
+
+	// Log which channels are read/written.
+	if (shuffle_channels & TextureShuffleChannels_RedToBlue)
+	if (shuffle_channels & TextureShuffleChannels_BlueToRed)
+	if (shuffle_channels & TextureShuffleChannels_GreenToAlpha)
+	if (shuffle_channels & TextureShuffleChannels_AlphaToGreen)
+	if (shuffle_channels & TextureShuffleChannels_RedCopy)
+	if (shuffle_channels & TextureShuffleChannels_GreenCopy)
+	if (shuffle_channels & TextureShuffleChannels_BlueCopy)
+	if (shuffle_channels & TextureShuffleChannels_AlphaCopy)
+	if (shuffle_channels & TextureShuffleChannels_BlueToAlpha)
+
+	return { shuffle_type, static_cast<TextureShuffleChannels>(shuffle_channels) };
+}
+
+
+void GSRendererHW::DetectTextureShuffle()
+{
+	if (m_vt.m_primclass == GS_SPRITE_CLASS)
+	{
+		if (PRIM->FST)
+			m_texture_shuffle_info = DetectTextureShuffleImpl<GS_SPRITE_CLASS, true>();
+		else
+			m_texture_shuffle_info = DetectTextureShuffleImpl<GS_SPRITE_CLASS, false>();
+	}
+	else if (m_vt.m_primclass == GS_TRIANGLE_CLASS)
+	{
+		if (PRIM->FST)
+			m_texture_shuffle_info = DetectTextureShuffleImpl<GS_TRIANGLE_CLASS, true>();
+		else
+			m_texture_shuffle_info = DetectTextureShuffleImpl<GS_TRIANGLE_CLASS, false>();
+	}
+	else
+	{
+		m_texture_shuffle_info = TextureShuffleInfo();
+	}
+}
+
+void GSRendererHW::DetectTextureShuffleSecondPass(GSTextureCache::Target* rt, GSTextureCache::Source* tex)
+{
+	const auto HasLowerOnes = [&](u32 x) { return x != 0 && (x & (x + 1)) == 0; };
+
+	const GSLocalMemory::psm_t& tex_psm = GSLocalMemory::m_psm[m_cached_ctx.TEX0.PSM];
+	const GSLocalMemory::psm_t& frame_psm = GSLocalMemory::m_psm[m_cached_ctx.FRAME.PSM];
+
+	if (frame_psm.bpp != 16)
+	{
+		m_texture_shuffle_info.Disable();
+		return;
+	}
+
+	if (m_texture_shuffle_info)
+	{
+		if (tex->m_32_bits_fmt)
+		{
+		}
+		else
+		{
+			// Detects when the source texture is really a 16 bit texture instead of 32 bit being reinterpreted as 16 bit.
+			// Make sure it's opaque and not bilinear to reduce false positives.
+
+			if (m_cached_ctx.TEX0.TBP0 != m_cached_ctx.FRAME.Block() &&
+				rt->m_32_bits_fmt == true && IsOpaque() && !m_vt.IsRealLinear() &&
+				HasLowerOnes(m_cached_ctx.FRAME.FBMSK))
+			{
+				m_texture_shuffle_info.real_16_bit_source = true;
+			}
+			else
+			{
+				m_texture_shuffle_info.Disable();
+			}
+		}
+	}
+	else
+	{
+		// Last ditch check for reinterpreting a 32 bit source and RT as 16 bits.
+		// These "shuffles" appear to not do anything useful for games, but using the texture shuffle
+		// path helps to maintain correct sizes in the texture cache. Occurs in NFS Most Wanted.
+
+		if (PRIM->TME &&
+			(m_vt.m_primclass == GS_SPRITE_CLASS || m_vt.m_primclass == GS_TRIANGLE_CLASS && TrianglesAreQuads(true)) &&
+			(tex_psm.bpp == 16) && (frame_psm.bpp == 16) && rt->m_32_bits_fmt && tex->m_32_bits_fmt)
+		{
+			m_texture_shuffle_info.type = TextureShuffleType::HackShuffle;
+		}
+		else
+		{
+			m_texture_shuffle_info.Disable();
+		}
+	}
+}
+
+
 u32 GSRendererHW::GetEffectiveTextureShuffleFbmsk() const
 {
 	const u32 m = m_cached_ctx.FRAME.FBMSK & GSLocalMemory::m_psm[m_cached_ctx.FRAME.PSM].fmsk;

@@ -311,6 +311,15 @@ public:
 	bool VerifyIndices();
 	void ExpandLineIndices();
 	void ConvertSpriteTextureShuffle(u32& process_rg, u32& process_ba, bool& shuffle_across, GSTextureCache::Target* rt, GSTextureCache::Source* tex);
+
+	/* Texture-shuffle detection (ported from upstream refactor 06616ec98).
+	 * Populates m_texture_shuffle_info; not yet consumed (stage 3 rewires
+	 * the conversion onto it). */
+	static u32 Convert32BitTo16BitMask(u32 m);
+	template<u32 primclass, bool fst>
+	TextureShuffleInfo DetectTextureShuffleImpl();
+	void DetectTextureShuffle();
+	void DetectTextureShuffleSecondPass(GSTextureCache::Target* rt, GSTextureCache::Source* tex);
 	GSVector4 RealignTargetTextureCoordinate(const GSTextureCache::Source* tex);
 	GSVector4i ComputeBoundingBox(const GSVector2i& rtsize, float rtscale);
 	void MergeSprite(GSTextureCache::Source* tex);

@@ -268,6 +268,11 @@ public:
 		return max_i32(a.xyxy()).min_i32(a.zwzw());
 	}
 
+	__forceinline GSVector4i abs32() const
+	{
+		return GSVector4i(_mm_abs_epi32(m));
+	}
+
 	__forceinline GSVector4i sat_u8(const GSVector4i& a, const GSVector4i& b) const
 	{
 		return max_u8(a).min_u8(b);
