@@ -11762,6 +11762,13 @@ SLAJ-25088:
 SLAJ-25091:
   name: "Need for Speed - Carbon [Collector's Edition]"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLAJ-25091"
+  # Most Wanted save grants extra money.
+    - "SLAJ-25075"
+    - "SLPM-66232"
+  # UG2 saves can be detected, but the code is unused.
+    - "SLAJ-25054"
   clampModes:
     eeClampMode: 3 # Fixes game hang after opening intro.
   gsHWFixes:
@@ -23829,6 +23836,18 @@ SLES-54320:
 SLES-54321:
   name: "Need for Speed - Carbon"
   region: "PAL-E"
+  memcardFilters:
+    - "SLES-54321"
+    - "SLES-54322"
+    - "SLES-54323"
+    - "SLES-54324"
+  # Most Wanted save grants extra money.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857" # Black Edition detection is bugged by default, can be fixed with a patch.
+  # UG2 saves can be detected, but the code is unused.
+    - "SLES-52725"
   compat: 5
   clampModes:
     eeClampMode: 3 # Fixes game hang after opening intro.
@@ -23838,6 +23857,18 @@ SLES-54321:
 SLES-54322:
   name: "Need for Speed - Carbon"
   region: "PAL-M8"
+  memcardFilters:
+    - "SLES-54321"
+    - "SLES-54322"
+    - "SLES-54323"
+    - "SLES-54324"
+  # Most Wanted save grants extra money.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857" # Black Edition detection is bugged by default, can be fixed with a patch.
+  # UG2 saves can be detected, but the code is unused.
+    - "SLES-52725"
   clampModes:
     eeClampMode: 3 # Fixes game hang after opening intro.
   gsHWFixes:
@@ -23846,6 +23877,18 @@ SLES-54322:
 SLES-54323:
   name: "Need for Speed - Carbon"
   region: "PAL-I-S"
+  memcardFilters:
+    - "SLES-54321"
+    - "SLES-54322"
+    - "SLES-54323"
+    - "SLES-54324"
+  # Most Wanted save grants extra money.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857" # Black Edition detection is bugged by default, can be fixed with a patch.
+  # UG2 saves can be detected, but the code is unused.
+    - "SLES-52725"
   clampModes:
     eeClampMode: 3 # Fixes game hang after opening intro.
   gsHWFixes:
@@ -23854,6 +23897,18 @@ SLES-54323:
 SLES-54324:
   name: "Need for Speed - Carbon"
   region: "PAL-R"
+  memcardFilters:
+    - "SLES-54321"
+    - "SLES-54322"
+    - "SLES-54323"
+    - "SLES-54324"
+  # Most Wanted save grants extra money.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857" # Black Edition detection is bugged by default, can be fixed with a patch.
+  # UG2 saves can be detected, but the code is unused.
+    - "SLES-52725"
   clampModes:
     eeClampMode: 3 # Fixes game hang after opening intro.
   gsHWFixes:
@@ -24125,6 +24180,17 @@ SLES-54400:
 SLES-54402:
   name: "Need for Speed - Carbon [Collector's Edition]"
   region: "PAL-F"
+  memcardFilters:
+    - "SLES-54402"
+    - "SLES-54492"
+    - "SLES-54493"
+  # Most Wanted save grants extra money.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857" # Black Edition detection is bugged by default, can be fixed with a patch.
+  # UG2 saves can be detected, but the code is unused.
+    - "SLES-52725"
   clampModes:
     eeClampMode: 3 # Fixes game hang after opening intro.
   gsHWFixes:
@@ -24402,6 +24468,17 @@ SLES-54490:
 SLES-54492:
   name: "Need for Speed - Carbon [Collector's Edition]"
   region: "PAL-E"
+  memcardFilters:
+    - "SLES-54402"
+    - "SLES-54492"
+    - "SLES-54493"
+  # Most Wanted save grants extra money.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857" # Black Edition detection is bugged by default, can be fixed with a patch.
+  # UG2 saves can be detected, but the code is unused.
+    - "SLES-52725"
   clampModes:
     eeClampMode: 3 # Fixes game hang after opening intro.
   gsHWFixes:
@@ -24410,6 +24487,17 @@ SLES-54492:
 SLES-54493:
   name: "Need for Speed - Carbon [Collector's Edition]"
   region: "PAL-F-G"
+  memcardFilters:
+    - "SLES-54402"
+    - "SLES-54492"
+    - "SLES-54493"
+  # Most Wanted save grants extra money.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857" # Black Edition detection is bugged by default, can be fixed with a patch.
+  # UG2 saves can be detected, but the code is unused.
+    - "SLES-52725"
   clampModes:
     eeClampMode: 3 # Fixes game hang after opening intro.
   gsHWFixes:
@@ -25943,26 +26031,132 @@ SLES-55001:
 SLES-55002:
   name: "Need for Speed - ProStreet"
   region: "PAL-E"
+  memcardFilters:
+    - "SLES-55002"
+    - "SLES-55003"
+    - "SLES-55004"
+    - "SLES-55005"
+    - "SLES-55006"
+  # Carbon save grants extra money.
+    - "SLES-54321"
+    - "SLES-54322"
+    - "SLES-54323"
+    - "SLES-54324"
+    - "SLES-54402"
+    - "SLES-54492"
+    - "SLES-54493"
+  # Most Wanted save grants extra money.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857" # Black Edition detection is bugged by default, can be fixed with a patch.
+  # UG2 saves can be detected, but the code is unused.
+    - "SLES-52725"
   gsHWFixes:
     halfPixelOffset: 2 # Fixes depth line.
 SLES-55003:
   name: "Need for Speed - ProStreet"
   region: "PAL-F-G"
+  memcardFilters:
+    - "SLES-55002"
+    - "SLES-55003"
+    - "SLES-55004"
+    - "SLES-55005"
+    - "SLES-55006"
+  # Carbon save grants extra money.
+    - "SLES-54321"
+    - "SLES-54322"
+    - "SLES-54323"
+    - "SLES-54324"
+    - "SLES-54402"
+    - "SLES-54492"
+    - "SLES-54493"
+  # Most Wanted save grants extra money.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857" # Black Edition detection is bugged by default, can be fixed with a patch.
+  # UG2 saves can be detected, but the code is unused.
+    - "SLES-52725"
   gsHWFixes:
     halfPixelOffset: 2 # Fixes depth line.
 SLES-55004:
   name: "Need for Speed - ProStreet"
   region: "PAL-I-S"
+  memcardFilters:
+    - "SLES-55002"
+    - "SLES-55003"
+    - "SLES-55004"
+    - "SLES-55005"
+    - "SLES-55006"
+  # Carbon save grants extra money.
+    - "SLES-54321"
+    - "SLES-54322"
+    - "SLES-54323"
+    - "SLES-54324"
+    - "SLES-54402"
+    - "SLES-54492"
+    - "SLES-54493"
+  # Most Wanted save grants extra money.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857" # Black Edition detection is bugged by default, can be fixed with a patch.
+  # UG2 saves can be detected, but the code is unused.
+    - "SLES-52725"
   gsHWFixes:
     halfPixelOffset: 2 # Fixes depth line.
 SLES-55005:
   name: "Need for Speed - ProStreet"
   region: "PAL-M8"
+  memcardFilters:
+    - "SLES-55002"
+    - "SLES-55003"
+    - "SLES-55004"
+    - "SLES-55005"
+    - "SLES-55006"
+  # Carbon save grants extra money.
+    - "SLES-54321"
+    - "SLES-54322"
+    - "SLES-54323"
+    - "SLES-54324"
+    - "SLES-54402"
+    - "SLES-54492"
+    - "SLES-54493"
+  # Most Wanted save grants extra money.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857" # Black Edition detection is bugged by default, can be fixed with a patch.
+  # UG2 saves can be detected, but the code is unused.
+    - "SLES-52725"
   gsHWFixes:
     halfPixelOffset: 2 # Fixes depth line.
 SLES-55006:
   name: "Need for Speed - ProStreet"
   region: "PAL-R"
+  memcardFilters:
+    - "SLES-55002"
+    - "SLES-55003"
+    - "SLES-55004"
+    - "SLES-55005"
+    - "SLES-55006"
+  # Carbon save grants extra money. Detection is bugged by default, can be fixed with a patch.
+    - "SLES-54321"
+    - "SLES-54322"
+    - "SLES-54323"
+    - "SLES-54324"
+    - "SLES-54402"
+    - "SLES-54492"
+    - "SLES-54493"
+  # Most Wanted save grants extra money. Detection is bugged by default, can be fixed with a patch.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857"
+    - "SLUS-21267" # Original wrong Most Wanted serial.
+  # UG2 saves can be detected, but the code is unused.
+    - "SLES-52725"
   gsHWFixes:
     halfPixelOffset: 2 # Fixes depth line.
 SLES-55007:
@@ -26875,6 +27069,18 @@ SLES-55348:
 SLES-55349:
   name: "Need for Speed - Undercover"
   region: "PAL-E"
+  memcardFilters:
+    - "SLES-55349"
+    - "SLES-55350"
+    - "SLES-55351"
+    - "SLES-55352"
+    - "SLES-55353"
+  # Checks from Carbon are left in the code, unused.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857"
+    - "SLES-52725"
   gsHWFixes:
     recommendedBlendingLevel: 3 # Improves car reflections.
     halfPixelOffset: 2 # Fixes blurriness.
@@ -26885,6 +27091,18 @@ SLES-55349:
 SLES-55350:
   name: "Need for Speed - Undercover"
   region: "PAL-F-G"
+  memcardFilters:
+    - "SLES-55349"
+    - "SLES-55350"
+    - "SLES-55351"
+    - "SLES-55352"
+    - "SLES-55353"
+  # Checks from Carbon are left in the code, unused.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857"
+    - "SLES-52725"
   gsHWFixes:
     recommendedBlendingLevel: 3 # Improves car reflections.
     halfPixelOffset: 2 # Fixes blurriness.
@@ -26895,6 +27113,18 @@ SLES-55350:
 SLES-55351:
   name: "Need for Speed - Undercover"
   region: "PAL-I-S"
+  memcardFilters:
+    - "SLES-55349"
+    - "SLES-55350"
+    - "SLES-55351"
+    - "SLES-55352"
+    - "SLES-55353"
+  # Checks from Carbon are left in the code, unused.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857"
+    - "SLES-52725"
   gsHWFixes:
     recommendedBlendingLevel: 3 # Improves car reflections.
     halfPixelOffset: 2 # Fixes blurriness.
@@ -26905,6 +27135,18 @@ SLES-55351:
 SLES-55352:
   name: "Need for Speed - Undercover"
   region: "PAL-SC"
+  memcardFilters:
+    - "SLES-55349"
+    - "SLES-55350"
+    - "SLES-55351"
+    - "SLES-55352"
+    - "SLES-55353"
+  # Checks from Carbon are left in the code, unused.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857"
+    - "SLES-52725"
   compat: 5
   gsHWFixes:
     recommendedBlendingLevel: 3 # Improves car reflections.
@@ -26916,6 +27158,18 @@ SLES-55352:
 SLES-55353:
   name: "Need for Speed - Undercover"
   region: "PAL-M6"
+  memcardFilters:
+    - "SLES-55349"
+    - "SLES-55350"
+    - "SLES-55351"
+    - "SLES-55352"
+    - "SLES-55353"
+  # Checks from Carbon are left in the code, unused.
+    - "SLES-53557"
+    - "SLES-53558"
+    - "SLES-53559"
+    - "SLES-53857"
+    - "SLES-52725"
   gsHWFixes:
     recommendedBlendingLevel: 3 # Improves car reflections.
     halfPixelOffset: 2 # Fixes blurriness.
@@ -28825,6 +29079,11 @@ SLKA-25183:
 SLKA-25185:
   name: "Need for Speed - Carbon [Collector's Edition]"
   region: "NTSC-K"
+  memcardFilters:
+    - "SLKA-25185"
+    - "SLKA-25334" # Most Wanted save grants extra money.
+    - "SLAJ-25075" # Original wrong Black Edition serial.
+    - "SLKA-25241" # UG2 saves can be detected, but the code is unused.
   compat: 5
   clampModes:
     eeClampMode: 3 # Fixes game hang after opening intro.
@@ -29502,6 +29761,9 @@ SLKA-25333:
 SLKA-25334:
   name: "Need for Speed - Most Wanted"
   region: "NTSC-K"
+  memcardFilters:
+    - "SLKA-25334"
+    - "SLKA-25241" # Underground 2 save grants extra money.
   gsHWFixes:
     bilinearUpscale: 2 # Smooths out sun glare textures like native.
     halfPixelOffset: 2 # Fixes blurriness.
@@ -29862,6 +30124,11 @@ SLKA-25410:
 SLKA-25411:
   name: "Need for Speed - ProStreet"
   region: "NTSC-K"
+  memcardFilters:
+    - "SLKA-25411"
+    - "SLKA-25185" # Carbon save grants extra money.
+    - "SLKA-25334" # Most Wanted save grants extra money.
+    - "SLKA-25241" # UG2 saves can be detected, but the code is unused.
   gsHWFixes:
     halfPixelOffset: 2 # Fixes depth line.
 SLKA-25412:
@@ -29972,6 +30239,13 @@ SLKA-25444:
 SLKA-25446:
   name: "Need for Speed - Undercover"
   region: "NTSC-K"
+  memcardFilters:
+    - "SLKA-25446"
+  # Checks from Carbon are left in the code, unused.
+    - "SLKA-25185"
+    - "SLKA-25334"
+    - "SLAJ-25075"
+    - "SLKA-25241"
   gsHWFixes:
     recommendedBlendingLevel: 3 # Improves car reflections.
     halfPixelOffset: 2 # Fixes blurriness.
@@ -30159,6 +30433,9 @@ SLPM-55002:
 SLPM-55003:
   name: "Need for Speed - Most Wanted [EASY 1980]"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLPM-55003"
+    - "SLPM-65766" # Underground 2 save grants extra money.
   gsHWFixes:
     bilinearUpscale: 2 # Smooths out sun glare textures like native.
     halfPixelOffset: 2 # Fixes blurriness.
@@ -30376,6 +30653,13 @@ SLPM-55060:
 SLPM-55061:
   name: "Need for Speed - Carbon [EA-SY! 1980]"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLPM-55061"
+  # Most Wanted save grants extra money.
+    - "SLPM-66232"
+    - "SLPM-66562"
+    - "SLAJ-25075" # Original wrong Black Edition serial.
+    - "SLPM-65766" # UG2 saves can be detected, but the code is unused.
   clampModes:
     eeClampMode: 3 # Fixes game hang after opening intro.
   gsHWFixes:
@@ -30585,6 +30869,13 @@ SLPM-55125:
 SLPM-55127:
   name: "Need for Speed - Undercover"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLPM-55127"
+  # Checks from Carbon are left in the code, unused.
+    - "SLPM-66232"
+    - "SLPM-66562"
+    - "SLAJ-25075"
+    - "SLPM-65766"
   gsHWFixes:
     recommendedBlendingLevel: 3 # Improves car reflections.
     halfPixelOffset: 2 # Fixes blurriness.
@@ -30677,6 +30968,16 @@ SLPM-55150:
 SLPM-55151:
   name: "Need for Speed - ProStreet"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLPM-55151"
+  # Carbon save grants extra money.
+    - "SLPM-55061"
+    - "SLPM-66617"
+    - "SLPM-66869"
+  # Most Wanted save grants extra money.
+    - "SLPM-66232"
+    - "SLPM-66562"
+    - "SLPM-65766" # UG2 saves can be detected, but the code is unused.
   gsHWFixes:
     halfPixelOffset: 2 # Fixes depth line.
 SLPM-55152:
@@ -30940,6 +31241,13 @@ SLPM-55243:
 SLPM-55244:
   name: "Need for Speed - Undercover [Ea-SY! 1980]"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLPM-55244"
+  # Checks from Carbon are left in the code, unused.
+    - "SLPM-66232"
+    - "SLPM-66562"
+    - "SLAJ-25075"
+    - "SLPM-65766"
   gsHWFixes:
     recommendedBlendingLevel: 3 # Improves car reflections.
     halfPixelOffset: 2 # Fixes blurriness.
@@ -36553,6 +36861,11 @@ SLPM-65427:
 SLPM-65428:
   name: "BioHazard Outbreak"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLPM-65428"
+    - "SLPM-74201"
+    - "SLPM-65286"
+    - "BWNETCNF"
   compat: 5
 SLPM-65429:
   name: "Galaxy Angel - Moonlit Lovers"
@@ -41486,6 +41799,13 @@ SLPM-66616:
 SLPM-66617:
   name: "Need for Speed - Carbon"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLPM-66617"
+  # Most Wanted save grants extra money.
+    - "SLPM-66232"
+    - "SLPM-66562"
+    - "SLAJ-25075" # Original wrong Black Edition serial.
+    - "SLPM-65766" # UG2 saves can be detected, but the code is unused.
   clampModes:
     eeClampMode: 3 # Fixes game hang after opening intro.
   gsHWFixes:
@@ -41526,6 +41846,8 @@ SLPM-66627:
 SLPM-66628:
   name: "OutRun 2 SP [First Print Limited Edition]"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLPM-66643"
   compat: 5
   gsHWFixes:
     autoFlush: 2 # Reduces post-processing misalignment.
@@ -42525,6 +42847,13 @@ SLPM-66868:
 SLPM-66869:
   name: "Need for Speed - Carbon [EA Best Hits]"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLPM-66869"
+  # Most Wanted save grants extra money.
+    - "SLPM-66232"
+    - "SLPM-66562"
+    - "SLAJ-25075" # Original wrong Black Edition serial.
+    - "SLPM-65766" # UG2 saves can be detected, but the code is unused.
   clampModes:
     eeClampMode: 3 # Fixes game hang after opening intro.
   gsHWFixes:
@@ -42750,6 +43079,16 @@ SLPM-66931:
 SLPM-66932:
   name: "Need for Speed - ProStreet"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLPM-66932"
+  # Carbon save grants extra money.
+    - "SLPM-55061"
+    - "SLPM-66617"
+    - "SLPM-66869"
+  # Most Wanted save grants extra money.
+    - "SLPM-66232"
+    - "SLPM-66562"
+    - "SLPM-65766" # UG2 saves can be detected, but the code is unused.
   gsHWFixes:
     halfPixelOffset: 2 # Fixes depth line.
 SLPM-66933:
@@ -43390,6 +43729,14 @@ SLPM-68519:
 SLPM-68520:
   name: "Armored Core - Last Raven [Monthly Champion Magazine Special Edition]"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLPS-25338"
+    - "SLPS-25339"
+    - "SLPS-73202"
+    - "SLPS-73203"
+    - "SLPS-25408"
+    - "SLPS-25462"
+    - "SLPS-73247"
   gsHWFixes:
     halfPixelOffset: 2 # Corrects shadow alignment and reduces blurriness.
     recommendedBlendingLevel: 3 # Fixes level and map menu brightness.
@@ -43463,6 +43810,11 @@ SLPM-74105:
 SLPM-74201:
   name: "BioHazard Outbreak [PlayStation 2 the Best]"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLPM-65428"
+    - "SLPM-74201"
+    - "SLPM-65286"
+    - "BWNETCNF"
 SLPM-74202:
   name: "Fuuun Shinsengumi [PlayStation 2 the Best]"
   region: "NTSC-J"
@@ -45851,9 +46203,13 @@ SLPS-25059:
 SLPS-25060:
   name: "Mobile Suit Gundam - Meguriai Sora [Limited Edition]"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLPS-25062"
 SLPS-25061:
   name: "Kidou Senshi Gundam - Ver. 1.5"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLPS-25063"
 SLPS-25062:
   name: "Kidou Senshi Gundam - Meguriai Sora"
   region: "NTSC-J"
@@ -48900,6 +49256,9 @@ SLPS-25828:
 SLPS-25829:
   name: "Another Century's Episode 2 [Special Vocal Version]"
   region: "NTSC-J"
+  memcardFilters:
+    - "SLPS-25394"
+    - "SLPS-25623"
   gsHWFixes:
     nativeScaling: 1 # Fixes post processing.
 SLPS-25830:
@@ -56494,6 +56853,11 @@ SLUS-21217:
 SLUS-21218:
   name: "Tak - The Great Juju Challenge"
   region: "NTSC-U"
+  memcardFilters:
+    - "SLUS-21218"
+    - "SLUS-21252"
+    - "SLUS-21277"
+    - "SLUS-21284"
   compat: 5
 SLUS-21219:
   name: "Pac-Man World 3"
@@ -56733,6 +57097,11 @@ SLUS-21251:
 SLUS-21252:
   name: "Nickelodeon SpongeBob SquarePants - Lights, Camera, Pants!"
   region: "NTSC-U"
+  memcardFilters:
+    - "SLUS-21218"
+    - "SLUS-21252"
+    - "SLUS-21277"
+    - "SLUS-21284"
   compat: 4
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes missing lights.
@@ -56761,6 +57130,9 @@ SLUS-21256:
 SLUS-21257:
   name: "Need for Speed - Most Wanted"
   region: "NTSC-U"
+  memcardFilters:
+    - "SLUS-21257"
+    - "SLUS-21065" # Underground 2 save grants extra money.
   gsHWFixes:
     bilinearUpscale: 2 # Smooths out sun glare textures like native.
     halfPixelOffset: 2 # Fixes blurriness.
@@ -56921,6 +57293,11 @@ SLUS-21276:
 SLUS-21277:
   name: "Nickelodeon Barnyard"
   region: "NTSC-U"
+  memcardFilters:
+    - "SLUS-21218"
+    - "SLUS-21252"
+    - "SLUS-21277"
+    - "SLUS-21284"
   compat: 5
   gsHWFixes:
     halfPixelOffset: 2 # Fix text and post blur.
@@ -56993,6 +57370,11 @@ SLUS-21283:
 SLUS-21284:
   name: "Nicktoons Unite!"
   region: "NTSC-U"
+  memcardFilters:
+    - "SLUS-21218"
+    - "SLUS-21252"
+    - "SLUS-21277"
+    - "SLUS-21284"
   gsHWFixes:
     autoFlush: 2 # Fixes glows. Also needed for recursive mipmap rendering.
     textureInsideRT: 1 # Fixes rainbow lighting for some areas.
@@ -58353,6 +58735,13 @@ SLUS-21492:
 SLUS-21493:
   name: "Need for Speed - Carbon"
   region: "NTSC-U"
+  memcardFilters:
+    - "SLUS-21493"
+  # Most Wanted save grants extra money.
+    - "SLUS-21267"
+    - "SLUS-21351" # Black Edition detection is bugged by default, can be fixed with a patch.
+    - "SLAJ-25075" # Original wrong Black Edition serial.
+    - "SLUS-21065" # UG2 saves can be detected, but the code is unused.
   compat: 5
   clampModes:
     eeClampMode: 3 # Fixes game hang after opening intro.
@@ -58362,6 +58751,13 @@ SLUS-21493:
 SLUS-21494:
   name: "Need for Speed - Carbon [Collector's Edition]"
   region: "NTSC-U"
+  memcardFilters:
+    - "SLUS-21494"
+  # Most Wanted save grants extra money.
+    - "SLUS-21267"
+    - "SLUS-21351" # Black Edition detection is bugged by default, can be fixed with a patch.
+    - "SLAJ-25075" # Original wrong Black Edition serial.
+    - "SLUS-21065" # UG2 saves can be detected, but the code is unused.
   clampModes:
     eeClampMode: 3 # Fixes game hang after opening intro.
   gsHWFixes:
@@ -59109,6 +59505,15 @@ SLUS-21656:
 SLUS-21658:
   name: "Need for Speed - ProStreet"
   region: "NTSC-U"
+  memcardFilters:
+    - "SLUS-21658"
+  # Carbon save grants extra money.
+    - "SLUS-21493"
+    - "SLUS-21494"
+  # Most Wanted save grants extra money.
+    - "SLUS-21267"
+    - "SLUS-21351"
+    - "SLUS-21065" # UG2 saves can be detected, but the code is unused.
   compat: 5
   gsHWFixes:
     halfPixelOffset: 2 # Fixes depth line.
@@ -59871,6 +60276,13 @@ SLUS-21800:
 SLUS-21801:
   name: "Need for Speed - Undercover"
   region: "NTSC-U"
+  memcardFilters:
+    - "SLUS-21801"
+  # Checks from Carbon are left in the code, unused.
+    - "SLUS-21267"
+    - "SLUS-21351"
+    - "SLAJ-25075"
+    - "SLUS-21065"
   compat: 5
   gsHWFixes:
     recommendedBlendingLevel: 3 # Improves car reflections.
