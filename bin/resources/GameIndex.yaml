@@ -1851,6 +1851,7 @@ SCAJ-20159:
   region: "NTSC-C"
   gameFixes:
     - EETimingHack # Fixes bad colours on character select when in Progressive Scan.
+    - SoftwareRendererFMVHack # Horizontal bottom line in FMV.
   clampModes:
     vuClampMode: 2 # Respawn issues, Fixes SPS, avoids teleporting characters.
   gsHWFixes:
@@ -10712,6 +10713,8 @@ SCUS-97402:
     vuClampMode: 0 # Resolves I Reg Clamping / performance impact and yellow graphics in certain areas.
   gameFixes:
     - OPHFlagHack # Game polls GIF_STAT waiting for OPH to clear; without this it spins forever (black screen).
+    - IbitHack # Reduces VU recompilation.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     halfPixelOffset: 4 # Fixes post positioning.
     nativeScaling: 2 # Fixes post effects.
@@ -12132,6 +12135,7 @@ SLED-50117:
   region: "PAL-E"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -13870,6 +13874,7 @@ SLES-50383:
   compat: 5
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -13879,6 +13884,7 @@ SLES-50384:
   region: "PAL-I"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -13888,6 +13894,7 @@ SLES-50385:
   region: "PAL-S"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -28762,6 +28769,7 @@ SLES-82009:
   compat: 5
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -31238,6 +31246,7 @@ SLKA-25471:
   region: "NTSC-K"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
 SLKA-25472:
@@ -31245,6 +31254,7 @@ SLKA-25472:
   region: "NTSC-K"
   gameFixes:
     - BlitInternalFPSHack # Fixes internal FPS detection.
+    - InstantDMAHack # Fixes missing text in key item acquisition dialogue box.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes skin colour and banding.
     halfPixelOffset: 4 # Aligns depth of field effect.
@@ -31286,6 +31296,7 @@ SLKA-35001:
   compat: 5
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -33682,6 +33693,7 @@ SLPM-62043:
   region: "NTSC-J"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -36523,6 +36535,7 @@ SLPM-65077:
   region: "NTSC-J"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -36535,6 +36548,7 @@ SLPM-65078:
   region: "NTSC-J"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -39197,6 +39211,7 @@ SLPM-65754:
   region: "NTSC-J"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -42467,6 +42482,7 @@ SLPM-66503:
   region: "NTSC-J"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -43717,6 +43733,7 @@ SLPM-66792:
   region: "NTSC-J"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -43726,6 +43743,7 @@ SLPM-66793:
   region: "NTSC-J"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -44473,6 +44491,7 @@ SLPM-67002:
   region: "NTSC-J"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -44505,6 +44524,7 @@ SLPM-67008:
   region: "NTSC-J"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -44632,6 +44652,7 @@ SLPM-67515:
   region: "NTSC-K"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -44836,6 +44857,7 @@ SLPM-68503:
   region: "NTSC-J"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -45254,6 +45276,7 @@ SLPM-74255:
   region: "NTSC-J"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -45263,6 +45286,7 @@ SLPM-74256:
   region: "NTSC-J"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -45419,6 +45443,7 @@ SLPM-74405:
   region: "NTSC-J"
   gameFixes:
     - EETimingHack # Stops crash after intro movie.
+    - InstantDMAHack # Stops hang when entering Sword Select screen.
 SLPM-74406:
   name: "World Rally Championship [PlayStation 2 the Best]"
   region: "NTSC-J"
@@ -45482,6 +45507,7 @@ SLPM-74901:
   region: "NTSC-J"
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -52480,6 +52506,7 @@ SLUS-20144:
   compat: 5
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -54536,6 +54563,7 @@ SLUS-20554:
   compat: 5
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
@@ -62841,6 +62869,7 @@ SLUS-29003:
   compat: 5
   gameFixes:
     - InstantDMAHack # Fixes broken half-bottom artifacts.
+    - BlitInternalFPSHack # Fixes internal FPS detection.
   gsHWFixes:
     recommendedBlendingLevel: 3 # Fixes broken skin colour on Vlad and others.
     autoFlush: 1 # Fixes motion blur effect.
