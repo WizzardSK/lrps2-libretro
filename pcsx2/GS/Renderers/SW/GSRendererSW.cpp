@@ -14,7 +14,6 @@
  */
 
 #include <cstring> /* memcpy/memset */
-#include <cfloat> /* FLT_MAX */
 
 #include "GSRendererSW.h"
 
@@ -423,6 +422,7 @@ void GSRendererSW::Draw()
 			RewriteVerticesIfSTOverflow<GS_SPRITE_CLASS>();
 			break;
 		default:
+			pxFailRel("Unknown primitive class.");
 			break;
 	}
 
