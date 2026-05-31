@@ -131,8 +131,6 @@ GSState::~GSState()
 {
 	if (m_vertex.buff)
 		_aligned_free(m_vertex.buff);
-	if (m_vertex.buff_copy)
-		_aligned_free(m_vertex.buff_copy);
 	if (m_index.buff)
 		_aligned_free(m_index.buff);
 }
@@ -2622,8 +2620,6 @@ void GSState::GrowVertexBuffer()
 	const u32 maxcount = std::max<u32>(m_vertex.maxcount * 3 / 2, 10000);
 
 	GSVertex* vertex = static_cast<GSVertex*>(_aligned_malloc(sizeof(GSVertex) * maxcount, 32));
-	// Secondary same-size buffer for copying/modifying vertices (scratch, contents discarded on grow).
-	GSVertex* vertex_copy = static_cast<GSVertex*>(_aligned_malloc(sizeof(GSVertex) * maxcount, 32));
 	// Worst case index list is a list of points with vs expansion, 6 indices per point
 	u16* index = static_cast<u16*>(_aligned_malloc(sizeof(u16) * maxcount * 6, 32));
 
@@ -2634,9 +2630,6 @@ void GSState::GrowVertexBuffer()
 		_aligned_free(m_vertex.buff);
 	}
 
-	if (m_vertex.buff_copy)
-		_aligned_free(m_vertex.buff_copy);
-
 	if (m_index.buff)
 	{
 		memcpy(index, m_index.buff, sizeof(u16) * m_index.tail);
@@ -2645,7 +2638,6 @@ void GSState::GrowVertexBuffer()
 	}
 
 	m_vertex.buff = vertex;
-	m_vertex.buff_copy = vertex_copy;
 	m_vertex.maxcount = maxcount - 3; // -3 to have some space at the end of the buffer before DrawingKick can grow it
 	m_index.buff = index;
 }
