@@ -1872,20 +1872,31 @@ void GSState::Move()
 	InvalidateLocalMem(m_env.BITBLTBUF, GSVector4i(sx, sy, sx + w, sy + h));
 	InvalidateVideoMem(m_env.BITBLTBUF, GSVector4i(dx, dy, dx + w, dy + h));
 
+	const bool overlaps = m_env.BITBLTBUF.SBP == m_env.BITBLTBUF.DBP;
+	const bool intersect = overlaps && !(GSVector4i(sx, sy, sx + w, sy + h).rintersect(GSVector4i(dx, dy, dx + w, dy + h)).rempty());
+
 	int xinc = 1;
 	int yinc = 1;
 
 	if (m_env.TRXPOS.DIRX)
 	{
-		sx += w - 1;
-		dx += w - 1;
-		xinc = -1;
+		// Only allow it to reverse if the destination is behind the source.
+		if (!intersect || (sx <= dx && (sx == dx || ((!m_env.TRXPOS.DIRY && sy >= dy) || (m_env.TRXPOS.DIRY && sy < dy)))))
+		{
+			sx += w - 1;
+			dx += w - 1;
+			xinc = -1;
+		}
 	}
 	if (m_env.TRXPOS.DIRY)
 	{
-		sy += h - 1;
-		dy += h - 1;
-		yinc = -1;
+		// Only allow it to reverse if the destination is behind the source.
+		if (!intersect || (sy <= dy && (sy == dy || ((!m_env.TRXPOS.DIRX && sx >= dx) || (m_env.TRXPOS.DIRX && sx < dx)))))
+		{
+			sy += h - 1;
+			dy += h - 1;
+			yinc = -1;
+		}
 	}
 
 	const GSLocalMemory::psm_t& spsm = GSLocalMemory::m_psm[m_env.BITBLTBUF.SPSM];
