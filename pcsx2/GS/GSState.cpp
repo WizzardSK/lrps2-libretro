@@ -3631,12 +3631,21 @@ GSState::TextureMinMaxResult GSState::GetTextureMinMax(GIFRegTEX0 TEX0, GIFRegCL
 
 				const GSVertex* vert_first = &m_vertex.buff[m_index.buff[0]];
 				const GSVertex* vert_second = &m_vertex.buff[m_index.buff[1]];
+				const GSVertex* vert_third = &m_vertex.buff[m_index.buff[2]];
 
 				GSVector4 new_st = st;
-				// Check if the UV coords are going in a different direction to the verts, if they match direction, no need to swap
-				const bool u_forward = vert_first->U < vert_second->U;
-				const bool x_forward = vert_first->XYZ.X < vert_second->XYZ.X;
-				const bool swap_x = u_forward != x_forward;
+				// Check if the UV coords are going in a different direction to the verts, if they match direction, no need to swap.
+				// Use the FST integer UV directly, otherwise derive it from the STQ coords (divided by Q).
+				bool u_forward_check = PRIM->FST ? (vert_first->U < vert_second->U) : ((vert_first->ST.S / vert_first->RGBAQ.Q) < (vert_second->ST.S / vert_first->RGBAQ.Q));
+				bool x_forward_check = vert_first->XYZ.X < vert_second->XYZ.X;
+
+				if (m_vt.m_primclass == GS_TRIANGLE_CLASS)
+				{
+					u_forward_check |= PRIM->FST ? (vert_first->U < vert_third->U) : ((vert_first->ST.S / vert_first->RGBAQ.Q) < (vert_third->ST.S / vert_third->RGBAQ.Q));
+					x_forward_check |= vert_first->XYZ.X < vert_third->XYZ.X;
+				}
+
+				const bool swap_x = u_forward_check != x_forward_check;
 
 				if (int_rc.left < scissored_rc.left)
 				{
@@ -3659,9 +3668,16 @@ GSState::TextureMinMaxResult GSState::GetTextureMinMax(GIFRegTEX0 TEX0, GIFRegCL
 					st.z = new_st.z;
 				}
 
-				const bool v_forward = vert_first->V < vert_second->V;
-				const bool y_forward = vert_first->XYZ.Y < vert_second->XYZ.Y;
-				const bool swap_y = v_forward != y_forward;
+				bool v_forward_check = PRIM->FST ? (vert_first->V < vert_second->V) : ((vert_first->ST.T / vert_first->RGBAQ.Q) < (vert_second->ST.T / vert_first->RGBAQ.Q));
+				bool y_forward_check = vert_first->XYZ.Y < vert_second->XYZ.Y;
+
+				if (m_vt.m_primclass == GS_TRIANGLE_CLASS)
+				{
+					v_forward_check |= PRIM->FST ? (vert_first->V < vert_third->V) : ((vert_first->ST.T / vert_first->RGBAQ.Q) < (vert_third->ST.T / vert_third->RGBAQ.Q));
+					y_forward_check |= vert_first->XYZ.Y < vert_third->XYZ.Y;
+				}
+
+				const bool swap_y = v_forward_check != y_forward_check;
 
 				if (int_rc.top < scissored_rc.top)
 				{
