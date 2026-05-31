@@ -47,3 +47,41 @@ struct alignas(32) GSVertexPT1
 	char pad[4];
 	union { u32 c; struct { u8 r, g, b, a; }; };
 };
+
+// Vertex field accessors (ported from upstream refactor 26bd916e3,
+// "GS: Add utility functions for vertices/quads"). Used by the texture-shuffle
+// detection refactor. m[0] holds ST/RGBAQ, m[1] holds XYZ/UV/FOG.
+__forceinline_odr GSVector4i GetVertexXY(const GSVertex& v)
+{
+	return GSVector4i(v.m[1]).upl16().xyxy();
+}
+
+__forceinline_odr GSVector4i GetVertexZ(const GSVertex& v)
+{
+	return GSVector4i(v.m[1]).yyyy();
+}
+
+__forceinline_odr GSVector4i GetVertexUV(const GSVertex& v)
+{
+	return GSVector4i(v.m[1]).uph16().xyxy();
+}
+
+__forceinline_odr GSVector4 GetVertexST(const GSVertex& v)
+{
+	return GSVector4::cast(GSVector4i(v.m[0])).xyxy();
+}
+
+__forceinline_odr GSVector4i GetVertexRGBA(const GSVertex& v)
+{
+	return GSVector4i(v.m[0]).uph8().upl16();
+}
+
+__forceinline_odr GSVector4 GetVertexQ(const GSVertex& v)
+{
+	return GSVector4::cast(GSVector4i(v.m[0])).wwww();
+}
+
+__forceinline_odr GSVector4i GetVertexFOG(const GSVertex& v)
+{
+	return GSVector4i(v.m[1]).wwww();
+}

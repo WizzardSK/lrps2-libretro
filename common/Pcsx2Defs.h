@@ -206,6 +206,19 @@
 #define __fi __forceinline
 #endif
 
+// __forceinline_odr is for inline functions defined in headers (e.g. the
+// GSVertex/quad helpers). MSVC needs __forceinline; GCC/Clang need a plain
+// `inline` alongside the always_inline attribute for ODR correctness across
+// translation units. On MinGW we follow the same gnu_inline rationale as
+// __fi/__ri above and let it collapse to `inline`.
+#ifndef __forceinline_odr
+#ifdef __MINGW32__
+#define __forceinline_odr inline
+#else
+#define __forceinline_odr __forceinline inline
+#endif
+#endif
+
 // Makes sure that if anyone includes xbyak, it doesn't do anything bad
 #define XBYAK_ENABLE_OMITTED_OPERAND
 
