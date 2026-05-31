@@ -840,9 +840,6 @@ void GSRendererHW::ConvertSpriteTextureShuffleImpl(GSTextureCache::Target* rt, G
 	GSVector4i tex_r = ShiftAlignRect(m_vt.m_min.t.xyxy(m_vt.m_max.t));
 	GSVector4i scissor_r = ShiftAlignRect(GSVector4(m_context->scissor.in));
 
-	
-		m_r.x ,m_r.y, m_r.z, m_r.w, tex_r.x, tex_r.y, tex_r.z, tex_r.w,
-		scissor_r.x, scissor_r.y, scissor_r.z, scissor_r.w);
 
 	// Heuristics for determining the region to use for the shuffle.
 	bool half_x = true;
@@ -1060,8 +1057,6 @@ void GSRendererHW::ConvertSpriteTextureShuffleImpl(GSTextureCache::Target* rt, G
 
 	}
 
-		m_r.x, m_r.y, m_r.z, m_r.w, tex_r.x, tex_r.y, tex_r.z, tex_r.w,
-		scissor_r.x, scissor_r.y, scissor_r.z, scissor_r.w);
 
 	m_vt.m_min.p.x = static_cast<float>(m_r.x);
 	m_vt.m_min.p.y = static_cast<float>(m_r.y);
@@ -1590,7 +1585,6 @@ GSRendererHW::TextureShuffleInfo GSRendererHW::DetectTextureShuffleImpl()
 			return { TextureShuffleType::None, TextureShuffleChannels_None };
 	}
 
-		xy.x, xy.y, xy.z, xy.w, uv.x, uv.y, uv.z, uv.w);
 
 	const int x_pixels = xy.width();
 	const int y_pixels = xy.height();
@@ -1901,7 +1895,6 @@ GSRendererHW::TextureShuffleInfo GSRendererHW::DetectTextureShuffleImpl()
 			g_clobber = (shuffle_channels & TextureShuffleChannels_WriteGreen) != 0;
 		}
 
-			r_clobber, g_clobber, b_clobber, a_clobber);
 
 		if (r_clobber)
 			shuffle_channels &= ~TextureShuffleChannels_WriteRed;
@@ -1914,15 +1907,6 @@ GSRendererHW::TextureShuffleInfo GSRendererHW::DetectTextureShuffleImpl()
 	}
 
 	// Log which channels are read/written.
-	if (shuffle_channels & TextureShuffleChannels_RedToBlue)
-	if (shuffle_channels & TextureShuffleChannels_BlueToRed)
-	if (shuffle_channels & TextureShuffleChannels_GreenToAlpha)
-	if (shuffle_channels & TextureShuffleChannels_AlphaToGreen)
-	if (shuffle_channels & TextureShuffleChannels_RedCopy)
-	if (shuffle_channels & TextureShuffleChannels_GreenCopy)
-	if (shuffle_channels & TextureShuffleChannels_BlueCopy)
-	if (shuffle_channels & TextureShuffleChannels_AlphaCopy)
-	if (shuffle_channels & TextureShuffleChannels_BlueToAlpha)
 
 	return { shuffle_type, static_cast<TextureShuffleChannels>(shuffle_channels) };
 }
