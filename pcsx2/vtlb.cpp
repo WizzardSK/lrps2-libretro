@@ -180,7 +180,16 @@ vtlb_private::VTLBVirtual::VTLBVirtual(VTLBPhysical phys, u32 paddr, u32 vaddr)
  * correct. */
 __inline int ConvertPageMask(u32 PageMask)
 {
-	const u32 mask = (u32)__builtin_popcount(PageMask >> 13);
+	/* Count the set bits in the page-size field portably (MSVC has no
+	 * __builtin_popcount). This is only called during TLB setup, so a small
+	 * loop is fine. */
+	u32 bits = PageMask >> 13;
+	u32 mask = 0;
+	while (bits)
+	{
+		mask += bits & 1u;
+		bits >>= 1;
+	}
 
 	return (1 << (12 + mask)) - 1;
 }
