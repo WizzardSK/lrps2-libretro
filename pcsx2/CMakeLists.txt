@@ -347,60 +347,6 @@ set(pcsx2DEV9Headers
 	DEV9/ThreadSafeMap.h
 	)
 
-# USB sources
-set(pcsx2USBSources
-	USB/USB.cpp
-	USB/deviceproxy.cpp
-	USB/qemu-usb/bus.cpp
-	USB/qemu-usb/core.cpp
-	USB/qemu-usb/desc.cpp
-	USB/qemu-usb/hid.cpp
-	USB/qemu-usb/input-keymap-qcode-to-qnum.cpp
-	USB/qemu-usb/usb-ohci.cpp
-	USB/shared/ringbuffer.cpp
-	USB/usb-eyetoy/jo_mpeg.cpp
-	USB/usb-eyetoy/usb-eyetoy-webcam.cpp
-	USB/usb-hid/usb-hid.cpp
-	USB/usb-lightgun/guncon2.cpp
-	USB/usb-mic/usb-headset.cpp
-	USB/usb-mic/usb-mic-logitech.cpp
-	USB/usb-mic/usb-mic-singstar.cpp
-	USB/usb-msd/usb-msd.cpp
-	USB/usb-pad/lg/lg_ff.cpp
-	USB/usb-pad/usb-pad-ff.cpp
-	USB/usb-pad/usb-pad.cpp
-	USB/usb-pad/usb-seamic.cpp
-	USB/usb-printer/usb-printer.cpp
-)
-
-# USB headers
-set(pcsx2USBHeaders
-	USB/USB.h
-	USB/deviceproxy.h
-	USB/qemu-usb/USBinternal.h
-	USB/qemu-usb/desc.h
-	USB/qemu-usb/hid.h
-	USB/qemu-usb/input-keymap.h
-	USB/qemu-usb/queue.h
-	USB/qemu-usb/qusb.h
-	USB/shared/ringbuffer.h
-	USB/usb-eyetoy/jo_mpeg.h
-	USB/usb-eyetoy/ov519.h
-	USB/usb-eyetoy/usb-eyetoy-webcam.h
-	USB/usb-eyetoy/videodev.h
-	USB/usb-hid/usb-hid.h
-	USB/usb-lightgun/guncon2.h
-	USB/usb-mic/audio.h
-	USB/usb-mic/audiodev-noop.h
-	USB/usb-mic/audiodev.h
-	USB/usb-mic/usb-headset.h
-	USB/usb-mic/usb-mic-singstar.h
-	USB/usb-msd/usb-msd.h
-	USB/usb-pad/lg/lg_ff.h
-	USB/usb-pad/usb-pad.h
-	USB/usb-printer/usb-printer.h
-)
-
 # Host PAD
 set(pcsx2PADSources
 	PAD/PAD.cpp
@@ -565,12 +511,6 @@ if(USE_VULKAN)
 endif()
 
 if(WIN32)
-	list(APPEND pcsx2USBSources
-		USB/usb-eyetoy/cam-windows.cpp
-	)
-	list(APPEND pcsx2USBHeaders
-		USB/usb-eyetoy/cam-windows.h
-	)
 
 target_compile_options(PCSX2_FLAGS INTERFACE "-DHAVE_D3D11")
 target_compile_options(PCSX2_FLAGS INTERFACE "-DHAVE_D3D12")
@@ -600,16 +540,6 @@ target_compile_options(PCSX2_FLAGS INTERFACE "-DHAVE_D3D12")
 		GS/Renderers/DX12/D3D12StreamBuffer.h
 	)
 elseif(Linux)
-	list(APPEND pcsx2USBSources
-		USB/usb-eyetoy/cam-linux.cpp
-	)
-	list(APPEND pcsx2USBHeaders
-		USB/usb-eyetoy/cam-linux.h
-	)
-else()
-	list(APPEND pcsx2USBSources
-		USB/usb-eyetoy/cam-noop.cpp
-	)
 endif()
 
 # IPU sources
@@ -789,8 +719,27 @@ set(pcsx2x86Headers
 
 set(pcsx2DEV9Sources)
 set(pcsx2DEV9Headers)
-set(pcsx2USBSources)
-set(pcsx2USBHeaders)
+set(pcsx2USBSources
+	USB/libretro-usb/bus.cpp
+	USB/libretro-usb/core.cpp
+	USB/libretro-usb/desc.cpp
+	USB/libretro-usb/hid.cpp
+	USB/libretro-usb/input-keymap-qcode-to-qnum.cpp
+	USB/libretro-usb/usb-hid.cpp
+	USB/libretro-usb/usb-ohci.cpp
+	USB/shared/ringbuffer.cpp
+)
+set(pcsx2USBHeaders
+	USB/USB.h
+	USB/libretro-usb/USBinternal.h
+	USB/libretro-usb/desc.h
+	USB/libretro-usb/hid.h
+	USB/libretro-usb/input-keymap.h
+	USB/libretro-usb/qusb.h
+	USB/libretro-usb/queue.h
+	USB/libretro-usb/usb-hid.h
+	USB/shared/ringbuffer.h
+)
 set(pcsx2ZipToolsSources)
 set(pcsx2ZipToolsHeaders)
 
