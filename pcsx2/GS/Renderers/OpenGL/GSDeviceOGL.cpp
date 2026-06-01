@@ -1628,7 +1628,7 @@ void GSDeviceOGL::IASetPrimitiveTopology(GLenum topology)
 
 void GSDeviceOGL::PSSetShaderResource(int i, GSTexture* sr)
 {
-	const GLuint id = static_cast<GSTextureOGL*>(sr)->GetID();
+	const GLuint id = sr ?  static_cast<GSTextureOGL*>(sr)->GetID() : 0;
 	if (GLState::tex_unit[i] != id)
 	{
 		GLState::tex_unit[i] = id;
