@@ -2935,8 +2935,8 @@ void GSRendererHW::Draw()
 		// Normally we would use 1024 here to match the clear above, but The Godfather does a 1023x1023 draw instead
 		// (very close to 1024x1024, but apparently the GS rounds down..). So, catch that here, we don't want to
 		// create that target, because the clear isn't black, it'll hang around and never get invalidated.
-		const bool is_square = (t_size.y == t_size.x) && m_r.w >= 1023 && m_primitive_covers_without_gaps == NoGapsType::FullCover;
-		const bool is_clear = is_possible_mem_clear && is_square;
+		const bool is_large_rect = (t_size.y >= t_size.x) && m_r.w >= 1023 && m_primitive_covers_without_gaps == NoGapsType::FullCover;
+		const bool is_clear = is_possible_mem_clear && is_large_rect;
 		const bool possible_shuffle = draw_sprite_tex && (((src && src->m_target && src->m_from_target && src->m_from_target->m_32_bits_fmt) &&
 															  GSLocalMemory::m_psm[m_cached_ctx.TEX0.PSM].bpp == 16 && GSLocalMemory::m_psm[m_cached_ctx.FRAME.PSM].bpp == 16) ||
 															 IsPossibleChannelShuffle());
