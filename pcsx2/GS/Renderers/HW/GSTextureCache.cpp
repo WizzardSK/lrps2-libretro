@@ -142,10 +142,10 @@ void GSTextureCache::AddDirtyRectTarget(Target* target, GSVector4i rect, u32 psm
 			}
 			const GSVector4i new_dirty_rect = rect.rintersect(target->m_valid);
 			const GSVector4i existing_dirty_rect = it[0].r.rintersect(target->m_valid);
-			const int dirty_overlap_top = existing_dirty_rect.wwww().ge32(new_dirty_rect.yyyy()).mask() & existing_dirty_rect.yyyy().lt32(new_dirty_rect.yyyy()).mask();
-			const int dirty_overlap_bottom = existing_dirty_rect.yyyy().le32(new_dirty_rect.wwww()).mask() & existing_dirty_rect.wwww().gt32(new_dirty_rect.wwww()).mask();
-			const int dirty_overlap_left = existing_dirty_rect.zzzz().ge32(new_dirty_rect.xxxx()).mask() & existing_dirty_rect.xxxx().lt32(new_dirty_rect.xxxx()).mask();
-			const int dirty_overlap_right = existing_dirty_rect.xxxx().le32(new_dirty_rect.zzzz()).mask() & existing_dirty_rect.zzzz().gt32(new_dirty_rect.zzzz()).mask();
+			const int dirty_overlap_top = (existing_dirty_rect.wwww().gt32(new_dirty_rect.yyyy()) | existing_dirty_rect.wwww().eq32(new_dirty_rect.yyyy())).mask() & existing_dirty_rect.yyyy().lt32(new_dirty_rect.yyyy()).mask();
+			const int dirty_overlap_bottom = (existing_dirty_rect.yyyy().lt32(new_dirty_rect.wwww()) | existing_dirty_rect.yyyy().eq32(new_dirty_rect.wwww())).mask() & existing_dirty_rect.wwww().gt32(new_dirty_rect.wwww()).mask();
+			const int dirty_overlap_left = (existing_dirty_rect.zzzz().gt32(new_dirty_rect.xxxx()) | existing_dirty_rect.zzzz().eq32(new_dirty_rect.xxxx())).mask() & existing_dirty_rect.xxxx().lt32(new_dirty_rect.xxxx()).mask();
+			const int dirty_overlap_right = (existing_dirty_rect.xxxx().lt32(new_dirty_rect.zzzz()) | existing_dirty_rect.xxxx().eq32(new_dirty_rect.zzzz())).mask() & existing_dirty_rect.zzzz().gt32(new_dirty_rect.zzzz()).mask();
 			// Edges lined up so just expand the dirty rect
 			if ((existing_dirty_rect.xzxz().eq(new_dirty_rect.xzxz()) && (dirty_overlap_top == 0xFFFF || dirty_overlap_bottom == 0xFFFF)) ||
 				(existing_dirty_rect.ywyw().eq(new_dirty_rect.ywyw()) && (dirty_overlap_left == 0xFFFF || dirty_overlap_right == 0xFFFF)) ||
