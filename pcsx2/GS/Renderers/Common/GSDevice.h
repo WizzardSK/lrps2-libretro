@@ -138,17 +138,14 @@ enum ChannelFetch
 	ChannelFetch_GXBY  = 6
 };
 
-enum class HWBlendType
-{
-	SRC_ONE_DST_FACTOR      = 1, // Use the dest color as blend factor, Cs is set to 1.
-	SRC_ALPHA_DST_FACTOR    = 2, // Use the dest color as blend factor, Cs is set to (Alpha - 1).
-	SRC_DOUBLE              = 3, // Double source color.
-	SRC_HALF_ONE_DST_FACTOR = 4, // Use the dest color as blend factor, Cs is set to 0.5, additionally divide As or Af by 2.
-
-	BMIX1_ALPHA_HIGH_ONE    = 1, // Blend formula is replaced when alpha is higher than 1.
-	BMIX1_SRC_HALF          = 2, // Impossible blend will always be wrong on hw, divide Cs by 2.
-	BMIX2_OVERFLOW          = 3, // Blending Cs might overflow, try to compensate.
-};
+/* HW blend_hw shader bit values (m_conf.ps.blend_hw / blend_second_pass.blend_hw) */
+#define HW_BLEND_SRC_ONE_DST_FACTOR      1 /* Use the dest color as blend factor, Cs is set to 1. */
+#define HW_BLEND_SRC_ALPHA_DST_FACTOR    2 /* Use the dest color as blend factor, Cs is set to (Alpha - 1). */
+#define HW_BLEND_SRC_DOUBLE              3 /* Double source color. */
+#define HW_BLEND_SRC_HALF_ONE_DST_FACTOR 4 /* Cs is set to 0.5, additionally divide As or Af by 2. */
+#define HW_BLEND_BMIX1_ALPHA_HIGH_ONE    1 /* Blend formula replaced when alpha is higher than 1. */
+#define HW_BLEND_BMIX1_SRC_HALF          2 /* Impossible blend always wrong on hw, divide Cs by 2. */
+#define HW_BLEND_BMIX2_OVERFLOW          3 /* Blending Cs might overflow, try to compensate. */
 
 struct alignas(16) DisplayConstantBuffer
 {
