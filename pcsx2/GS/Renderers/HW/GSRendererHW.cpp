@@ -6590,8 +6590,8 @@ bool GSRendererHW::DetectDoubleHalfClear(bool& no_rt, bool& no_ds)
 			return false;
 	}
 
-	// Z and color must be constant and the same
-	if (m_vt.m_eq.rgba != 0xFFFF || !m_vt.m_eq.z)
+	// Z and color must be constant and the same and both are enabled.
+	if (m_vt.m_eq.rgba != 0xFFFF || !m_vt.m_eq.z || (no_ds != no_rt))
 		return false;
 
 	const u32 write_color = GetConstantDirectWriteMemClearColor();
