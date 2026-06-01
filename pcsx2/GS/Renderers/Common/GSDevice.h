@@ -1,18 +1,33 @@
-// SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
-// SPDX-License-Identifier: GPL-3.0+
+/*  PCSX2 - PS2 Emulator for PCs
+ *  Copyright (C) 2002-2021 PCSX2 Dev Team
+ *
+ *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
+ *  of the GNU Lesser General Public License as published by the Free Software Found-
+ *  ation, either version 3 of the License, or (at your option) any later version.
+ *
+ *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ *  PURPOSE.  See the GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License along with PCSX2.
+ *  If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #pragma once
 
+#include <array>
+
 #include "common/HashCombine.h"
 #include "common/WindowInfo.h"
-#include "GS/GS.h"
-#include "GS/Renderers/Common/GSFastList.h"
-#include "GS/Renderers/Common/GSShaderEnums.h"
-#include "GS/Renderers/Common/GSTexture.h"
-#include "GS/Renderers/Common/GSVertex.h"
-#include "GS/GSAlignedClass.h"
-#include "GS/GSExtra.h"
-#include <array>
+
+#include "../../GS.h"
+#include "../../GSAlignedClass.h"
+#include "../../GSExtra.h"
+
+#include "GSFastList.h"
+#include "GSTexture.h"
+#include "GSShaderEnums.h"
+#include "GSVertex.h"
 
 enum class ShaderConvert
 {
@@ -40,13 +55,10 @@ enum class ShaderConvert
 	RGBA8_TO_FLOAT24_BILN,
 	RGBA8_TO_FLOAT16_BILN,
 	RGB5A1_TO_FLOAT16_BILN,
-	FLOAT32_DEPTH_TO_COLOR,
-	FLOAT32_COLOR_TO_DEPTH,
 	FLOAT32_TO_FLOAT24,
 	DEPTH_COPY,
 	DOWNSAMPLE_COPY,
 	RGBA_TO_8I,
-	RGB5A1_TO_8I,
 	CLUT_4,
 	CLUT_8,
 	YUV,
@@ -71,26 +83,6 @@ enum class ShaderInterlace
 	Count
 };
 
-static inline bool HasVariableWriteMask(ShaderConvert shader)
-{
-	switch (shader)
-	{
-		case ShaderConvert::COPY:
-		case ShaderConvert::RTA_CORRECTION:
-			return true;
-		default:
-			return false;
-	}
-}
-
-static inline int GetShaderIndexForMask(ShaderConvert shader, int mask)
-{
-	int index = mask;
-	if (shader == ShaderConvert::RTA_CORRECTION)
-		index |= 1 << 4;
-	return index;
-}
-
 static inline bool HasDepthOutput(ShaderConvert shader)
 {
 	switch (shader)
@@ -103,55 +95,13 @@ static inline bool HasDepthOutput(ShaderConvert shader)
 		case ShaderConvert::RGBA8_TO_FLOAT24_BILN:
 		case ShaderConvert::RGBA8_TO_FLOAT16_BILN:
 		case ShaderConvert::RGB5A1_TO_FLOAT16_BILN:
-		case ShaderConvert::FLOAT32_COLOR_TO_DEPTH:
 		case ShaderConvert::FLOAT32_TO_FLOAT24:
 		case ShaderConvert::DEPTH_COPY:
 			return true;
 		default:
-			return false;
+			break;
 	}
-}
-
-static inline bool HasStencilOutput(ShaderConvert shader)
-{
-	switch (shader)
-	{
-		case ShaderConvert::DATM_0:
-		case ShaderConvert::DATM_1:
-		case ShaderConvert::DATM_0_RTA_CORRECTION:
-		case ShaderConvert::DATM_1_RTA_CORRECTION:
-			return true;
-		default:
-			return false;
-	}
-}
-
-static inline bool SupportsNearest(ShaderConvert shader)
-{
-	switch (shader)
-	{
-		case ShaderConvert::RGBA8_TO_FLOAT32_BILN:
-		case ShaderConvert::RGBA8_TO_FLOAT24_BILN:
-		case ShaderConvert::RGBA8_TO_FLOAT16_BILN:
-		case ShaderConvert::RGB5A1_TO_FLOAT16_BILN:
-			return false;
-		default:
-			return true;
-	}
-}
-
-static inline bool SupportsBilinear(ShaderConvert shader)
-{
-	switch (shader)
-	{
-		case ShaderConvert::RGBA8_TO_FLOAT32:
-		case ShaderConvert::RGBA8_TO_FLOAT24:
-		case ShaderConvert::RGBA8_TO_FLOAT16:
-		case ShaderConvert::RGB5A1_TO_FLOAT16:
-			return false;
-		default:
-			return true;
-	}
+	return false;
 }
 
 static inline u32 ShaderConvertWriteMask(ShaderConvert shader)
@@ -161,20 +111,14 @@ static inline u32 ShaderConvertWriteMask(ShaderConvert shader)
 		case ShaderConvert::FLOAT32_TO_RGB8:
 			return 0x7;
 		default:
-			return 0xf;
+			break;
 	}
+	return 0xf;
 }
 
 enum class PresentShader
 {
 	COPY = 0,
-	SCANLINE,
-	DIAGONAL_FILTER,
-	TRIANGULAR_FILTER,
-	COMPLEX_FILTER,
-	LOTTES_FILTER,
-	SUPERSAMPLE_4xRGSS,
-	SUPERSAMPLE_AUTO,
 	Count
 };
 
@@ -182,7 +126,6 @@ enum class PresentShader
 /// (Can't put methods on an enum class)
 int SetDATMShader(SetDATM datm);
 const char* shaderName(ShaderConvert value);
-const char* shaderName(PresentShader value);
 
 enum ChannelFetch
 {
@@ -192,21 +135,7 @@ enum ChannelFetch
 	ChannelFetch_BLUE  = 3,
 	ChannelFetch_ALPHA = 4,
 	ChannelFetch_RGB   = 5,
-	ChannelFetch_GXBY  = 6,
-};
-
-enum class HWBlendType
-{
-	SRC_ONE_DST_FACTOR      = 1, // Use the dest color as blend factor, Cs is set to 1.
-	SRC_ALPHA_DST_FACTOR    = 2, // Use the dest color as blend factor, Cs is set to (Alpha - 1).
-	SRC_DOUBLE              = 3, // Double source color.
-	SRC_HALF_ONE_DST_FACTOR = 4, // Use the dest color as blend factor, Cs is set to 0.5, additionally divide As or Af by 2.
-	SRC_INV_DST_BLEND_HALF  = 5, // Halve the alpha then double the final result.
-	INV_SRC_DST_BLEND_HALF  = 6, // Halve the alpha then double the final result.
-
-	BMIX1_ALPHA_HIGH_ONE    = 1, // Blend formula is replaced when alpha is higher than 1.
-	BMIX1_SRC_HALF          = 2, // Impossible blend will always be wrong on hw, divide Cs by 2.
-	BMIX2_OVERFLOW          = 3, // Blending Cs might overflow, try to compensate.
+	ChannelFetch_GXBY  = 6
 };
 
 struct alignas(16) DisplayConstantBuffer
@@ -219,7 +148,6 @@ struct alignas(16) DisplayConstantBuffer
 	GSVector2 RcpTargetResolution; // +56,zw
 	GSVector2 SourceResolution; // +64,xy
 	GSVector2 RcpSourceResolution; // +72,zw
-	GSVector4 TimeAndPad; // seconds since GS init +76,xyzw
 	// +96
 
 	// assumes that sRect is normalized
@@ -237,12 +165,7 @@ struct alignas(16) DisplayConstantBuffer
 		RcpTargetResolution = GSVector2(1.0f) / TargetResolution;
 		TargetSize = GSVector2(dRect.z - dRect.x, dRect.w - dRect.y);
 	}
-	void SetTime(float time)
-	{
-		TimeAndPad = GSVector4(time);
-	}
 };
-static_assert(sizeof(DisplayConstantBuffer) == 96, "DisplayConstantBuffer is correct size");
 
 struct alignas(16) MergeConstantBuffer
 {
@@ -252,13 +175,11 @@ struct alignas(16) MergeConstantBuffer
 	u32 DOFFSET;
 	float ScaleFactor;
 };
-static_assert(sizeof(MergeConstantBuffer) == 32, "MergeConstantBuffer is correct size");
 
 struct alignas(16) InterlaceConstantBuffer
 {
 	GSVector4 ZrH; // data passed to the shader
 };
-static_assert(sizeof(InterlaceConstantBuffer) == 16, "InterlaceConstantBuffer is correct size");
 
 enum HWBlendFlags
 {
@@ -281,15 +202,11 @@ enum HWBlendFlags
 	BLEND_A_MAX  = 0x8000, // Impossible blending uses coeff bigger than 1
 };
 
-// Determines the HW blend function for the video backend
+// Determines the HW blend function for DX11/OGL
 struct HWBlend
 {
-	typedef u8 BlendOp; /*GSDevice::BlendOp*/
-	typedef u8 BlendFactor; /*GSDevice::BlendFactor*/
-
 	u16 flags;
-	BlendOp op;
-	BlendFactor src, dst;
+	u8 op, src, dst;
 };
 
 struct alignas(16) GSHWDrawConfig
@@ -300,10 +217,13 @@ struct alignas(16) GSHWDrawConfig
 		Line,
 		Triangle,
 	};
-	using VSExpand = GSShader::VSExpand;
-	using PS_ATST  = GSShader::PS_ATST;
-	using PS_AFAIL = GSShader::PS_AFAIL;
-	using PS_AA1   = GSShader::PS_AA1;
+	enum class VSExpand: u8
+	{
+		None,
+		Point,
+		Line,
+		Sprite
+	};
 #pragma pack(push, 1)
 	struct VSSelector
 	{
@@ -315,8 +235,8 @@ struct alignas(16) GSHWDrawConfig
 				u8 tme : 1;
 				u8 iip : 1;
 				u8 point_size : 1;		///< Set when points need to be expanded without VS expanding.
-				VSExpand expand : 3;
-				u8 _free : 1;
+				VSExpand expand : 2;
+				u8 _free : 2;
 			};
 			u8 key;
 		};
@@ -324,13 +244,10 @@ struct alignas(16) GSHWDrawConfig
 		VSSelector(u8 k): key(k) {}
 
 		/// Returns true if the fixed index buffer should be used.
-		__fi bool UseFixedExpandIndexBuffer() const { return (expand == VSExpand::Point || expand == VSExpand::Sprite); }
-		
-		/// Return true if the index buffer should be bound as a vertex shader resource.
-		__fi bool UseVSExpandIndexBuffer() const { return (expand == VSExpand::TriangleAA1); }
+		__fi bool UseExpandIndexBuffer() const { return (expand == VSExpand::Point || expand == VSExpand::Sprite); }
 	};
-	static_assert(sizeof(VSSelector) == 1, "VSSelector is a single byte");
-
+#pragma pack(pop)
+#pragma pack(push, 4)
 	struct PSSelector
 	{
 		// Performance note: there are too many shader combinations
@@ -354,9 +271,8 @@ struct alignas(16) GSHWDrawConfig
 				u32 iip : 1;
 				// Pixel test
 				u32 date : 3;
-				PS_ATST atst : 3;
-				PS_AFAIL afail : 3;
-				u32 ztst : 2;
+				GSShader::PS_ATST atst : 3;
+				GSShader::PS_AFAIL afail : 3;
 				// Color sampling
 				u32 fst : 1; // Investigate to do it on the VS
 				u32 tfx : 3;
@@ -382,12 +298,12 @@ struct alignas(16) GSHWDrawConfig
 				u32 blend_c        : 2;
 				u32 blend_d        : 2;
 				u32 fixed_one_a    : 1;
-				u32 blend_hw       : 3; /*HWBlendType*/
+				u32 blend_hw       : 3;
 				u32 a_masked       : 1;
-				u32 colclip_hw     : 1; // colclip (COLCLAMP off) emulation through HQ textures
+				u32 colclip_hw     : 1;
 				u32 rta_correction : 1;
 				u32 rta_source_correction : 1;
-				u32 colclip        : 1; // COLCLAMP off (color blend outputs wrap around 0-255)
+				u32 colclip        : 1;
 				u32 blend_mix      : 2;
 				u32 round_inv      : 1; // Blending will invert the value, so rounding needs to go the other way
 				u32 pabe           : 1;
@@ -401,9 +317,8 @@ struct alignas(16) GSHWDrawConfig
 				u32 dither : 2;
 				u32 dither_adjust : 1;
 
-				// Depth writing
+				// Depth clamp
 				u32 zclamp : 1;
-				u32 zfloor : 1;
 
 				// Hack
 				u32 tcoffsethack : 1;
@@ -417,13 +332,6 @@ struct alignas(16) GSHWDrawConfig
 
 				// Scan mask
 				u32 scanmsk : 2;
-
-				// AA1
-				PS_AA1 aa1 : 2; // Pixel shader AA1 primitive. Must be used in conjunction with VS AA1 expand.
-				u32 abe : 1; // Alpha blend enabled. Currently only used for emulating AA1/ABE interaction.
-
-				// Anisotropic filtering
-				u32 sw_aniso : 5;
 			};
 
 			struct
@@ -438,20 +346,11 @@ struct alignas(16) GSHWDrawConfig
 		__fi bool operator!=(const PSSelector& rhs) const { return (key_lo != rhs.key_lo || key_hi != rhs.key_hi); }
 		__fi bool operator<(const PSSelector& rhs) const { return (key_lo < rhs.key_lo || key_hi < rhs.key_hi); }
 
-		__fi bool IsFeedbackLoopRT() const
+		__fi bool IsFeedbackLoop() const
 		{
 			const u32 sw_blend_bits = blend_a | blend_b | blend_d;
-			const bool sw_blend_needs_rt = (sw_blend_bits != 0 && ((sw_blend_bits | blend_c) & 1u)) || ((a_masked & blend_c) != 0);
-			const bool afail_needs_rt = afail == PS_AFAIL::ZB_ONLY || afail == PS_AFAIL::RGB_ONLY || afail == PS_AFAIL::RGB_ONLY_SW_Z;
-			return tex_is_fb || fbmask || (date >= 5) || sw_blend_needs_rt || afail_needs_rt;
-		}
-
-		__fi bool IsFeedbackLoopDepth() const
-		{
-			const bool afail_needs_depth = afail == PS_AFAIL::FB_ONLY || afail == PS_AFAIL::RGB_ONLY_SW_Z;
-			const bool ztst_needs_depth = ztst == ZTST_GEQUAL || ztst == ZTST_GREATER;
-			const bool aa1_needs_depth = aa1 == PS_AA1::TRIANGLE_SW_Z;
-			return afail_needs_depth || ztst_needs_depth || aa1_needs_depth;
+			const bool sw_blend_needs_rt = sw_blend_bits != 0 && ((sw_blend_bits | blend_c) & 1u);
+			return tex_is_fb || fbmask || (date > 0 && date != 3) || sw_blend_needs_rt;
 		}
 
 		/// Disables color output from the pixel shader, this is done when all channels are masked.
@@ -469,22 +368,7 @@ struct alignas(16) GSHWDrawConfig
 			// disable both outputs.
 			no_color = no_color1 = 1;
 		}
-
-		/// Disables depth output from the pixel shader.
-		__fi void DisableDepthOutput()
-		{
-			if (afail == PS_AFAIL::RGB_ONLY_SW_Z)
-			{
-				afail = PS_AFAIL::RGB_ONLY;
-			}
-
-			if (aa1 == PS_AA1::TRIANGLE_SW_Z)
-			{
-				aa1 = PS_AA1::TRIANGLE;
-			}
-		}
 	};
-	static_assert(sizeof(PSSelector) == 12, "PSSelector is 12 bytes");
 #pragma pack(pop)
 	struct PSSelectorHash
 	{
@@ -506,6 +390,7 @@ struct alignas(16) GSHWDrawConfig
 				u8 tav      : 1;
 				u8 biln     : 1;
 				u8 triln    : 3;
+				u8 aniso    : 1;
 				u8 lodclamp : 1;
 			};
 			u8 key;
@@ -523,16 +408,11 @@ struct alignas(16) GSHWDrawConfig
 		/// Returns true if the effective minification filter is linear.
 		__fi bool IsMinFilterLinear() const
 		{
+			// use the same filter as mag when mipmapping is off
 			if (triln < static_cast<u8>(GS_MIN_FILTER::Nearest_Mipmap_Nearest))
-			{
-				// use the same filter as mag when mipmapping is off
 				return biln;
-			}
-			else
-			{
-				// Linear_Mipmap_Nearest or Linear_Mipmap_Linear
-				return (triln >= static_cast<u8>(GS_MIN_FILTER::Linear_Mipmap_Nearest));
-			}
+			// Linear_Mipmap_Nearest or Linear_Mipmap_Linear
+			return (triln >= static_cast<u8>(GS_MIN_FILTER::Linear_Mipmap_Nearest));
 		}
 
 		/// Returns true if the effective magnification filter is linear.
@@ -570,9 +450,9 @@ struct alignas(16) GSHWDrawConfig
 			};
 			u8 key;
 		};
-		constexpr DepthStencilSelector(): key(0) {}
-		constexpr DepthStencilSelector(u8 k): key(k) {}
-		static constexpr DepthStencilSelector NoDepth()
+		DepthStencilSelector(): key(0) {}
+		DepthStencilSelector(u8 k): key(k) {}
+		static DepthStencilSelector NoDepth()
 		{
 			DepthStencilSelector out;
 			out.ztst = ZTST_ALWAYS;
@@ -598,10 +478,9 @@ struct alignas(16) GSHWDrawConfig
 			};
 			u8 key;
 		};
-		constexpr ColorMaskSelector(): key(0xF) {}
-		constexpr ColorMaskSelector(u8 c): key(0) { wrgba = c; }
+		ColorMaskSelector(): key(0xF) {}
+		ColorMaskSelector(u8 c): key(0) { wrgba = c; }
 	};
-
 #pragma pack(pop)
 	struct alignas(16) VSConstantBuffer
 	{
@@ -613,11 +492,11 @@ struct alignas(16) GSHWDrawConfig
 		GSVector2i max_depth;
 		__fi VSConstantBuffer()
 		{
-			memset(static_cast<void*>(this), 0, sizeof(*this));
+			memset(this, 0, sizeof(*this));
 		}
 		__fi VSConstantBuffer(const VSConstantBuffer& other)
 		{
-			memcpy(static_cast<void*>(this), static_cast<const void*>(&other), sizeof(*this));
+			memcpy(this, &other, sizeof(*this));
 		}
 		__fi VSConstantBuffer& operator=(const VSConstantBuffer& other)
 		{
@@ -637,50 +516,10 @@ struct alignas(16) GSHWDrawConfig
 			if (*this == other)
 				return false;
 
-			memcpy(static_cast<void*>(this), static_cast<const void*>(&other), sizeof(*this));
+			memcpy(this, &other, sizeof(*this));
 			return true;
 		}
 	};
-
-	struct alignas(16) VSPushConstants
-	{
-		u32 base_vertex;
-		u32 base_index;
-		u32 _pad0;
-		u32 _pad1;
-
-		__fi VSPushConstants()
-		{
-			memset(static_cast<void*>(this), 0, sizeof(*this));
-		}
-		__fi VSPushConstants(const VSPushConstants& other)
-		{
-			memcpy(static_cast<void*>(this), static_cast<const void*>(&other), sizeof(*this));
-		}
-		__fi VSPushConstants& operator=(const VSPushConstants& other)
-		{
-			new (this) VSPushConstants(other);
-			return *this;
-		}
-		__fi bool operator==(const VSPushConstants& other) const
-		{
-			return BitEqual(*this, other);
-		}
-		__fi bool operator!=(const VSPushConstants& other) const
-		{
-			return !(*this == other);
-		}
-		__fi bool Update(const VSPushConstants& other)
-		{
-			if (*this == other)
-				return false;
-
-			memcpy(static_cast<void*>(this), static_cast<const void*>(&other), sizeof(*this));
-			return true;
-		}
-	};
-	static_assert(sizeof(VSPushConstants) == 16, "VSPushConstants wrong size");
-
 	struct alignas(16) PSConstantBuffer
 	{
 		GSVector4 FogColor_AREF;
@@ -693,7 +532,6 @@ struct alignas(16) GSHWDrawConfig
 		GSVector4 LODParams;
 		GSVector4 STRange;
 		GSVector4i ChannelShuffle;
-		GSVector2 ChannelShuffleOffset;
 		GSVector2 TCOffsetHack;
 		GSVector2 STScale;
 
@@ -703,11 +541,11 @@ struct alignas(16) GSHWDrawConfig
 
 		__fi PSConstantBuffer()
 		{
-			memset(static_cast<void*>(this), 0, sizeof(*this));
+			memset(this, 0, sizeof(*this));
 		}
 		__fi PSConstantBuffer(const PSConstantBuffer& other)
 		{
-			memcpy(static_cast<void*>(this), static_cast<const void*>(&other), sizeof(*this));
+			memcpy(this, &other, sizeof(*this));
 		}
 		__fi PSConstantBuffer& operator=(const PSConstantBuffer& other)
 		{
@@ -727,34 +565,30 @@ struct alignas(16) GSHWDrawConfig
 			if (*this == other)
 				return false;
 
-			memcpy(static_cast<void*>(this), static_cast<const void*>(&other), sizeof(*this));
+			memcpy(this, &other, sizeof(*this));
 			return true;
 		}
 	};
-	// For hardware rendering backends
 	struct BlendState
 	{
-		typedef u8 BlendOp; /*GSDevice::BlendOp*/
-		typedef u8 BlendFactor; /*GSDevice::BlendFactor*/
-
 		union
 		{
 			struct
 			{
-				bool enable : 1;
-				bool constant_enable : 1;
-				BlendOp op : 6;
-				BlendFactor src_factor : 4;
-				BlendFactor dst_factor : 4;
-				BlendFactor src_factor_alpha : 4;
-				BlendFactor dst_factor_alpha : 4;
+				u8 enable : 1;
+				u8 constant_enable : 1;
+				u8 op : 6;
+				u8 src_factor : 4;
+				u8 dst_factor : 4;
+				u8 src_factor_alpha : 4;
+				u8 dst_factor_alpha : 4;
 				u8 constant;
 			};
 			u32 key;
 		};
-		constexpr BlendState(): key(0) {}
-		constexpr BlendState(bool enable_, BlendFactor src_factor_, BlendFactor dst_factor_, BlendOp op_,
-			BlendFactor src_alpha_factor_, BlendFactor dst_alpha_factor_, bool constant_enable_, u8 constant_)
+		BlendState(): key(0) {}
+		BlendState(bool enable_, u8 src_factor_, u8 dst_factor_, u8 op_,
+			u8 src_alpha_factor_, u8 dst_alpha_factor_, bool constant_enable_, u8 constant_)
 			: key(0)
 		{
 			enable = enable_;
@@ -770,27 +604,6 @@ struct alignas(16) GSHWDrawConfig
 		// Blending has no effect if RGB is masked.
 		bool IsEffective(ColorMaskSelector colormask) const;
 	};
-
-	enum class AlphaTestMode
-	{
-		NONE,
-		KEEP,
-		FEEDBACK,
-		SIMPLE_FB_ONLY,
-		SIMPLE_RGB_ONLY,
-		PASS_THEN_FAIL,
-		NEVER,
-		ABORT_DRAW
-	};
-
-	static bool HasAlphaTestSecondPass(AlphaTestMode method)
-	{
-		return method == AlphaTestMode::SIMPLE_FB_ONLY ||
-		       method == AlphaTestMode::SIMPLE_RGB_ONLY ||
-		       method == AlphaTestMode::PASS_THEN_FAIL ||
-		       method == AlphaTestMode::NEVER;
-	}
-
 	enum class DestinationAlphaMode : u8
 	{
 		Off,            ///< No destination alpha test
@@ -798,15 +611,6 @@ struct alignas(16) GSHWDrawConfig
 		StencilOne,     ///< Emulate using read-write stencil (first write wins)
 		PrimIDTracking, ///< Emulate by tracking the primitive ID of the last pixel allowed through
 		Full,           ///< Full emulation (using barriers / ROV)
-	};
-
-	enum class ColClipMode : u8
-	{
-		NoModify = 0,
-		ConvertOnly = 1,
-		ResolveOnly = 2,
-		ConvertAndResolve = 3,
-		EarlyResolve = 4
 	};
 
 	GSTexture* rt;        ///< Render target
@@ -818,12 +622,9 @@ struct alignas(16) GSHWDrawConfig
 	u32 nverts;           ///< Number of vertices
 	u32 nindices;         ///< Number of indices
 	u32 indices_per_prim; ///< Number of indices that make up one primitive
-	const std::vector<size_t>* drawlist;              ///< For reducing barriers on sprites
-	const std::vector<GSVector4i>* drawlist_bbox;     ///< For RT copy when barriers not available.
-	const std::vector<GSVector4i>* drawlist_bbox_tex; ///< Additionally if we need to sample not from the same pixel of the RT.
+	const std::vector<size_t>* drawlist; ///< For reducing barriers on sprites
 	GSVector4i scissor; ///< Scissor rect
 	GSVector4i drawarea; ///< Area in the framebuffer which will be modified.
-	GSVector4i samplearea; ///< Area in the texture which will be sampled.
 	Topology topology;  ///< Draw topology
 
 	alignas(8) PSSelector ps;
@@ -837,97 +638,34 @@ struct alignas(16) GSHWDrawConfig
 	bool require_one_barrier;  ///< Require texture barrier before draw (also used to requst an rt copy if texture barrier isn't supported)
 	bool require_full_barrier; ///< Require texture barrier between all prims
 
-	enum : u32
-	{
-		TEX_HAZARD_NONE,
-		TEX_HAZARD_RT,
-		TEX_HAZARD_DEPTH,
-	} tex_hazard;
-
-	AlphaTestMode alpha_test;
-
 	DestinationAlphaMode destination_alpha;
-	SetDATM datm;
-	bool line_expand;
+	SetDATM datm : 2;
+	bool line_expand : 1;
 
 	struct AlphaPass
 	{
 		alignas(8) PSSelector ps;
-		bool enable : 1;
-		bool require_one_barrier : 1;
-		bool require_full_barrier : 1;
+		bool enable;
 		ColorMaskSelector colormask;
 		DepthStencilSelector depth;
 		float ps_aref;
 	};
-	static_assert(sizeof(AlphaPass) == 24, "alpha pass is 24 bytes");
 
 	AlphaPass alpha_second_pass;
 
-	struct BlendMultiPass
+	struct BlendPass
 	{
 		BlendState blend;
-		bool enable : 1;
-		u8 no_color1 : 1;
-		u8 blend_hw : 3; // HWBlendType
-		u8 dither : 2;
+		u8 blend_hw;
+		u8 dither;
+		bool enable;
 	};
-	static_assert(sizeof(BlendMultiPass) == 8, "blend multi pass is 8 bytes");
 
-	BlendMultiPass blend_multi_pass;
+	BlendPass blend_second_pass;
 
 	VSConstantBuffer cb_vs;
 	PSConstantBuffer cb_ps;
-	
-	// These are here as they need to be preserved between draws, and the state clear only does up to the constant buffers.
-	ColClipMode colclip_mode;
-	GIFRegFRAME colclip_frame;
-	GSVector4i colclip_update_area; ///< Area in the framebuffer which colclip will modify;
-
-	__fi bool IsFeedbackLoopRT(const PSSelector& ps) const
-	{
-		return ps.IsFeedbackLoopRT() || (tex_hazard == TEX_HAZARD_RT);
-	}
-
-	__fi bool IsFeedbackLoopDepth(const PSSelector& ps) const
-	{
-		return ps.IsFeedbackLoopDepth() || (tex_hazard == TEX_HAZARD_DEPTH);
-	}
-
-	// Dumping
-	static void DumpConfig(const std::string& path, const GSHWDrawConfig& conf,
-		bool ps = true, bool vs = true, bool bs = true, bool dss = true, bool ss = true, bool asp = true, bool bmp = true,
-		bool cbvs = true, bool cbps = true);
 };
-
-static inline u32 GetExpansionFactor(GSHWDrawConfig::VSExpand expand)
-{
-	switch (expand)
-	{
-		case GSHWDrawConfig::VSExpand::Point:
-		case GSHWDrawConfig::VSExpand::Line:
-		case GSHWDrawConfig::VSExpand::LineAA1:
-			return 4;
-		case GSHWDrawConfig::VSExpand::Sprite:
-			return 2;
-		case GSHWDrawConfig::VSExpand::TriangleAA1:
-			return 13;
-		default:
-			return 1;
-	}
-}
-
-static inline u32 GetVertexAlignment(GSHWDrawConfig::VSExpand expand)
-{
-	switch (expand)
-	{
-		case GSHWDrawConfig::VSExpand::Sprite:
-			// Sprite expand does a 2-4 expansion, and relies on the low bit of the vertex ID to figure out if it's the first or second coordinate.
-			return 2;
-		default:
-			return 1;
-	}
-}
 
 class GSDevice : public GSAlignedClass<32>
 {
@@ -955,7 +693,6 @@ public:
 		bool vs_expand            : 1; ///< Supports expanding points/lines/sprites in the vertex shader
 		bool primitive_id         : 1; ///< Supports primitive ID for use with prim tracking destination alpha algorithm
 		bool texture_barrier      : 1; ///< Supports sampling rt and hopefully texture barrier
-		bool multidraw_fb_copy    : 1; ///< Replacement for texture barrier.
 		bool provoking_vertex_last: 1; ///< Supports using the last vertex in a primitive as the value for flat shading.
 		bool point_expand         : 1; ///< Supports point expansion in hardware.
 		bool line_expand          : 1; ///< Supports line expansion in hardware.
@@ -963,17 +700,13 @@ public:
 		bool dxt_textures         : 1; ///< Supports DXTn texture compression, i.e. S3TC and BC1-3.
 		bool bptc_textures        : 1; ///< Supports BC6/7 texture compression.
 		bool framebuffer_fetch    : 1; ///< Can sample from the framebuffer without texture barriers.
+		bool clip_control         : 1; ///< Can use 0..1 depth range instead of -1..1.
 		bool stencil_buffer       : 1; ///< Supports stencil buffer, and can use for DATE.
-		bool cas_sharpening       : 1; ///< Supports sufficient functionality for contrast adaptive sharpening.
 		bool test_and_sample_depth: 1; ///< Supports concurrently binding the depth-stencil buffer for sampling and depth testing.
-		bool depth_feedback       : 1; ///< Depth feedback loops can be done with DS directly (otherwise need to copy to separate RT).  Implies `feedback_loops`.
-		bool aa1                  : 1; ///< Supports the GS AA1 feature.
 		FeatureSupport()
 		{
 			memset(this, 0, sizeof(*this));
 		}
-		/// Supports feedback loops through either texture barriers or rt copies.
-		bool feedback_loops() const { return texture_barrier || multidraw_fb_copy; }
 	};
 
 	struct MultiStretchRect
@@ -1006,10 +739,28 @@ public:
 	};
 	// clang-format on
 
+private:
+	std::array<FastList<GSTexture*>, 2> m_pool; // [texture, target]
+
+	static const HWBlend m_blendMap[81];
+
 protected:
-	std::string m_name = "Unknown";
-	FeatureSupport m_features;
-	u32 m_max_texture_size = 0;
+	static constexpr int NUM_INTERLACE_SHADERS = 5;
+	static constexpr float MAD_SENSITIVITY = 0.08f;
+	static constexpr u32 MAX_POOLED_TARGETS = 300;
+	static constexpr u32 MAX_TARGET_AGE = 20;
+	static constexpr u32 MAX_POOLED_TEXTURES = 300;
+	static constexpr u32 MAX_TEXTURE_AGE = 10;
+	static constexpr u32 EXPAND_BUFFER_SIZE = sizeof(u16) * 16383 * 6;
+
+	WindowInfo m_window_info;
+
+	GSTexture* m_merge = nullptr;
+	GSTexture* m_weavebob = nullptr;
+	GSTexture* m_blend = nullptr;
+	GSTexture* m_mad = nullptr;
+	GSTexture* m_target_tmp = nullptr;
+	GSTexture* m_current = nullptr;
 
 	struct
 	{
@@ -1019,142 +770,45 @@ protected:
 	{
 		u32 start, count;
 	} m_index = {};
+	unsigned int m_frame = 0; // for ageing the pool
+	bool m_rbswapped = false;
+	FeatureSupport m_features;
 
-	u32 m_frame = 0; // for ageing the pool
-
-private:
-	std::array<FastList<GSTexture*>, 2> m_pool; // [texture, target]
-	u64 m_pool_memory_usage = 0;
-
-	static const std::array<HWBlend, 3*3*3*3> m_blendMap;
-
-protected:
-	static constexpr int NUM_INTERLACE_SHADERS = 5;
-	static constexpr float MAD_SENSITIVITY = 0.08f;
-	static constexpr u32 MAX_POOLED_TARGETS = 300;
-	static constexpr u32 MAX_TARGET_AGE = 20;
-	static constexpr u32 MAX_POOLED_TEXTURES = 300;
-	static constexpr u32 MAX_TEXTURE_AGE = 10;
-	static constexpr u32 NUM_CAS_CONSTANTS = 12; // 8 plus src offset x/y, 16 byte alignment
-	static constexpr u32 EXPAND_BUFFER_SIZE = sizeof(u16) * 16383 * 6;
-
-	WindowInfo m_window_info;
-	GSVSyncMode m_vsync_mode = GSVSyncMode::Disabled;
-	bool m_allow_present_throttle = false;
-	u64 m_last_frame_displayed_time = 0;
-
-	GSTexture* m_merge = nullptr;
-	GSTexture* m_weavebob = nullptr;
-	GSTexture* m_blend = nullptr;
-	GSTexture* m_mad = nullptr;
-	GSTexture* m_target_tmp = nullptr;
-	GSTexture* m_current = nullptr;
-	GSTexture* m_cas = nullptr;
-	GSTexture* m_colclip_rt = nullptr; ///< Temp hw colclip texture
-	GSTexture* m_ds_as_rt = nullptr; ///< Depth as color
-
-	bool AcquireWindow(bool recreate_window);
+	void AcquireWindow();
 
 	virtual GSTexture* CreateSurface(GSTexture::Type type, int width, int height, int levels, GSTexture::Format format) = 0;
-	GSTexture* FetchSurface(GSTexture::Type type, int width, int height, int levels, GSTexture::Format format, bool clear, bool prefer_unused_texture);
+	GSTexture* FetchSurface(GSTexture::Type type, int width, int height, int levels, GSTexture::Format format, bool clear, bool prefer_reuse);
 
 	virtual void DoMerge(GSTexture* sTex[3], GSVector4* sRect, GSTexture* dTex, GSVector4* dRect, const GSRegPMODE& PMODE, const GSRegEXTBUF& EXTBUF, u32 c, const bool linear) = 0;
 	virtual void DoInterlace(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect, ShaderInterlace shader, bool linear, const InterlaceConstantBuffer& cb) = 0;
-	virtual void DoFXAA(GSTexture* sTex, GSTexture* dTex) = 0;
-	virtual void DoShadeBoost(GSTexture* sTex, GSTexture* dTex, const float params[4]) = 0;
-
-	/// Resolves CAS shader includes for the specified source.
-	static bool GetCASShaderSource(std::string* source);
-
-	/// Applies CAS and writes to the destination texture, which should be a RWTexture.
-	virtual bool DoCAS(GSTexture* sTex, GSTexture* dTex, bool sharpen_only, const std::array<u32, NUM_CAS_CONSTANTS>& constants) = 0;
-
-
-protected:
-	// Entry point to the renderer-specific StretchRect code.
-	virtual void DoStretchRect(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect,
-		GSHWDrawConfig::ColorMaskSelector cms, ShaderConvert shader, bool linear) = 0;
-	void DoStretchRectWithAssertions(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect, GSHWDrawConfig::ColorMaskSelector cms, ShaderConvert shader, bool linear);
 
 public:
 	GSDevice();
 	virtual ~GSDevice();
 
-	/// Returns a string containing current adapter in use.
-	const std::string& GetName() const { return m_name; }
-
-	GSTexture* GetColorClipTexture() const { return m_colclip_rt; }
-		
-	void SetColorClipTexture(GSTexture* tex) { m_colclip_rt = tex; }
-
-	bool IsDSInRTActive() const { return m_ds_as_rt; }
-	/// Create a temporary color clone of depth for depth feedback
-	virtual void BeginDSAsRT(GSTexture* ds, const GSVector4i& drawarea);
-	void EndDSAsRT();
-
-	/// Returns a string representing the specified API.
-	static const char* RenderAPIToString(RenderAPI api);
-
-	/// Parses the configured fullscreen mode into its components (width * height @ refresh hz)
-	static bool GetRequestedExclusiveFullscreenMode(u32* width, u32* height, float* refresh_rate);
-
-	/// Converts a fullscreen mode to a string.
-	static std::string GetFullscreenModeString(u32 width, u32 height, float refresh_rate);
-
 	/// Generates a fixed index buffer for expanding points and sprites. Buffer is assumed to be at least EXPAND_BUFFER_SIZE in size.
 	static void GenerateExpansionIndexBuffer(void* buffer);
-
-	// Process copy area for sw blend copies.
-	GSVector4i ProcessCopyArea(const GSVector4i& rtsize, const GSVector4i& drawarea);
-
-	/// Reads the specified shader source file.
-	static std::optional<std::string> ReadShaderSource(const char* filename);
 
 	/// Returns the maximum number of mipmap levels for a given texture size.
 	static int GetMipmapLevelsForSize(int width, int height);
 
-	__fi u64 GetPoolMemoryUsage() const { return m_pool_memory_usage; }
-
 	__fi FeatureSupport Features() const { return m_features; }
-	__fi u32 GetMaxTextureSize() const { return m_max_texture_size; }
 
-	__fi const WindowInfo& GetWindowInfo() const { return m_window_info; }
 	__fi s32 GetWindowWidth() const { return static_cast<s32>(m_window_info.surface_width); }
 	__fi s32 GetWindowHeight() const { return static_cast<s32>(m_window_info.surface_height); }
 	__fi GSVector2i GetWindowSize() const { return GSVector2i(static_cast<s32>(m_window_info.surface_width), static_cast<s32>(m_window_info.surface_height)); }
-	__fi float GetWindowScale() const { return m_window_info.surface_scale; }
-	__fi GSVSyncMode GetVSyncMode() const { return m_vsync_mode; }
-	__fi bool IsPresentThrottleAllowed() const { return m_allow_present_throttle; }
-
 	__fi GSTexture* GetCurrent() const { return m_current; }
-	__fi GSTexture* GetMAD() const { return m_mad; }
-	
+
 	void Recycle(GSTexture* t);
 
-	/// Returns true if it's an OpenGL-based renderer.
-	bool UsesLowerLeftOrigin() const;
-
-
-	virtual bool Create(GSVSyncMode vsync_mode, bool allow_present_throttle);
+	virtual bool Create();
 	virtual void Destroy();
+
+	virtual void ResetAPIState();
+	virtual void RestoreAPIState();
 
 	/// Returns the graphics API used by this device.
 	virtual RenderAPI GetRenderAPI() const = 0;
-
-	/// Returns true if we have a window we're rendering into.
-	virtual bool HasSurface() const = 0;
-
-	/// Destroys the surface we're currently drawing to.
-	virtual void DestroySurface() = 0;
-
-	/// Switches to a new window/surface.
-	virtual bool UpdateWindow() = 0;
-
-	/// Call when the window size changes externally to recreate any resources.
-	virtual void ResizeWindow(u32 new_window_width, u32 new_window_height, float new_window_scale) = 0;
-
-	/// Returns true if exclusive fullscreen is supported.
-	virtual bool SupportsExclusiveFullscreen() const = 0;
 
 	/// Returns false if the window was completely occluded. If frame_skip is set, the frame won't be
 	/// displayed, but the GPU command queue will still be flushed.
@@ -1163,47 +817,24 @@ public:
 	/// Presents the frame to the display.
 	virtual void EndPresent() = 0;
 
-	/// Changes vsync mode for this display.
-	virtual void SetVSyncMode(GSVSyncMode mode, bool allow_present_throttle) = 0;
-
-	/// Returns a string of information about the graphics driver being used.
-	virtual std::string GetDriverInfo() const = 0;
-
-	/// Enables/disables GPU frame timing.
-	virtual bool SetGPUTimingEnabled(bool enabled) = 0;
-
-	/// Returns the amount of GPU time utilized since the last time this method was called.
-	virtual float GetAndResetAccumulatedGPUTime() = 0;
-
-	/// Returns true if not enough time has passed for present to not block.
-	bool ShouldSkipPresentingFrame();
-
-	/// Sleeps to the time the next frame can be displayed.
-	void ThrottlePresentation();
-
 	void ClearRenderTarget(GSTexture* t, u32 c);
 	void ClearDepth(GSTexture* t, float d);
-	bool ProcessClearsBeforeCopy(GSTexture* sTex, GSTexture* dTex, const bool full_copy);
 	void InvalidateRenderTarget(GSTexture* t);
 
-	virtual void PushDebugGroup(const char* fmt, ...) = 0;
-	virtual void PopDebugGroup() = 0;
-	virtual void InsertDebugMessage(DebugMessageCategory category, const char* fmt, ...) = 0;
-
-	GSTexture* CreateRenderTarget(int w, int h, GSTexture::Format format, bool clear = true, bool prefer_reuse = true);
-	GSTexture* CreateDepthStencil(int w, int h, GSTexture::Format format, bool clear = true, bool prefer_reuse = true);
+	GSTexture* CreateRenderTarget(int w, int h, GSTexture::Format format, bool clear = true);
+	GSTexture* CreateDepthStencil(int w, int h, GSTexture::Format format, bool clear = true);
 	GSTexture* CreateTexture(int w, int h, int mipmap_levels, GSTexture::Format format, bool prefer_reuse = false);
 
 	virtual std::unique_ptr<GSDownloadTexture> CreateDownloadTexture(u32 width, u32 height, GSTexture::Format format) = 0;
 
 	virtual void CopyRect(GSTexture* sTex, GSTexture* dTex, const GSVector4i& r, u32 destX, u32 destY) = 0;
+	virtual void StretchRect(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect, ShaderConvert shader = ShaderConvert::COPY, bool linear = true) = 0;
+	virtual void StretchRect(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect, bool red, bool green, bool blue, bool alpha, ShaderConvert shader = ShaderConvert::COPY) = 0;
 
-	void StretchRect(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect, bool red, bool green, bool blue, bool alpha, ShaderConvert shader = ShaderConvert::COPY);
-	void StretchRect(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect, ShaderConvert shader = ShaderConvert::COPY, bool linear = true);
 	void StretchRect(GSTexture* sTex, GSTexture* dTex, const GSVector4& dRect, ShaderConvert shader = ShaderConvert::COPY, bool linear = true);
 
 	/// Performs a screen blit for display. If dTex is null, it assumes you are writing to the system framebuffer/swap chain.
-	virtual void PresentRect(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect, PresentShader shader, float shaderTime, bool linear) = 0;
+	virtual void PresentRect(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect) = 0;
 
 	/// Same as doing StretchRect for each item, except tries to batch together rectangles in as few draws as possible.
 	/// The provided list should be sorted by texture, the implementations only check if it's the same as the last.
@@ -1228,13 +859,10 @@ public:
 	void ClearCurrent();
 	void Merge(GSTexture* sTex[3], GSVector4* sRect, GSVector4* dRect, const GSVector2i& fs, const GSRegPMODE& PMODE, const GSRegEXTBUF& EXTBUF, u32 c);
 	void Interlace(const GSVector2i& ds, int field, int mode, float yoffset);
-	void FXAA();
-	void ShadeBoost();
-	void Resize(int width, int height);
-
-	void CAS(GSTexture*& tex, GSVector4i& src_rect, GSVector4& src_uv, const GSVector4& draw_rect, bool sharpen_only);
 
 	bool ResizeRenderTarget(GSTexture** t, int w, int h, bool preserve_contents, bool recycle);
+
+	bool IsRBSwapped() { return m_rbswapped; }
 
 	void AgePool();
 	void PurgePool();
