@@ -1109,7 +1109,7 @@ void GSDevice11::PSUpdateShaderState()
 
 void GSDevice11::OMSetDepthStencilState(ID3D11DepthStencilState* dss, u8 sref)
 {
-	if (m_state.dss != dss || m_state.sref != sref)
+	if (m_state.dss != dss || (dss && m_state.sref != sref))
 	{
 		m_state.dss = dss;
 		m_state.sref = sref;
@@ -1120,7 +1120,7 @@ void GSDevice11::OMSetDepthStencilState(ID3D11DepthStencilState* dss, u8 sref)
 
 void GSDevice11::OMSetBlendState(ID3D11BlendState* bs, u8 bf)
 {
-	if (m_state.bs != bs || m_state.bf != bf)
+	if (m_state.bs != bs || (bs && m_state.bf != bf))
 	{
 		m_state.bs = bs;
 		m_state.bf = bf;
