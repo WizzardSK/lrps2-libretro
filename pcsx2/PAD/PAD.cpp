@@ -109,6 +109,11 @@ struct KeyStatus
 	float m_vibration_scale[NUM_CONTROLLER_PORTS][2];
 };
 
+/* Combined "USB Keyboard + Mouse" port device: one menu selection that
+ * attaches a HID keyboard to USB port 0 and a HID mouse to USB port 1,
+ * matching the two-device topology a real PS2 keyboard/mouse presented. */
+#define RETRO_DEVICE_KEYBOARD_AND_MOUSE RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_KEYBOARD, 0)
+
 static const InputBindingInfo s_dualshock2_binds[] = {
 	{"Up", "D-Pad Up", InputBindingInfo::Type::Button, PAD_UP, GenericInputBinding::DPadUp},
 	{"Right", "D-Pad Right", InputBindingInfo::Type::Button, PAD_RIGHT, GenericInputBinding::DPadRight},
@@ -321,6 +326,7 @@ namespace Input
 			{ "DualShock 2", RETRO_DEVICE_JOYPAD },
 			{ "USB Keyboard", RETRO_DEVICE_KEYBOARD },
 			{ "USB Mouse", RETRO_DEVICE_MOUSE },
+			{ "USB Keyboard + Mouse", RETRO_DEVICE_KEYBOARD_AND_MOUSE },
 			{},
 		};
 
@@ -421,21 +427,30 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
 		{
 			case RETRO_DEVICE_JOYPAD:
 				si->SetStringValue(section, "Type", "DualShock2");
-				USBSetPortDevice(port, USB_DEV_NONE);
+				USBSetPortDevice(port, USB_DEV_NONE, port);
 				break;
 			case RETRO_DEVICE_KEYBOARD:
 				/* USB HID keyboard takes the slot; no SIO pad. */
 				si->SetStringValue(section, "Type", "None");
-				USBSetPortDevice(port, USB_DEV_KEYBOARD);
+				USBSetPortDevice(port, USB_DEV_KEYBOARD, port);
 				break;
 			case RETRO_DEVICE_MOUSE:
 				/* USB HID mouse takes the slot; no SIO pad. */
 				si->SetStringValue(section, "Type", "None");
-				USBSetPortDevice(port, USB_DEV_MOUSE);
+				USBSetPortDevice(port, USB_DEV_MOUSE, port);
+				break;
+			case RETRO_DEVICE_KEYBOARD_AND_MOUSE:
+				/* Keyboard + mouse together claim both USB ports (kbd on 0,
+				 * mouse on 1) regardless of which controller port this was
+				 * selected from - the PS2 has only two USB ports. Both read
+				 * frontend input from this controller port. No SIO pad. */
+				si->SetStringValue(section, "Type", "None");
+				USBSetPortDevice(0, USB_DEV_KEYBOARD, port);
+				USBSetPortDevice(1, USB_DEV_MOUSE, port);
 				break;
 			default:
 				si->SetStringValue(section, "Type", "None");
-				USBSetPortDevice(port, USB_DEV_NONE);
+				USBSetPortDevice(port, USB_DEV_NONE, port);
 				break;
 		}
 

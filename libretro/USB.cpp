@@ -37,17 +37,23 @@ static s64        s_usb_clocks  = 0;
 static s64        s_usb_remaining = 0;
 
 static int        s_port_device[USB::NUM_PORTS] = { USB_DEV_NONE, USB_DEV_NONE };
+static unsigned   s_input_port[USB::NUM_PORTS]  = { 0, 1 };
 static USBDevice* s_usb_device[USB::NUM_PORTS]  = { nullptr, nullptr };
 
 /* From PAD.cpp - the libretro input_state callback the frontend installed. */
 extern retro_input_state_t PADGetInputStateCallback(void);
 
-/* Set the device type for a USB port (from a core option). Takes effect on
- * the next USBopen()/USBreset(). */
-void USBSetPortDevice(unsigned port, int device)
+/* Set the device type for a USB port and which frontend controller port it
+ * reads input from. Takes effect on the next USBopen()/USBreset(). For most
+ * cases input_port == port; the combined keyboard+mouse selection routes both
+ * USB ports to the same frontend port. */
+void USBSetPortDevice(unsigned port, int device, unsigned input_port)
 {
 	if (port < USB::NUM_PORTS)
+	{
 		s_port_device[port] = device;
+		s_input_port[port]  = input_port;
+	}
 }
 
 static OHCIPort& GetOHCIPort(u32 port)
@@ -168,7 +174,7 @@ void USBasync(u32 cycles)
 		for (port = 0; port < USB::NUM_PORTS; port++)
 		{
 			if (s_usb_device[port])
-				usb_hid::usb_hid_update(s_usb_device[port], input_cb, port);
+				usb_hid::usb_hid_update(s_usb_device[port], input_cb, s_input_port[port]);
 		}
 	}
 

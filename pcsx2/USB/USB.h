@@ -89,7 +89,7 @@ enum UsbPortDevice
 	USB_DEV_MOUSE,
 };
 
-void USBSetPortDevice(unsigned port, int device);
+void USBSetPortDevice(unsigned port, int device, unsigned input_port);
 
 void USBinit(void);
 void USBasync(u32 cycles);
