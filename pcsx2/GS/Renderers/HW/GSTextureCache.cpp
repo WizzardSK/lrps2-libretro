@@ -1656,9 +1656,12 @@ GSTextureCache::Source* GSTextureCache::LookupSource(const bool is_color, const 
 	}
 	else
 	{
-		// If it's from a target, we need to make sure the alpha information is up to date, especially in 16/24 bit formats where it can change draw to draw.
+		// If it's an old source made from target make sure it isn't a palette,
+		// alphas need to be used from the palette then.
+		// If it's from a target, we need to make sure the alpha information is up to date,
+		// especially in 16/24 bit formats where it can change draw to draw.
 		// Guard against merged targets which don't actually link.
-		if (src->m_target && src->m_from_target)
+		if (!src->m_palette && src->m_target && src->m_from_target)
 		{
 			src->m_valid_alpha_minmax = true;
 			if (src->m_target_direct)
