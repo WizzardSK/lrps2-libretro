@@ -37,6 +37,11 @@ void usbInterrupt()
 	iopIntcIrq(22);
 }
 
+void usbIrq(int cycles)
+{
+	PSX_INT(IopEvt_USB, cycles);
+}
+
 void fwIrq(void)
 {
 	iopIntcIrq(24);
