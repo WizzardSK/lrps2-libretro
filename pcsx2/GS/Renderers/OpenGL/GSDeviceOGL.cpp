@@ -1920,9 +1920,10 @@ void GSDeviceOGL::RenderHW(GSHWDrawConfig& config)
 	}
 	else if (config.require_one_barrier && !m_features.texture_barrier)
 	{
-		// Requires a copy of the RT
+		// Requires a copy of the RT.
 		draw_rt_clone = CreateTexture(rtsize.x, rtsize.y, 1, GSTexture::Format::Color, true);
-		CopyRect(config.rt, draw_rt_clone, config.drawarea, config.drawarea.left, config.drawarea.top);
+		if (draw_rt_clone)
+			CopyRect(config.rt, draw_rt_clone, config.drawarea, config.drawarea.left, config.drawarea.top);
 	}
 	else if (config.tex && config.tex == config.ds)
 	{
