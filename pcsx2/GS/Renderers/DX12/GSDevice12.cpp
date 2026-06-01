@@ -2132,7 +2132,7 @@ void GSDevice12::ExecuteCommandList(bool wait_for_completion)
 
 void GSDevice12::ExecuteCommandListAndRestartRenderPass(bool wait_for_completion)
 {
-	const bool was_in_render_pass = m_in_render_pass;
+	const bool was_in_render_pass = InRenderPass();
 	EndRenderPass();
 	ContextExecuteCommandList(wait_for_completion);
 	InvalidateCachedState();
@@ -2918,7 +2918,7 @@ void GSDevice12::RenderHW(GSHWDrawConfig& config)
 	}
 
 	// avoid restarting the render pass just to switch from rt+depth to rt and vice versa
-	if (m_in_render_pass && (m_current_render_target == draw_rt || m_current_depth_target == draw_ds))
+	if (InRenderPass() && (m_current_render_target == draw_rt || m_current_depth_target == draw_ds))
 	{
 		// avoid restarting the render pass just to switch from rt+depth to rt and vice versa
 		// keep the depth even if doing HDR draws, because the next draw will probably re-enable depth
