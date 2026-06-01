@@ -294,7 +294,7 @@ bool GSTexture12::CreateRTVDescriptor(ID3D12Resource* resource, DXGI_FORMAT form
 	GSDevice12* const dev = GSDevice12::GetInstance();
 	if (!dev->GetRTVHeapManager().Allocate(dh))
 	{
-		Console.Error("Failed to allocate SRV descriptor");
+		Console.Error("Failed to allocate RTV descriptor");
 		return false;
 	}
 
@@ -308,7 +308,7 @@ bool GSTexture12::CreateDSVDescriptor(ID3D12Resource* resource, DXGI_FORMAT form
 	GSDevice12* const dev = GSDevice12::GetInstance();
 	if (!dev->GetDSVHeapManager().Allocate(dh))
 	{
-		Console.Error("Failed to allocate SRV descriptor");
+		Console.Error("Failed to allocate DSV descriptor");
 		return false;
 	}
 
