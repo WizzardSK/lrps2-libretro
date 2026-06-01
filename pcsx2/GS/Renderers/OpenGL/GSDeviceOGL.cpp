@@ -1567,10 +1567,8 @@ void GSDeviceOGL::SetupDATE(GSTexture* rt, GSTexture* ds, const GSVertexPT1* ver
 	// om
 
 	OMSetDepthStencilState(m_date.dss);
-	if (GLState::blend)
-	{
-		glDisable(GL_BLEND);
-	}
+	OMSetBlendState(false);
+	OMSetColorMaskState();
 
 	// ia
 
