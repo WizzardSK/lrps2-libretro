@@ -4186,6 +4186,7 @@ void GSRendererHW::EmulateBlending(int rt_alpha_min, int rt_alpha_max, const boo
 	const bool alpha_c0_eq_less_max_one = (m_conf.ps.blend_c == 0 && GetAlphaMinMax().max <= 128);
 	const bool alpha_c1_high_min_one = (m_conf.ps.blend_c == 1 && rt_alpha_min > 128);
 	const bool alpha_c1_high_max_one = (m_conf.ps.blend_c == 1 && rt_alpha_max > 128);
+	const bool alpha_c1_eq_less_max_one = (m_conf.ps.blend_c == 1 && rt_alpha_max <= 128);
 	bool alpha_c1_high_no_rta_correct = m_conf.ps.blend_c == 1 && !(new_rt_alpha_scale || can_scale_rt_alpha);
 	const bool alpha_c2_eq_zero = (m_conf.ps.blend_c == 2 && AFIX == 0u);
 	const bool alpha_c2_eq_one = (m_conf.ps.blend_c == 2 && AFIX == 128u);
@@ -4270,7 +4271,10 @@ void GSRendererHW::EmulateBlending(int rt_alpha_min, int rt_alpha_max, const boo
 	bool color_dest_blend = !!(blend_flag & BLEND_CD);
 
 	// HW blend can handle it, no need for sw blend or hdr, Cd*Alpha or Cd*(1 - Alpha) where Alpha <= 128, Alpha is As or Af.
-	bool color_dest_blend2 = alpha_eq_less_one && ((blend_flag & BLEND_HW2) || (m_conf.ps.blend_b == 1 && m_conf.ps.blend_d == 1 && m_conf.ps.blend_a == 2));
+	bool color_dest_blend2 = !m_draw_env->PABE.PABE && ((m_conf.ps.blend_a == 1 && m_conf.ps.blend_b == 2 && m_conf.ps.blend_d == 2) || ((m_conf.ps.blend_b == 1 && m_conf.ps.blend_d == 1) && m_conf.ps.blend_a == 2)) &&
+		(alpha_eq_less_one || (alpha_c1_eq_less_max_one && new_rt_alpha_scale));
+	bool blend_zero_to_one_range = !m_draw_env->PABE.PABE && (((m_conf.ps.blend_b == 1 && m_conf.ps.blend_d == 1) && m_conf.ps.blend_a == 0) || (blend_flag & BLEND_MIX3)) &&
+		(alpha_eq_less_one || (alpha_c1_eq_less_max_one && new_rt_alpha_scale));
 
 	// Do the multiplication in shader for blending accumulation: Cs*As + Cd or Cs*Af + Cd
 	bool accumulation_blend = !!(blend_flag & BLEND_ACCU);
@@ -4344,6 +4348,7 @@ void GSRendererHW::EmulateBlending(int rt_alpha_min, int rt_alpha_max, const boo
 				// Prefer sw blend if possible.
 				color_dest_blend &= !prefer_sw_blend;
 				color_dest_blend2 &= !prefer_sw_blend;
+				blend_zero_to_one_range &= !prefer_sw_blend;
 				accumulation_blend &= !prefer_sw_blend;
 				// Enable sw blending for barriers.
 				sw_blending |= blend_requires_barrier;
@@ -4384,6 +4389,7 @@ void GSRendererHW::EmulateBlending(int rt_alpha_min, int rt_alpha_max, const boo
 				// Prefer sw blend if possible.
 				color_dest_blend &= !prefer_sw_blend;
 				color_dest_blend2 &= !prefer_sw_blend;
+				blend_zero_to_one_range &= !prefer_sw_blend;
 				accumulation_blend &= !prefer_sw_blend;
 				// Enable sw blending for reading fb.
 				sw_blending |= prefer_sw_blend;
@@ -4416,7 +4422,7 @@ void GSRendererHW::EmulateBlending(int rt_alpha_min, int rt_alpha_max, const boo
 	{
 		const bool free_colclip = features.framebuffer_fetch || no_prim_overlap || blend_non_recursive;
 
-		if (color_dest_blend || color_dest_blend2)
+		if (color_dest_blend || color_dest_blend2 || blend_zero_to_one_range)
 		{
 			// No overflow, disable colclip.
 			sw_blending = false;
