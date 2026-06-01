@@ -1386,7 +1386,7 @@ void GSState::FlushWrite()
 			r.w = std::max(r.y + calculated_height, psm_s.bs.y);
 
 			if (m_draw_transfers.size() > 0 && m_env.BITBLTBUF.DBP == m_draw_transfers.back().blit.DBP)
-				m_draw_transfers.back().rect = r;
+				m_draw_transfers.back().rect = m_draw_transfers.back().rect.runion(r);
 		}
 	}
 
