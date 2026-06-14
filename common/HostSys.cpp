@@ -458,19 +458,37 @@ std::unique_ptr<SharedMemoryMappingArea> SharedMemoryMappingArea::Create(size_t 
 	 *
 	 * MEM_ADDRESS_REQUIREMENTS + MEM_EXTENDED_PARAMETER were added in
 	 * Win10 1803, same release that introduced the placeholder flags we
-	 * already use, so this does not narrow the supported Windows range. */
-	MEM_ADDRESS_REQUIREMENTS req = {};
-	req.LowestStartingAddress = reinterpret_cast<void*>(static_cast<uintptr_t>(0x100000000ULL));
+	 * already use, so this does not narrow the supported Windows range.
+	 *
+	 * Rather than make a single constrained request, sweep a ladder of
+	 * floors. A single VirtualAlloc2 with LowestStartingAddress at 4 GB
+	 * can fail outright on a fragmented address space even when plenty of
+	 * room exists higher up; falling straight back to an unconstrained
+	 * request then tends to land below 4 GB (rejected below) and disables
+	 * fastmem entirely. Asking for progressively higher floors recovers a
+	 * usable high placement in cases a single attempt would give up on -
+	 * the same strategy the Beetle PSX dynarec uses to place its
+	 * mappings. The ladder starts at 4 GB (the minimum usable base, see
+	 * the rejection below) and runs to 36 GB, matching that range. */
+	void* alloc = nullptr;
+	for (uintptr_t floor = 0x100000000ULL; floor <= 0x900000000ULL;
+		floor += 0x100000000ULL)
+	{
+		MEM_ADDRESS_REQUIREMENTS req = {};
+		req.LowestStartingAddress = reinterpret_cast<void*>(floor);
 
-	MEM_EXTENDED_PARAMETER param = {};
-	param.Type = MemExtendedParameterAddressRequirements;
-	param.Pointer = &req;
+		MEM_EXTENDED_PARAMETER param = {};
+		param.Type = MemExtendedParameterAddressRequirements;
+		param.Pointer = &req;
 
-	void* alloc = VirtualAlloc2(GetCurrentProcess(), nullptr, size,
-		MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS,
-		&param, 1);
+		alloc = VirtualAlloc2(GetCurrentProcess(), nullptr, size,
+			MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS,
+			&param, 1);
+		if (alloc)
+			break;
+	}
 
-	/* If the constrained request failed, fall back to an unconstrained
+	/* If every constrained request failed, fall back to an unconstrained
 	 * one and sanity-check the result. A returned base below 4 GB on a
 	 * 4 GB allocation is unusable for fastmem - reject it and let the
 	 * caller fall back to no-fastmem mode. */
