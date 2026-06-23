@@ -39,6 +39,11 @@ set(GRANITE_VULKAN_FOSSILIZE OFF CACHE BOOL "" FORCE)
 # device.cpp provides stub implementations under #ifndef). Force it off so the
 # vendored tree, which omits renderdoc_capture.cpp, matches the Makefile set.
 set(GRANITE_RENDERDOC_CAPTURE OFF CACHE BOOL "" FORCE)
+# Vendored libretro subset: DXGI interop (GRANITE_VULKAN_DXGI_INTEROP) defaults
+# ON and, on WIN32, pulls wsi_dxgi.cpp into granite-vulkan. The libretro core
+# integrates with the frontend's swapchain via retro_vulkan_* and never uses
+# Vulkan::WSI, so wsi.cpp / wsi_dxgi.cpp are not vendored. Force it off.
+set(GRANITE_VULKAN_DXGI_INTEROP OFF CACHE BOOL "" FORCE)
 
 if (PARALLEL_GS_STANDALONE)
     set(GRANITE_RENDERER OFF CACHE BOOL "" FORCE)
