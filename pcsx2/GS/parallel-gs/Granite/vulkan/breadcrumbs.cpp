@@ -554,13 +554,11 @@ void BreadcrumbsTracker::notify_device_hung()
 	if (file != stderr)
 		fclose(file);
 
-	LOGE("Completed post-mortem analysis, will crash now.\n");
-#ifdef _WIN32
-	char msg[512];
-	snprintf(msg, sizeof(msg), "GPU crashed, see post-mortem log in %s. Application will now terminate.", path);
-	MessageBoxA(nullptr, msg, "Granite Post Mortem", MB_OK);
-	TerminateProcess(GetCurrentProcess(), 1);
-#endif
-	std::terminate();
+	LOGE("Completed post-mortem analysis.\n");
+	// libretro: do NOT pop a message box or terminate the host process. A GPU
+	// device hang must be reported back to the frontend (RetroArch), never
+	// turned into a hard abort of the host application. The post-mortem
+	// breadcrumb log above is still emitted for diagnostics; control returns
+	// to the caller.
 }
 }
