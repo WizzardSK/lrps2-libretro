@@ -449,6 +449,7 @@ SOURCES_CXX += \
 # EventHolderDeleter externally; paraLLEl-GS does not use Vulkan events for
 # inter-pass synchronisation.
 SOURCES_CXX += \
+	$(GRANITE_DIR)/vulkan/breadcrumbs.cpp \
 	$(GRANITE_DIR)/vulkan/buffer.cpp \
 	$(GRANITE_DIR)/vulkan/buffer_pool.cpp \
 	$(GRANITE_DIR)/vulkan/command_buffer.cpp \
