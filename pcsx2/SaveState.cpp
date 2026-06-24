@@ -134,7 +134,9 @@ bool SaveStateBase::FreezeInternals()
 	bool okay = rcntFreeze();
 	okay = okay && gsFreeze();
 	okay = okay && vuMicroFreeze();
-	okay = okay && vuJITFreeze();
+#ifndef ARCH_ARM64
+	okay = okay && vuJITFreeze();	// no VU JIT state to (de)serialise on arm64
+#endif
 	okay = okay && vif0Freeze();
 	okay = okay && vif1Freeze();
 	okay = okay && sifFreeze();

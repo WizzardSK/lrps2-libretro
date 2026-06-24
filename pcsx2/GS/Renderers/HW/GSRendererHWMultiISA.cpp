@@ -523,10 +523,14 @@ bool GSRendererHWFunctions::SwPrimRender(GSRendererHW& hw, bool invalidate_tc, b
 		}
 	}
 
+#ifndef ARCH_ARM64
+	// GSSingleRasterizer is part of the x86 SW renderer, which isn't built on
+	// arm64; the HW renderer's CPU-side draw fallback is unavailable there.
 	if (!hw.m_sw_rasterizer)
 		hw.m_sw_rasterizer = std::make_unique<GSSingleRasterizer>();
 
 	static_cast<GSSingleRasterizer*>(hw.m_sw_rasterizer.get())->Draw(data);
+#endif
 
 	if (invalidate_tc)
 		g_texture_cache->InvalidateVideoMem(context->offset.fb, bbox);

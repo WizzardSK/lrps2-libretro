@@ -136,12 +136,21 @@ class GSVector8i;
 
 gsforceinline GSVector4i::GSVector4i(const GSVector4& v, bool truncate)
 {
+#if defined(ARCH_X86)
 	m = truncate ? _mm_cvttps_epi32(v) : _mm_cvtps_epi32(v);
+#elif defined(ARCH_ARM64)
+	// GS thread uses default (nearest) rounding.
+	v4s = truncate ? vcvtq_s32_f32(v.v4s) : vreinterpretq_s32_u32(vcvtnq_u32_f32(v.v4s));
+#endif
 }
 
 gsforceinline GSVector4::GSVector4(const GSVector4i& v)
 {
+#if defined(ARCH_X86)
 	m = _mm_cvtepi32_ps(v);
+#elif defined(ARCH_ARM64)
+	v4s = vcvtq_f32_s32(v.v4s);
+#endif
 }
 
 gsforceinline void GSVector4i::sw32_inv(GSVector4i& a, GSVector4i& b, GSVector4i& c, GSVector4i& d)
@@ -183,12 +192,20 @@ gsforceinline void GSVector8i::sw32_inv(GSVector8i& a, GSVector8i& b)
 
 gsforceinline GSVector4i GSVector4i::cast(const GSVector4& v)
 {
+#ifndef ARCH_ARM64
 	return GSVector4i(_mm_castps_si128(v.m));
+#else
+	return GSVector4i(vreinterpretq_s32_f32(v.v4s));
+#endif
 }
 
 gsforceinline GSVector4 GSVector4::cast(const GSVector4i& v)
 {
+#ifndef ARCH_ARM64
 	return GSVector4(_mm_castsi128_ps(v.m));
+#else
+	return GSVector4(vreinterpretq_f32_s32(v.v4s));
+#endif
 }
 
 #if _M_SSE >= 0x500

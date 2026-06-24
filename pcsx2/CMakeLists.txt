@@ -771,7 +771,7 @@ if(NOT _M_X86)
 	# CpuState.cpp lives under x86/ but only defines the EE/IOP/FPU register
 	# state (cpuRegs/psxRegs/fpuRegs) that the interpreter needs too, so keep it.
 	# Everything else here is the x86 recompiler; arm64 stubs it in arm64/RecStubs.cpp.
-	set(pcsx2x86Sources x86/CpuState.cpp)
+	set(pcsx2x86Sources x86/CpuState.cpp arm64/RecStubs.cpp)
 	set(pcsx2x86Headers)
 endif()
 

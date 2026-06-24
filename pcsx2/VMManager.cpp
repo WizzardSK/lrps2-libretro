@@ -822,6 +822,8 @@ bool VMManager::ChangeDisc(CDVD_SourceType source, std::string path)
 
 void VMManager::InitializeCPUProviders()
 {
+	// arm64 has no x86 recompilers / SSE VIF unpack; the interpreters are used.
+#ifndef ARCH_ARM64
 	recCpu.Reserve();
 	psxRec.Reserve();
 
@@ -830,16 +832,20 @@ void VMManager::InitializeCPUProviders()
 
 	dVifReserve(0);
 	dVifReserve(1);
+#endif
 
 	GSCodeReserve::GetInstance().Assign(GetVmMemory().CodeMemory());
 
+#ifndef ARCH_ARM64
 	VifUnpackSSE_Init();
+#endif
 }
 
 void VMManager::ShutdownCPUProviders()
 {
 	GSCodeReserve::GetInstance().Release();
 
+#ifndef ARCH_ARM64
 	dVifRelease(1);
 	dVifRelease(0);
 
@@ -850,22 +856,30 @@ void VMManager::ShutdownCPUProviders()
 
 	psxRec.Shutdown();
 	recCpu.Shutdown();
-
+#endif
 }
 
 void VMManager::UpdateCPUImplementations()
 {
+#ifndef ARCH_ARM64
 	Cpu    = CHECK_EEREC ? &recCpu : &intCpu;
 	psxCpu = CHECK_IOPREC ? &psxRec : &psxInt;
+#else
+	// arm64: interpreters only.
+	Cpu    = &intCpu;
+	psxCpu = &psxInt;
+#endif
 
 	CpuVU0 = &CpuIntVU0;
 	CpuVU1 = &CpuIntVU1;
 
+#ifndef ARCH_ARM64
 	if (EmuConfig.Cpu.Recompiler.EnableVU0)
 		CpuVU0 = &CpuMicroVU0;
 
 	if (EmuConfig.Cpu.Recompiler.EnableVU1)
 		CpuVU1 = &CpuMicroVU1;
+#endif
 }
 
 void VMManager::Internal::ClearCPUExecutionCaches()
@@ -873,15 +887,19 @@ void VMManager::Internal::ClearCPUExecutionCaches()
 	Cpu->Reset();
 	psxCpu->Reset();
 
+#ifndef ARCH_ARM64
 	// mVU's VU0 needs to be properly initialized for macro mode even if it's not used for micro mode!
 	if (CHECK_EEREC && !EmuConfig.Cpu.Recompiler.EnableVU0)
 		CpuMicroVU0.Reset();
+#endif
 
 	CpuVU0->Reset();
 	CpuVU1->Reset();
 
+#ifndef ARCH_ARM64
 	dVifReset(0);
 	dVifReset(1);
+#endif
 }
 
 void VMManager::Execute()
