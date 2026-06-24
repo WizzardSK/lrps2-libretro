@@ -35,6 +35,14 @@ namespace R5900
 {
 	namespace Opcodes
 	{
+		// arm64 is interpreter-only (no x86 recompiler), so the recompiler entry
+		// points don't exist; store NULL in the recompiler slot instead.
+#if defined(ARCH_ARM64)
+#	define REC_OPCODE_PTR( qualified ) NULL
+#else
+#	define REC_OPCODE_PTR( qualified ) qualified
+#endif
+
 		// Generates an entry for the given opcode name.
 		// Assumes the default function naming schemes for interpreter and recompiler  functions.
 	#	define MakeOpcode( name, cycles, flags ) \
@@ -44,7 +52,7 @@ namespace R5900
 			flags, \
 			NULL, \
 			::R5900::Interpreter::OpcodeImpl::name, \
-			::R5900::Dynarec::OpcodeImpl::rec##name \
+			REC_OPCODE_PTR( ::R5900::Dynarec::OpcodeImpl::rec##name ) \
 		}
 
 #	define MakeOpcodeM( name, cycles, flags ) \
@@ -54,7 +62,7 @@ namespace R5900
 			flags, \
 			NULL, \
 			::R5900::Interpreter::OpcodeImpl::MMI::name, \
-			::R5900::Dynarec::OpcodeImpl::MMI::rec##name \
+			REC_OPCODE_PTR( ::R5900::Dynarec::OpcodeImpl::MMI::rec##name ) \
 		}
 
 #	define MakeOpcode0( name, cycles, flags ) \
@@ -64,7 +72,7 @@ namespace R5900
 			flags, \
 			NULL, \
 			::R5900::Interpreter::OpcodeImpl::COP0::name, \
-			::R5900::Dynarec::OpcodeImpl::COP0::rec##name \
+			REC_OPCODE_PTR( ::R5900::Dynarec::OpcodeImpl::COP0::rec##name ) \
 		}
 
 	#	define MakeOpcode1( name, cycles, flags ) \
@@ -74,7 +82,7 @@ namespace R5900
 			flags, \
 			NULL, \
 			::R5900::Interpreter::OpcodeImpl::COP1::name, \
-			::R5900::Dynarec::OpcodeImpl::COP1::rec##name \
+			REC_OPCODE_PTR( ::R5900::Dynarec::OpcodeImpl::COP1::rec##name ) \
 		}
 
 	#	define MakeOpcodeClass( name ) \

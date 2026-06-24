@@ -768,7 +768,10 @@ set(pcsx2ZipToolsHeaders)
 # x86 GS SW rasterizer codegen. Emptied here so the lists below expand to
 # nothing on aarch64 while x86_64 is unaffected.
 if(NOT _M_X86)
-	set(pcsx2x86Sources)
+	# CpuState.cpp lives under x86/ but only defines the EE/IOP/FPU register
+	# state (cpuRegs/psxRegs/fpuRegs) that the interpreter needs too, so keep it.
+	# Everything else here is the x86 recompiler; arm64 stubs it in arm64/RecStubs.cpp.
+	set(pcsx2x86Sources x86/CpuState.cpp)
 	set(pcsx2x86Headers)
 endif()
 
