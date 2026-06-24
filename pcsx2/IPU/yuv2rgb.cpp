@@ -235,7 +235,6 @@ void yuv2rgb(void)
 			vst1q_u8(reinterpret_cast<u8*>(&decoder.rgb32.c[n * 2 + m][12]), vreinterpretq_u8_u16(rgba_hh));
 		}
 	}
-}
 #else /* Reference C implementation */
 	const macroblock_8& mb8 = decoder.mb8;
 	macroblock_rgb32& rgb32 = decoder.rgb32;

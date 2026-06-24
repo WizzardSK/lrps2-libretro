@@ -15,6 +15,15 @@
 
 #include "MultiISA.h"
 
+// Pull the C library in at global scope first: xxhash.h is included inside the
+// CURRENT_ISA namespace below, and it includes <stdlib.h>/<string.h>. If those
+// are first seen inside the namespace (as happens on arm64/musl, where nothing
+// else included them globally yet), their ::abs/::div_t/... land in the
+// namespace and <cstdlib>'s `using ::abs;` fails. Including them here sets the
+// guards so the in-namespace include is a no-op.
+#include <cstdlib>
+#include <cstring>
+
 #define XXH_STATIC_LINKING_ONLY 1
 #define XXH_INLINE_ALL 1
 namespace CURRENT_ISA // XXH doesn't seem to use symbols that allow the compiler to deduplicate, but just in case...
