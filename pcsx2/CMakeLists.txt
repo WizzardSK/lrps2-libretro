@@ -743,6 +743,16 @@ set(pcsx2USBHeaders
 set(pcsx2ZipToolsSources)
 set(pcsx2ZipToolsHeaders)
 
+# aarch64 (arm64 port, Phase B): drop the x86 recompiler sources (EE/IOP/VU
+# dynarec, recVTLB, SSE VIF unpack). They have no arm64 backend yet and the
+# interpreters are used instead; a hardware renderer (paraLLEl-GS) avoids the
+# x86 GS SW rasterizer codegen. Emptied here so the lists below expand to
+# nothing on aarch64 while x86_64 is unaffected.
+if(NOT _M_X86)
+	set(pcsx2x86Sources)
+	set(pcsx2x86Headers)
+endif()
+
 # These ones benefit a lot from LTO
 set(pcsx2LTOSources
 	${pcsx2Sources}
