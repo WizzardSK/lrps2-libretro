@@ -371,6 +371,21 @@ set(pcsx2GSSourcesUnshared
 	GS/Renderers/SW/GSSetupPrimCodeGenerator.all.cpp
 )
 
+# The software rasterizer JITs scanlines with x86 xbyak (GS*CodeGenerator) and
+# has no arm64 backend here, so drop the whole SW renderer on aarch64; the HW
+# renderer and paraLLEl-GS cover it (GS.cpp gates the SW path on ARCH_ARM64).
+if(NOT _M_X86)
+	list(REMOVE_ITEM pcsx2GSSourcesUnshared
+		GS/Renderers/SW/GSDrawScanline.cpp
+		GS/Renderers/SW/GSDrawScanlineCodeGenerator.cpp
+		GS/Renderers/SW/GSDrawScanlineCodeGenerator.all.cpp
+		GS/Renderers/SW/GSRasterizer.cpp
+		GS/Renderers/SW/GSRendererSW.cpp
+		GS/Renderers/SW/GSSetupPrimCodeGenerator.cpp
+		GS/Renderers/SW/GSSetupPrimCodeGenerator.all.cpp
+	)
+endif()
+
 set(pcsx2GSSources
 	GS/GS.cpp
 	GS/GSClut.cpp
