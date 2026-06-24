@@ -59,7 +59,9 @@ Pcsx2Config::GSOptions GSConfig;
 
 void GSinit(void)
 {
-	GSVertexSW::InitStatic();
+#ifndef ARCH_ARM64
+	GSVertexSW::InitStatic();	// SW renderer (and its s_cvb table) isn't built on arm64
+#endif
 	GSUtil::Init();
 	m_disp_fb_sprite_blits = 0;
 }

@@ -40,7 +40,7 @@
 // Coarse CPU family selector used to pick SIMD backends (SSE vs NEON), e.g. the
 // GSVector implementation. Mirrors the scheme used by the modern PCSX2/ARMSX2
 // tree so the arm64 GSVector headers can be shared.
-#if defined(_M_ARM64) || defined(__aarch64__)
+#if (defined(_M_ARM64) || defined(__aarch64__)) || defined(__aarch64__)
 	#define ARCH_ARM64
 #elif defined(_M_X86) || defined(__x86_64__) || defined(__i386__)
 	#define ARCH_X86
@@ -48,7 +48,7 @@
 	#error Unsupported architecture
 #endif
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(__aarch64__))
 /* Apple Silicon uses 16KB pages and 128 byte cache lines. */
 #define __pagesize 0x4000
 #define __pageshift 14
@@ -89,7 +89,7 @@
 // Portable read-prefetch into L1.  GCC/Clang have __builtin_prefetch.
 // MSVC routes through <intrin.h>: _mm_prefetch on x86, __prefetch on ARM64.
 #include <intrin.h>
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(__aarch64__))
 #define __prefetch_r(p) __prefetch((const void*)(p))
 #else
 #define __prefetch_r(p) _mm_prefetch((char const*)(p), _MM_HINT_T0)

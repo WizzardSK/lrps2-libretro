@@ -140,7 +140,10 @@ elseif(${PCSX2_TARGET_ARCHITECTURES} MATCHES "aarch64")
 	# The libretro core is a shared object; needs -fPIC.
 	set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-	list(APPEND PCSX2_DEFS _ARCH_64=1 _M_ARM64=1)
+	# Don't define _M_ARM64 (an MSVC-only predefined macro); the code keys arm64
+	# off __aarch64__ too, and defining _M_ARM64 on GCC/Clang leaks into 3rdparty
+	# (e.g. fast_float) that treats it as "MSVC ARM64" and pulls intrin.h/__umulh.
+	list(APPEND PCSX2_DEFS _ARCH_64=1)
 	set(_ARCH_64 1)
 	set(_M_ARM64 1)
 else()

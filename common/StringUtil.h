@@ -26,7 +26,7 @@
 #include <vector>
 
 // Work around us defining _M_ARM64 but fast_float thinking that it means MSVC.
-#if defined(_M_ARM64) && !defined(_WIN32)
+#if (defined(_M_ARM64) || defined(__aarch64__)) && !defined(_WIN32)
 #define HAD_M_ARM64 _M_ARM64
 #undef _M_ARM64
 #endif

@@ -23,7 +23,7 @@
 #include "IPU_MultiISA.h"
 #include "yuv2rgb.h"
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(__aarch64__))
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <arm64_neon.h>
 #else
@@ -136,7 +136,7 @@ void yuv2rgb(void)
 			_mm_store_si128(reinterpret_cast<__m128i*>(&decoder.rgb32.c[n * 2 + m][12]), rgba_hh);
 		}
 	}
-#elif defined(_M_ARM64) /* ARM64 codepath */
+#elif (defined(_M_ARM64) || defined(__aarch64__)) /* ARM64 codepath */
 	const int8x16_t c_bias = vdupq_n_s8(s8(IPU_C_BIAS));
 	const uint8x16_t y_bias = vdupq_n_u8(IPU_Y_BIAS);
 	const int16x8_t y_mask = vdupq_n_s16(s16(0xFF00));

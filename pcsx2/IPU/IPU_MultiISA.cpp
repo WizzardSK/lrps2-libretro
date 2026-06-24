@@ -1306,7 +1306,7 @@ __fi static bool mpeg2_slice(void)
 						s += 32;
 						d += 32;
 					}
-#elif defined(_M_ARM64) /* ARM64 codepath */
+#elif (defined(_M_ARM64) || defined(__aarch64__)) /* ARM64 codepath */
 				uint8x16_t zeroreg = vmovq_n_u8(0);
 
 				for (uint i = 0; i < (256 + 64 + 64) / 32; ++i)
