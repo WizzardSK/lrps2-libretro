@@ -100,6 +100,11 @@ typedef GSVector2T<int> GSVector2i;
 class GSVector4;
 class GSVector4i;
 
+// Needs to come before the dispatch so ARCH_X86 / ARCH_ARM64 are defined.
+#include "common/Pcsx2Defs.h"
+
+#if defined(ARCH_X86)
+
 #if _M_SSE >= 0x500
 
 class GSVector8;
@@ -118,7 +123,14 @@ class GSVector8i;
 #include "GSVector8i.h"
 #include "GSVector8.h"
 
-#include "common/Pcsx2Defs.h"
+#elif defined(ARCH_ARM64)
+
+// arm64: NEON GSVector4/4i only. The 256-bit GSVector8/8i (AVX) are not
+// provided; the GS MultiISA build must use a single NEON tier on arm64.
+#include "GSVector4i_arm64.h"
+#include "GSVector4_arm64.h"
+
+#endif
 
 // conversion
 
