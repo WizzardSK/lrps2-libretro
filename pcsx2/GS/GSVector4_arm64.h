@@ -374,6 +374,10 @@ public:
     return GSVector4(vmaxq_f32(v4s, a.v4s));
 	}
 
+	// lrps2 spells these _min/_max (the SSE GSVector4.h does too); keep both.
+	__forceinline GSVector4 _min(const GSVector4& a) const { return min(a); }
+	__forceinline GSVector4 _max(const GSVector4& a) const { return max(a); }
+
 	template <int mask>
 	__forceinline GSVector4 blend32(const GSVector4& a) const
 	{
