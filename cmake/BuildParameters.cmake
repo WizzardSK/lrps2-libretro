@@ -129,6 +129,20 @@ if(${PCSX2_TARGET_ARCHITECTURES} MATCHES "x86_64")
 	if(MSVC)
 		list(APPEND PCSX2_DEFS __SSE4_1__=1)
 	endif()
+elseif(${PCSX2_TARGET_ARCHITECTURES} MATCHES "aarch64")
+	# AArch64 (arm64) port, Phase A: get configure past the arch gate. NEON is
+	# baseline in ARMv8 so no x86 SIMD flags are needed. The x86 recompilers and
+	# x86 intrinsics are still compiled here and will fail to build until they
+	# are guarded behind _M_X86 and the interpreters are forced (Phase B); a
+	# hardware renderer (paraLLEl-GS) avoids porting the x86 GS SW rasterizer.
+	message(STATUS "Compiling a ${PCSX2_TARGET_ARCHITECTURES} build on a ${CMAKE_HOST_SYSTEM_PROCESSOR} host.")
+
+	# The libretro core is a shared object; needs -fPIC.
+	set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+	list(APPEND PCSX2_DEFS _ARCH_64=1 _M_ARM64=1)
+	set(_ARCH_64 1)
+	set(_M_ARM64 1)
 else()
 	message(FATAL_ERROR "Unsupported architecture: ${PCSX2_TARGET_ARCHITECTURES}")
 endif()
