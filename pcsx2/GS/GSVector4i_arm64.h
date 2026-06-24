@@ -1,9 +1,15 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0
 
-#pragma once
-
-#include "common/Assertions.h"
+// NOTE (lrps2 arm64 port): no '#pragma once' and no system/common includes here
+// on purpose. Like the SSE GSVector4i.h, this header is included inside the
+// MultiISA `isa_native` namespace, so it must be a bare class definition --
+// pulling in common/Assertions.h here drags <cstdlib> into that namespace.
+// pxAssert resolves to the real macro when Assertions.h was already included at
+// global scope; otherwise fall back to a no-op so this header stays standalone.
+#ifndef pxAssert
+#define pxAssert(cond) ((void)0)
+#endif
 
 class alignas(16) GSVector4i
 {

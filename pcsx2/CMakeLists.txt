@@ -565,7 +565,11 @@ set(pcsx2IPUHeaders
 	IPU/yuv2rgb.h
 )
 
-if(DISABLE_ADVANCE_SIMD)
+# The multi-ISA tier build (sse4/avx/avx2 unshared libs) is x86-only: it bakes
+# x86 SIMD feature flags into per-tier copies. On aarch64 there is a single NEON
+# tier, so fall through to the else() branch and compile the unshared GS/IPU/SPU2
+# sources once (mirrors the modern PCSX2/ARMSX2 layout).
+if(DISABLE_ADVANCE_SIMD AND _M_X86)
 	target_compile_definitions(PCSX2 PUBLIC MULTI_ISA_SHARED_COMPILATION)
 	if(USE_GCC)
 		target_link_options(PCSX2_FLAGS INTERFACE -Wno-odr)
