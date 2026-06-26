@@ -1,19 +1,20 @@
 // SPDX-FileCopyrightText: lrps2 arm64 port
 // SPDX-License-Identifier: LGPL-3.0+
 //
-// arm64 IOP (R3000A) recompiler -- Phase C.2b-2: native opcode translation.
+// arm64 IOP (R3000A) recompiler -- Phase C.2b-4: branches + delay slots.
 //
-// Builds on the C.2b-1 code cache + dispatch. Each block now natively
-// translates the leading run of simple, side-effect-free ALU instructions
-// (shifts, ADDU/SUBU/logic/SLT, and the reg-immediate forms) straight to
-// AArch64 via VIXL, operating directly on psxRegs.GPR. At the first
-// branch/jump/load/store/coprocessor/unsupported instruction it hands the rest
-// of the basic block to the interpreter (iopRunBasicBlock_arm64), which keeps
-// MIPS branch-delay-slot and memory/exception semantics exactly correct.
+// Builds on the C.2b-1..3 code cache, dispatch, ALU and load/store translation.
+// Blocks now also translate MIPS branches/jumps natively, each ending the block:
+// the (always-executed) delay slot is emitted inline, the condition is evaluated
+// from the pre-delay-slot register values, and psxRegs.pc is set to the taken
+// target or the fall-through (bpc+8). iopEventTest() is called only on the taken
+// path, matching the interpreter's doBranch(). Link (JAL/JALR/B*AL) writes pc+8
+// before the delay slot. J (0x02) is left to the interpreter because it carries
+// IOP module-import HLE; unaligned LWL/LWR/SWL/SWR and any opcode not covered by
+// EmitSimple/EmitBranch also hand the rest of the basic block to the interpreter.
 //
-// Self-modifying code: psxCpu->Clear() is called on every IOP write, so blocks
-// whose baked instruction range is written are invalidated (granular, per 4 KiB
-// page, address-mirror-normalised).
+// Self-modifying code is handled by granular per-4KiB-page, mirror-normalised
+// invalidation in recClearIOP (psxCpu->Clear is called on every IOP write).
 
 #include "R3000A.h"
 #include "common/Console.h"
@@ -44,10 +45,10 @@ namespace
 	size_t s_code_pos = 0;
 	bool   s_ok       = false;
 
-	std::unordered_map<u32, BlockFn>            s_blocks; // startpc -> fn
-	std::unordered_map<u32, std::vector<u32>>   s_page;   // norm page -> startpcs touching it
+	std::unordered_map<u32, BlockFn>          s_blocks;
+	std::unordered_map<u32, std::vector<u32>> s_page;
 
-	inline u32 Norm(u32 a) { return a & 0x1fffffff; } // collapse KSEG0/1 mirrors
+	inline u32 Norm(u32 a) { return a & 0x1fffffff; }
 
 	bool VixlEmitSelfTest()
 	{
@@ -63,22 +64,19 @@ namespace
 		return r == 42;
 	}
 
-	// Load IOP GPR[idx] into wd (r0 reads as 0). gpr = base of psxRegs.GPR.r.
 	inline void LoadGpr(MacroAssembler& m, const Register& wd, const Register& gpr, u32 idx)
 	{
-		if (idx == 0)
-			m.Mov(wd, 0);
-		else
-			m.Ldr(wd, MemOperand(gpr, idx * 4));
+		if (idx == 0) m.Mov(wd, 0);
+		else          m.Ldr(wd, MemOperand(gpr, idx * 4));
 	}
 	inline void StoreGpr(MacroAssembler& m, const Register& ws, const Register& gpr, u32 idx)
 	{
-		m.Str(ws, MemOperand(gpr, idx * 4)); // caller guarantees idx != 0
+		m.Str(ws, MemOperand(gpr, idx * 4));
 	}
 
-	// Emit native code for one instruction if it is a simple ALU op. Returns
-	// false (emitting nothing) for anything that must go through the interpreter
-	// (branches, jumps, loads, stores, mult/div, coprocessor, traps, ...).
+	// Translate one side-effect-light instruction (ALU + aligned load/store) to
+	// native AArch64. Returns false (emitting nothing) for control flow and
+	// anything not covered. gpr (x19) is callee-saved so it survives mem helpers.
 	bool EmitSimple(MacroAssembler& m, const Register& gpr, u32 insn)
 	{
 		const u32 op = insn >> 26;
@@ -89,63 +87,58 @@ namespace
 
 		switch (op)
 		{
-			case 0x00: // SPECIAL
+			case 0x00:
 				switch (funct)
 				{
-					case 0x00: if (rd) { LoadGpr(m, w0, gpr, rt); m.Lsl(w0, w0, sa); StoreGpr(m, w0, gpr, rd); } return true; // SLL / NOP
-					case 0x02: if (rd) { LoadGpr(m, w0, gpr, rt); m.Lsr(w0, w0, sa); StoreGpr(m, w0, gpr, rd); } return true; // SRL
-					case 0x03: if (rd) { LoadGpr(m, w0, gpr, rt); m.Asr(w0, w0, sa); StoreGpr(m, w0, gpr, rd); } return true; // SRA
-					case 0x04: if (rd) { LoadGpr(m, w0, gpr, rt); LoadGpr(m, w1, gpr, rs); m.Lsl(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true; // SLLV
-					case 0x06: if (rd) { LoadGpr(m, w0, gpr, rt); LoadGpr(m, w1, gpr, rs); m.Lsr(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true; // SRLV
-					case 0x07: if (rd) { LoadGpr(m, w0, gpr, rt); LoadGpr(m, w1, gpr, rs); m.Asr(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true; // SRAV
-					case 0x21: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Add(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true; // ADDU
-					case 0x23: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Sub(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true; // SUBU
-					case 0x24: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.And(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true; // AND
-					case 0x25: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Orr(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true; // OR
-					case 0x26: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Eor(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true; // XOR
-					case 0x27: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Orr(w0, w0, w1); m.Mvn(w0, w0); StoreGpr(m, w0, gpr, rd); } return true; // NOR
-					case 0x2a: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Cmp(w0, w1); m.Cset(w0, lt); StoreGpr(m, w0, gpr, rd); } return true; // SLT
-					case 0x2b: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Cmp(w0, w1); m.Cset(w0, lo); StoreGpr(m, w0, gpr, rd); } return true; // SLTU
+					case 0x00: if (rd) { LoadGpr(m, w0, gpr, rt); m.Lsl(w0, w0, sa); StoreGpr(m, w0, gpr, rd); } return true;
+					case 0x02: if (rd) { LoadGpr(m, w0, gpr, rt); m.Lsr(w0, w0, sa); StoreGpr(m, w0, gpr, rd); } return true;
+					case 0x03: if (rd) { LoadGpr(m, w0, gpr, rt); m.Asr(w0, w0, sa); StoreGpr(m, w0, gpr, rd); } return true;
+					case 0x04: if (rd) { LoadGpr(m, w0, gpr, rt); LoadGpr(m, w1, gpr, rs); m.Lsl(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
+					case 0x06: if (rd) { LoadGpr(m, w0, gpr, rt); LoadGpr(m, w1, gpr, rs); m.Lsr(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
+					case 0x07: if (rd) { LoadGpr(m, w0, gpr, rt); LoadGpr(m, w1, gpr, rs); m.Asr(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
+					case 0x21: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Add(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
+					case 0x23: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Sub(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
+					case 0x24: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.And(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
+					case 0x25: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Orr(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
+					case 0x26: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Eor(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
+					case 0x27: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Orr(w0, w0, w1); m.Mvn(w0, w0); StoreGpr(m, w0, gpr, rd); } return true;
+					case 0x2a: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Cmp(w0, w1); m.Cset(w0, lt); StoreGpr(m, w0, gpr, rd); } return true;
+					case 0x2b: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Cmp(w0, w1); m.Cset(w0, lo); StoreGpr(m, w0, gpr, rd); } return true;
 					default: return false;
 				}
-			case 0x09: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, (u32)simm); m.Add(w0, w0, w1); StoreGpr(m, w0, gpr, rt); } return true; // ADDIU
-			case 0x0a: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, (u32)simm); m.Cmp(w0, w1); m.Cset(w0, lt); StoreGpr(m, w0, gpr, rt); } return true; // SLTI
-			case 0x0b: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, (u32)simm); m.Cmp(w0, w1); m.Cset(w0, lo); StoreGpr(m, w0, gpr, rt); } return true; // SLTIU
-			case 0x0c: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, zimm); m.And(w0, w0, w1); StoreGpr(m, w0, gpr, rt); } return true; // ANDI
-			case 0x0d: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, zimm); m.Orr(w0, w0, w1); StoreGpr(m, w0, gpr, rt); } return true; // ORI
-			case 0x0e: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, zimm); m.Eor(w0, w0, w1); StoreGpr(m, w0, gpr, rt); } return true; // XORI
-			case 0x0f: if (rt) { m.Mov(w0, zimm << 16); StoreGpr(m, w0, gpr, rt); } return true; // LUI
+			case 0x09: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, (u32)simm); m.Add(w0, w0, w1); StoreGpr(m, w0, gpr, rt); } return true;
+			case 0x0a: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, (u32)simm); m.Cmp(w0, w1); m.Cset(w0, lt); StoreGpr(m, w0, gpr, rt); } return true;
+			case 0x0b: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, (u32)simm); m.Cmp(w0, w1); m.Cset(w0, lo); StoreGpr(m, w0, gpr, rt); } return true;
+			case 0x0c: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, zimm); m.And(w0, w0, w1); StoreGpr(m, w0, gpr, rt); } return true;
+			case 0x0d: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, zimm); m.Orr(w0, w0, w1); StoreGpr(m, w0, gpr, rt); } return true;
+			case 0x0e: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, zimm); m.Eor(w0, w0, w1); StoreGpr(m, w0, gpr, rt); } return true;
+			case 0x0f: if (rt) { m.Mov(w0, zimm << 16); StoreGpr(m, w0, gpr, rt); } return true;
 
-			// Loads/stores: compute the effective address (rs + simm) natively,
-			// then call the IOP memory helper (handles the full memory map, side
-			// effects and recompiler invalidation). The R3000A load-delay slot is
-			// not emulated by the interpreter, so writeback is immediate here too.
-			// gpr (x19) is callee-saved, so it survives the helper call.
-			case 0x20: case 0x24: case 0x21: case 0x25: case 0x23: // LB/LBU/LH/LHU/LW
+			case 0x20: case 0x24: case 0x21: case 0x25: case 0x23:
 			{
 				LoadGpr(m, w0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
 				uint64_t fn = (op == 0x23) ? reinterpret_cast<uint64_t>(&iopMemRead32)
 				            : (op == 0x21 || op == 0x25) ? reinterpret_cast<uint64_t>(&iopMemRead16)
 				            : reinterpret_cast<uint64_t>(&iopMemRead8);
-				m.Mov(x16, fn); m.Blr(x16); // result in w0 (side effects run even if rt==0)
+				m.Mov(x16, fn); m.Blr(x16);
 				if (rt)
 				{
 					switch (op)
 					{
-						case 0x20: m.Sxtb(w0, w0); break; // LB
-						case 0x24: m.Uxtb(w0, w0); break; // LBU
-						case 0x21: m.Sxth(w0, w0); break; // LH
-						case 0x25: m.Uxth(w0, w0); break; // LHU
-						default: break;                   // LW
+						case 0x20: m.Sxtb(w0, w0); break;
+						case 0x24: m.Uxtb(w0, w0); break;
+						case 0x21: m.Sxth(w0, w0); break;
+						case 0x25: m.Uxth(w0, w0); break;
+						default: break;
 					}
 					StoreGpr(m, w0, gpr, rt);
 				}
 				return true;
 			}
-			case 0x28: case 0x29: case 0x2b: // SB/SH/SW
+			case 0x28: case 0x29: case 0x2b:
 			{
-				LoadGpr(m, w0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2); // addr
-				LoadGpr(m, w1, gpr, rt);                                          // value
+				LoadGpr(m, w0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				LoadGpr(m, w1, gpr, rt);
 				uint64_t fn = (op == 0x2b) ? reinterpret_cast<uint64_t>(&iopMemWrite32)
 				            : (op == 0x29) ? reinterpret_cast<uint64_t>(&iopMemWrite16)
 				            : reinterpret_cast<uint64_t>(&iopMemWrite8);
@@ -156,9 +149,129 @@ namespace
 		}
 	}
 
+	// True iff EmitSimple would translate this instruction (no emission). Used to
+	// decide whether a branch's delay slot can be inlined.
+	bool IsTranslatable(u32 insn)
+	{
+		const u32 op = insn >> 26, funct = insn & 0x3f;
+		if (op == 0x00)
+		{
+			switch (funct)
+			{
+				case 0x00: case 0x02: case 0x03: case 0x04: case 0x06: case 0x07:
+				case 0x21: case 0x23: case 0x24: case 0x25: case 0x26: case 0x27:
+				case 0x2a: case 0x2b: return true;
+				default: return false;
+			}
+		}
+		switch (op)
+		{
+			case 0x09: case 0x0a: case 0x0b: case 0x0c: case 0x0d: case 0x0e: case 0x0f:
+			case 0x20: case 0x21: case 0x23: case 0x24: case 0x25:
+			case 0x28: case 0x29: case 0x2b: return true;
+			default: return false;
+		}
+	}
+
+	// cycle += count ; iopCycleEE -= (ICFG&8 ? 9 : 8) * count
+	void EmitCycleBookkeeping(MacroAssembler& m, int count)
+	{
+		m.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.cycle));
+		m.Ldr(w0, MemOperand(x10)); m.Add(w0, w0, count); m.Str(w0, MemOperand(x10));
+		m.Mov(x10, reinterpret_cast<uint64_t>(&psxHu32(HW_ICFG)));
+		m.Ldr(w1, MemOperand(x10));
+		m.Mov(w2, 9 * count); m.Mov(w3, 8 * count);
+		m.Tst(w1, 8);
+		m.Csel(w2, w2, w3, ne);
+		m.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.iopCycleEE));
+		m.Ldr(w0, MemOperand(x10)); m.Sub(w0, w0, w2); m.Str(w0, MemOperand(x10));
+	}
+
+	void EmitEpilogue(MacroAssembler& m)
+	{
+		m.Ldp(x19, x20, MemOperand(sp, 0));
+		m.Ldp(x21, x30, MemOperand(sp, 16));
+		m.Add(sp, sp, 32);
+		m.Ret();
+	}
+
+	inline void StorePC(MacroAssembler& m, const Register& wsrc)
+	{
+		m.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.pc));
+		m.Str(wsrc, MemOperand(x10));
+	}
+
+	// Translate a branch/jump (ending the block). Returns false, emitting nothing,
+	// if it can't be handled (then the caller hands the rest to the interpreter).
+	bool EmitBranch(MacroAssembler& m, const Register& gpr, u32 bpc, u32 insn, int n_leading)
+	{
+		const u32 op = insn >> 26, rs = (insn >> 21) & 31, rt = (insn >> 16) & 31, funct = insn & 0x3f;
+		const int32_t simm = (int16_t)(insn & 0xffff);
+
+		bool uncond = false, is_jr = false, two = false, one = false;
+		int  link = -1;
+		Condition cond = al;
+		u32  tconst = 0;
+
+		if      (op == 0x00 && funct == 0x08) { uncond = true; is_jr = true; }
+		else if (op == 0x00 && funct == 0x09) { uncond = true; is_jr = true; link = (int)((insn >> 11) & 31); }
+		else if (op == 0x03) { uncond = true; link = 31; tconst = (((bpc + 4) & 0xf0000000) | ((insn & 0x3ffffff) << 2)); } // JAL
+		else if (op == 0x02) return false; // J: IOP module-import HLE -> interpreter
+		else if (op == 0x04) { two = true; cond = eq; tconst = bpc + 4 + simm * 4; } // BEQ
+		else if (op == 0x05) { two = true; cond = ne; tconst = bpc + 4 + simm * 4; } // BNE
+		else if (op == 0x06) { one = true; cond = le; tconst = bpc + 4 + simm * 4; } // BLEZ
+		else if (op == 0x07) { one = true; cond = gt; tconst = bpc + 4 + simm * 4; } // BGTZ
+		else if (op == 0x01)
+		{
+			const u32 t = bpc + 4 + simm * 4;
+			if      (rt == 0x00) { one = true; cond = lt; tconst = t; }            // BLTZ
+			else if (rt == 0x01) { one = true; cond = ge; tconst = t; }            // BGEZ
+			else if (rt == 0x10) { one = true; cond = lt; tconst = t; link = 31; } // BLTZAL
+			else if (rt == 0x11) { one = true; cond = ge; tconst = t; link = 31; } // BGEZAL
+			else return false;
+		}
+		else return false;
+
+		const u32 ds = iopMemRead32(bpc + 4);
+		if (!IsTranslatable(ds))
+			return false;
+
+		// link (before the delay slot, unconditionally)
+		if (link > 0) { m.Mov(w0, bpc + 8); StoreGpr(m, w0, gpr, (u32)link); }
+		// snapshot condition operands / jr target before the delay slot can clobber them
+		if (two)   { LoadGpr(m, w20, gpr, rs); LoadGpr(m, w21, gpr, rt); }
+		else if (one) { LoadGpr(m, w20, gpr, rs); }
+		if (is_jr) { LoadGpr(m, w21, gpr, rs); }
+		// the always-executed delay slot
+		EmitSimple(m, gpr, ds);
+		// time: n_leading native ops + the branch + the delay slot
+		EmitCycleBookkeeping(m, n_leading + 2);
+
+		if (uncond)
+		{
+			if (is_jr) StorePC(m, w21);
+			else { m.Mov(w0, tconst); StorePC(m, w0); }
+			m.Mov(x16, reinterpret_cast<uint64_t>(&iopEventTest)); m.Blr(x16);
+		}
+		else
+		{
+			if (two) m.Cmp(w20, w21);
+			else     m.Cmp(w20, 0);
+			m.Mov(w0, tconst); m.Mov(w1, bpc + 8);
+			m.Csel(w0, w0, w1, cond);
+			StorePC(m, w0);
+			Label not_taken;
+			m.B(&not_taken, InvertCondition(cond));
+			m.Mov(x16, reinterpret_cast<uint64_t>(&iopEventTest)); m.Blr(x16);
+			m.Bind(&not_taken);
+		}
+		EmitEpilogue(m);
+		return true;
+	}
+
 	BlockFn CompileBlock(u32 pc)
 	{
-		if (s_code_pos + 4096 > kCodeCacheSize)
+		if (s_code_pos + 8192 > kCodeCacheSize)
 		{
 			s_blocks.clear();
 			s_page.clear();
@@ -168,53 +281,43 @@ namespace
 		u8* start = s_code + s_code_pos;
 		MacroAssembler masm(start, kCodeCacheSize - s_code_pos, PositionDependentCode);
 
-		const Register gpr = x19; // callee-saved: survives the iopMem* helper calls
-		masm.Sub(sp, sp, 16);
-		masm.Stp(x19, x30, MemOperand(sp));
+		const Register gpr = x19;
+		masm.Sub(sp, sp, 32);
+		masm.Stp(x19, x20, MemOperand(sp, 0));
+		masm.Stp(x21, x30, MemOperand(sp, 16));
 		masm.Mov(gpr, reinterpret_cast<uint64_t>(&psxRegs.GPR.r[0]));
 
 		u32 p = pc;
 		int n = 0;
+		bool done = false;
 		while (n < kMaxInsns)
 		{
 			const u32 insn = iopMemRead32(p);
-			if (!EmitSimple(masm, gpr, insn))
-				break;
-			p += 4;
-			n++;
+			if (EmitSimple(masm, gpr, insn)) { p += 4; n++; continue; }
+			if (EmitBranch(masm, gpr, p, insn, n)) { done = true; break; } // emits bookkeeping + pc + epilogue
+			break; // unsupported -> interpreter handles the rest of the block
 		}
 
-		if (n > 0)
+		if (!done)
 		{
-			// pc += 4n ; cycle += n ; iopCycleEE -= (ICFG&8 ? 9 : 8) * n
-			masm.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.pc));
-			masm.Ldr(w0, MemOperand(x10)); masm.Add(w0, w0, 4 * n); masm.Str(w0, MemOperand(x10));
-			masm.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.cycle));
-			masm.Ldr(w0, MemOperand(x10)); masm.Add(w0, w0, n); masm.Str(w0, MemOperand(x10));
-			masm.Mov(x10, reinterpret_cast<uint64_t>(&psxHu32(HW_ICFG)));
-			masm.Ldr(w1, MemOperand(x10));
-			masm.Mov(w2, 9 * n); masm.Mov(w3, 8 * n);
-			masm.Tst(w1, 8);
-			masm.Csel(w2, w2, w3, ne);
-			masm.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.iopCycleEE));
-			masm.Ldr(w0, MemOperand(x10)); masm.Sub(w0, w0, w2); masm.Str(w0, MemOperand(x10));
+			if (n > 0)
+			{
+				masm.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.pc));
+				masm.Ldr(w0, MemOperand(x10)); masm.Add(w0, w0, 4 * n); masm.Str(w0, MemOperand(x10));
+				EmitCycleBookkeeping(masm, n);
+			}
+			masm.Mov(x16, reinterpret_cast<uint64_t>(&iopRunBasicBlock_arm64));
+			masm.Blr(x16);
+			EmitEpilogue(masm);
 		}
 
-		// finish the basic block (branch + delay slot, or any non-simple op) via the interpreter
-		masm.Mov(x16, reinterpret_cast<uint64_t>(&iopRunBasicBlock_arm64));
-		masm.Blr(x16);
-		masm.Ldp(x19, x30, MemOperand(sp));
-		masm.Add(sp, sp, 16);
-		masm.Ret();
 		masm.FinalizeCode();
-
 		const size_t sz = masm.GetSizeOfCodeGenerated();
 		__builtin___clear_cache(reinterpret_cast<char*>(start), reinterpret_cast<char*>(start + sz));
 		s_code_pos += (sz + 15) & ~size_t(15);
 
 		BlockFn fn = reinterpret_cast<BlockFn>(start);
 		s_blocks.emplace(pc, fn);
-		// index by every page the baked range [pc, p) touches (mirror-normalised)
 		const u32 ns = Norm(pc), ne = Norm(p > pc ? p : pc + 4);
 		for (u32 pg = ns >> kPageShift; pg <= (ne - 1) >> kPageShift; pg++)
 			s_page[pg].push_back(pc);
@@ -235,10 +338,10 @@ static void recReserve(void)
 	{
 		s_code = (u8*)mmap(nullptr, kCodeCacheSize, PROT_READ | PROT_WRITE | PROT_EXEC,
 		                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-		if (s_code == MAP_FAILED) { s_code = nullptr; }
+		if (s_code == MAP_FAILED) s_code = nullptr;
 	}
 	s_ok = s_ok && (s_code != nullptr);
-	Console.WriteLn("arm64 IOP rec (C.2b-3): %s.", s_ok ? "native ALU+load/store JIT active" : "FAILED -> interpreter fallback");
+	Console.WriteLn("arm64 IOP rec (C.2b-4): %s.", s_ok ? "native ALU+mem+branch JIT active" : "FAILED -> interpreter fallback");
 }
 
 static void recResetIOP(void)
