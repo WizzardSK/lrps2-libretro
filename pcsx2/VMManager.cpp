@@ -832,6 +832,11 @@ void VMManager::InitializeCPUProviders()
 
 	dVifReserve(0);
 	dVifReserve(1);
+#else
+	// arm64 IOP recompiler (Phase C.2a): reserve psxRec so its VIXL emit-pipeline
+	// self-test runs at init. Block execution still goes through the interpreter
+	// (UpdateCPUImplementations forces psxInt) until real JIT lands (C.2b).
+	psxRec.Reserve();
 #endif
 
 	GSCodeReserve::GetInstance().Assign(GetVmMemory().CodeMemory());
@@ -856,6 +861,8 @@ void VMManager::ShutdownCPUProviders()
 
 	psxRec.Shutdown();
 	recCpu.Shutdown();
+#else
+	psxRec.Shutdown();
 #endif
 }
 
