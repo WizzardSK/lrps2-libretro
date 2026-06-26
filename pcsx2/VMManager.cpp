@@ -833,10 +833,10 @@ void VMManager::InitializeCPUProviders()
 	dVifReserve(0);
 	dVifReserve(1);
 #else
-	// arm64 IOP recompiler (Phase C.2a): reserve psxRec so its VIXL emit-pipeline
-	// self-test runs at init. Block execution still goes through the interpreter
-	// (UpdateCPUImplementations forces psxInt) until real JIT lands (C.2b).
+	// arm64: reserve the IOP recompiler (psxRec, Phase C.2b) and the EE
+	// recompiler (recCpu, Phase C.3) so their code caches/self-tests come up.
 	psxRec.Reserve();
+	recCpu.Reserve();
 #endif
 
 	GSCodeReserve::GetInstance().Assign(GetVmMemory().CodeMemory());
@@ -863,6 +863,7 @@ void VMManager::ShutdownCPUProviders()
 	recCpu.Shutdown();
 #else
 	psxRec.Shutdown();
+	recCpu.Shutdown();
 #endif
 }
 
@@ -872,9 +873,10 @@ void VMManager::UpdateCPUImplementations()
 	Cpu    = CHECK_EEREC ? &recCpu : &intCpu;
 	psxCpu = CHECK_IOPREC ? &psxRec : &psxInt;
 #else
-	// arm64: EE interpreter; IOP uses the arm64 recompiler (Phase C.2b). recExecuteBlock
-	// falls back to the interpreter internally if the JIT failed to initialise.
-	Cpu    = &intCpu;
+	// arm64: IOP uses the arm64 recompiler (Phase C.2b). EE uses the arm64 EE
+	// recompiler (Phase C.3) when CHECK_EEREC is set; C.3-1 blocks call the
+	// interpreter so behaviour is identical while the JIT plumbing runs.
+	Cpu    = CHECK_EEREC ? &recCpu : &intCpu;
 	psxCpu = &psxRec;
 #endif
 

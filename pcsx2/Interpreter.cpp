@@ -27,6 +27,20 @@ static bool intExitExecution = false;
 static fastjmp_buf intJmpBuf;
 static u32 intLastBranchTo;
 
+#ifdef ARCH_ARM64
+// arm64 EE recompiler (Phase C.3) hook: when set, the GAME_RUNNING loop runs
+// JIT-dispatched blocks instead of one interpreter instruction per iteration.
+// nullptr => plain interpreter. The JIT cache machinery lives in
+// arm64/recR5900_arm64.cpp; recCpu is assembled at the bottom of this file so
+// it can reuse the static execute/exit/cancel helpers and intJmpBuf.
+void (*g_ee_block_runner)(void) = nullptr;
+extern "C" void eeJitRunBlock_arm64(void);
+extern void eeJitReserve_arm64(void);
+extern void eeJitShutdown_arm64(void);
+extern void eeJitReset_arm64(void);
+extern void eeJitClear_arm64(u32 addr, u32 size);
+#endif
+
 static void intEventTest(void);
 
 void intUpdateCPUCycles()
@@ -451,7 +465,7 @@ static void intCancelInstruction(void)
 	fastjmp_jmp(&intJmpBuf, 0);
 }
 
-static void intExecute(void)
+static void eeExecuteLoop(void)
 {
 	enum ExecuteState {
 		RESET,
@@ -524,12 +538,44 @@ static void intExecute(void)
 			// fallthrough
 
 		case GAME_RUNNING:
-			for (;;)
-				execI();
+#ifdef ARCH_ARM64
+			if (g_ee_block_runner)
+				for (;;) g_ee_block_runner();
+			else
+#endif
+				for (;;) execI();
 			break;
 		}
 	}
 }
+
+static void intExecute(void)
+{
+#ifdef ARCH_ARM64
+	g_ee_block_runner = nullptr; // interpreter: one instruction per iteration
+#endif
+	eeExecuteLoop();
+}
+
+#ifdef ARCH_ARM64
+// arm64 EE recompiler entry points (provider recCpu, assembled below). They live
+// here so they can use the static execute loop, branch2, execI and intJmpBuf.
+
+// Run a single EE basic block through the interpreter (instructions until the
+// next taken branch). The arm64 JIT's per-PC blocks call this for now (Phase
+// C.3-1); later phases translate the instructions natively.
+extern "C" void eeRunBasicBlock_arm64(void)
+{
+	branch2 = 0;
+	do { execI(); } while (!branch2);
+}
+
+void eeRecExecute_arm64(void)
+{
+	g_ee_block_runner = &eeJitRunBlock_arm64;
+	eeExecuteLoop();
+}
+#endif
 
 static void intClear(u32 Addr, u32 Size) { }
 static void intShutdown(void) { }
@@ -547,3 +593,22 @@ R5900cpu intCpu =
 
 	intClear
 };
+
+#ifdef ARCH_ARM64
+// arm64 EE recompiler provider (Phase C.3). Execution loop/exit/cancel are shared
+// with the interpreter (same intJmpBuf); only Reserve/Reset/Shutdown/Clear and the
+// per-PC block dispatch (eeRecExecute_arm64 -> eeJitRunBlock_arm64) are the JIT's.
+R5900cpu recCpu =
+{
+	eeJitReserve_arm64,
+	eeJitShutdown_arm64,
+
+	eeJitReset_arm64,
+	eeRecExecute_arm64,
+
+	intSafeExitExecution,
+	intCancelInstruction,
+
+	eeJitClear_arm64
+};
+#endif
