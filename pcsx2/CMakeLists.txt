@@ -773,6 +773,10 @@ if(NOT _M_X86)
 	# Everything else here is the x86 recompiler; arm64 stubs it in arm64/RecStubs.cpp.
 	set(pcsx2x86Sources x86/CpuState.cpp arm64/RecStubs.cpp)
 	set(pcsx2x86Headers)
+	# VIXL is the AArch64 code emitter, the foundation for the arm64 recompiler
+	# (Phase C). Wire it through the flags interface (like parallel-gs/glad above)
+	# so its PUBLIC include dir and static lib reach both PCSX2 and PCSX2_LTO.
+	target_link_libraries(PCSX2_FLAGS INTERFACE vixl)
 endif()
 
 # These ones benefit a lot from LTO
