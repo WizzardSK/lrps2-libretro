@@ -1249,8 +1249,10 @@ static void InitializeCPUInfo(void)
 static void SetMTVUAndAffinityControlDefault(SettingsInterface& si)
 {
 	VMManager::EnsureCPUInfoInitialized();
-	Console.WriteLn("  Enabling MTVU.");
-	si.SetBoolValue("EmuCore/Speedhacks", "vuThread", true);
+	// arm64 experiment: with MTVU on, the GS never presented a frame (set_image
+	// was never called -> black screen). Run VU1 on the EE thread instead.
+	Console.WriteLn("  MTVU disabled (arm64 GS-present experiment).");
+	si.SetBoolValue("EmuCore/Speedhacks", "vuThread", false);
 }
 
 #else
