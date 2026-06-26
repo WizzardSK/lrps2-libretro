@@ -22,7 +22,11 @@
 #include <float.h>
 
 static int branch2 = 0;
+#ifdef ARCH_ARM64
+u32 cpuBlockCycles = 0;			// 3 bit fixed point version of cycle count (shared with the arm64 EE JIT)
+#else
 static u32 cpuBlockCycles = 0;		// 3 bit fixed point version of cycle count
+#endif
 static bool intExitExecution = false;
 static fastjmp_buf intJmpBuf;
 static u32 intLastBranchTo;
