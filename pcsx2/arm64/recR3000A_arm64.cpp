@@ -115,6 +115,43 @@ namespace
 			case 0x0d: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, zimm); m.Orr(w0, w0, w1); StoreGpr(m, w0, gpr, rt); } return true; // ORI
 			case 0x0e: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, zimm); m.Eor(w0, w0, w1); StoreGpr(m, w0, gpr, rt); } return true; // XORI
 			case 0x0f: if (rt) { m.Mov(w0, zimm << 16); StoreGpr(m, w0, gpr, rt); } return true; // LUI
+
+			// Loads/stores: compute the effective address (rs + simm) natively,
+			// then call the IOP memory helper (handles the full memory map, side
+			// effects and recompiler invalidation). The R3000A load-delay slot is
+			// not emulated by the interpreter, so writeback is immediate here too.
+			// gpr (x19) is callee-saved, so it survives the helper call.
+			case 0x20: case 0x24: case 0x21: case 0x25: case 0x23: // LB/LBU/LH/LHU/LW
+			{
+				LoadGpr(m, w0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				uint64_t fn = (op == 0x23) ? reinterpret_cast<uint64_t>(&iopMemRead32)
+				            : (op == 0x21 || op == 0x25) ? reinterpret_cast<uint64_t>(&iopMemRead16)
+				            : reinterpret_cast<uint64_t>(&iopMemRead8);
+				m.Mov(x16, fn); m.Blr(x16); // result in w0 (side effects run even if rt==0)
+				if (rt)
+				{
+					switch (op)
+					{
+						case 0x20: m.Sxtb(w0, w0); break; // LB
+						case 0x24: m.Uxtb(w0, w0); break; // LBU
+						case 0x21: m.Sxth(w0, w0); break; // LH
+						case 0x25: m.Uxth(w0, w0); break; // LHU
+						default: break;                   // LW
+					}
+					StoreGpr(m, w0, gpr, rt);
+				}
+				return true;
+			}
+			case 0x28: case 0x29: case 0x2b: // SB/SH/SW
+			{
+				LoadGpr(m, w0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2); // addr
+				LoadGpr(m, w1, gpr, rt);                                          // value
+				uint64_t fn = (op == 0x2b) ? reinterpret_cast<uint64_t>(&iopMemWrite32)
+				            : (op == 0x29) ? reinterpret_cast<uint64_t>(&iopMemWrite16)
+				            : reinterpret_cast<uint64_t>(&iopMemWrite8);
+				m.Mov(x16, fn); m.Blr(x16);
+				return true;
+			}
 			default: return false;
 		}
 	}
@@ -131,9 +168,9 @@ namespace
 		u8* start = s_code + s_code_pos;
 		MacroAssembler masm(start, kCodeCacheSize - s_code_pos, PositionDependentCode);
 
-		const Register gpr = x9;
+		const Register gpr = x19; // callee-saved: survives the iopMem* helper calls
 		masm.Sub(sp, sp, 16);
-		masm.Str(x30, MemOperand(sp, 0));
+		masm.Stp(x19, x30, MemOperand(sp));
 		masm.Mov(gpr, reinterpret_cast<uint64_t>(&psxRegs.GPR.r[0]));
 
 		u32 p = pc;
@@ -166,7 +203,7 @@ namespace
 		// finish the basic block (branch + delay slot, or any non-simple op) via the interpreter
 		masm.Mov(x16, reinterpret_cast<uint64_t>(&iopRunBasicBlock_arm64));
 		masm.Blr(x16);
-		masm.Ldr(x30, MemOperand(sp, 0));
+		masm.Ldp(x19, x30, MemOperand(sp));
 		masm.Add(sp, sp, 16);
 		masm.Ret();
 		masm.FinalizeCode();
@@ -201,7 +238,7 @@ static void recReserve(void)
 		if (s_code == MAP_FAILED) { s_code = nullptr; }
 	}
 	s_ok = s_ok && (s_code != nullptr);
-	Console.WriteLn("arm64 IOP rec (C.2b-2): %s.", s_ok ? "native ALU JIT active" : "FAILED -> interpreter fallback");
+	Console.WriteLn("arm64 IOP rec (C.2b-3): %s.", s_ok ? "native ALU+load/store JIT active" : "FAILED -> interpreter fallback");
 }
 
 static void recResetIOP(void)
