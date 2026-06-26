@@ -872,9 +872,10 @@ void VMManager::UpdateCPUImplementations()
 	Cpu    = CHECK_EEREC ? &recCpu : &intCpu;
 	psxCpu = CHECK_IOPREC ? &psxRec : &psxInt;
 #else
-	// arm64: interpreters only.
+	// arm64: EE interpreter; IOP uses the arm64 recompiler (Phase C.2b). recExecuteBlock
+	// falls back to the interpreter internally if the JIT failed to initialise.
 	Cpu    = &intCpu;
-	psxCpu = &psxInt;
+	psxCpu = &psxRec;
 #endif
 
 	CpuVU0 = &CpuIntVU0;

@@ -180,6 +180,24 @@ static s32 intExecuteBlock( s32 eeCycles )
 	return psxRegs.iopBreak + psxRegs.iopCycleEE;
 }
 
+#ifdef ARCH_ARM64
+// arm64 recompiler (Phase C.2b) helper: run a single IOP basic block through the
+// interpreter -- instructions until the next taken branch (and its delay slot,
+// which execI()/doBranch() handle). The arm64 JIT currently emits one per-PC
+// block per basic block, each of which calls this; Phase C.2b-2 replaces the
+// body with natively translated instructions. Mirrors intExecuteBlock's inner
+// loop (incl. the BIOS HLE entry hook) so behaviour is identical.
+extern "C" void iopRunBasicBlock_arm64(void)
+{
+	if ((psxHu32(HW_ICFG) & 8) && ((psxRegs.pc & 0x1fffffffU) == 0xa0 || (psxRegs.pc & 0x1fffffffU) == 0xb0 || (psxRegs.pc & 0x1fffffffU) == 0xc0))
+		psxBiosCall();
+
+	branch2 = 0;
+	while (!branch2)
+		execI();
+}
+#endif
+
 R3000Acpu psxInt = {
 	intReserve,
 	intReset,
