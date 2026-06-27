@@ -92,6 +92,57 @@ namespace
 		m.Str(xs, MemOperand(gpr, idx * 16));
 	}
 
+	// COP1 (FPU) register sub-ops that are *pure bit moves* -- no PS2 FPU
+	// arithmetic, so they are bit-exact and safe to translate natively. The
+	// quirky non-IEEE arithmetic (ADD.S/MUL.S/DIV.S, CVT, C.cond, MADD, ...),
+	// BC1 and CFC1/CTC1 stay with the interpreter.
+	//   rs=0x00 MFC1, rs=0x04 MTC1, rs=0x10 + funct {0x05 ABS.S,0x06 MOV.S,0x07 NEG.S}
+	bool Cop1RegSupported(u32 insn)
+	{
+		const u32 rs = (insn >> 21) & 31;
+		if (rs == 0x00 || rs == 0x04) return true;
+		if (rs == 0x10)
+		{
+			const u32 funct = insn & 0x3f;
+			return funct == 0x05 || funct == 0x06 || funct == 0x07;
+		}
+		return false;
+	}
+
+	// fpuRegisters layout: FPRreg fpr[32] (4 bytes each) at offset 0; u32 fprc[32]
+	// at offset 128 -> FCR31 (the status/cause reg) at offset 128 + 31*4 = 252.
+	void EmitCop1Reg(MacroAssembler& m, const Register& gpr, u32 insn)
+	{
+		const u32 rs    = (insn >> 21) & 31;
+		const u32 rt    = (insn >> 16) & 31;   // GPR for MFC1/MTC1
+		const u32 fs    = (insn >> 11) & 31;
+		const u32 fd    = (insn >>  6) & 31;
+		const u32 funct = insn & 0x3f;
+		const uint64_t fbase = reinterpret_cast<uint64_t>(&fpuRegs);
+
+		if (rs == 0x00) // MFC1 rt, fs : GPR[rt] = sign_extend_32_to_64(fpr[fs].UL)
+		{
+			if (rt) { m.Mov(x1, fbase); m.Ldr(w0, MemOperand(x1, fs * 4)); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rt); }
+			return;
+		}
+		if (rs == 0x04) // MTC1 rt, fs : fpr[fs].UL = GPR[rt].UL[0]
+		{
+			m.Mov(x1, fbase); LoadGpr(m, x0, gpr, rt); m.Str(w0, MemOperand(x1, fs * 4));
+			return;
+		}
+		// rs == 0x10 single-precision bit ops
+		m.Mov(x1, fbase);
+		m.Ldr(w0, MemOperand(x1, fs * 4));
+		if (funct == 0x06) { m.Str(w0, MemOperand(x1, fd * 4)); return; } // MOV.S
+		if (funct == 0x05) m.And(w0, w0, 0x7fffffff);                     // ABS.S
+		else               m.Eor(w0, w0, 0x80000000);                    // NEG.S
+		m.Str(w0, MemOperand(x1, fd * 4));
+		// clear the O|U cause flags in FCR31 (ABS.S/NEG.S do clearFPUFlags(O|U))
+		m.Ldr(w0, MemOperand(x1, 252));
+		m.Bic(w0, w0, 0xC000);
+		m.Str(w0, MemOperand(x1, 252));
+	}
+
 	// Translate one simple integer ALU op (32- and 64-bit forms). Returns false,
 	// emitting nothing, for control flow / memory / FPU / MMI / anything else.
 	bool EmitSimple(MacroAssembler& m, const Register& gpr, u32 insn)
@@ -190,6 +241,38 @@ namespace
 				m.Mov(x16, fn); m.Blr(x16);
 				return true;
 			}
+
+			// COP1 register ops (MFC1/MTC1/MOV.S/NEG.S/ABS.S only -- arithmetic and
+			// BC1/CFC1/CTC1 hand off to the interpreter).
+			case 0x11:
+				if (!Cop1RegSupported(insn)) return false;
+				EmitCop1Reg(m, gpr, insn);
+				return true;
+
+			// LWC1 ft, off(base): fpr[ft].UL = read32(addr). Unlike integer LW, a
+			// misaligned address is *silently skipped* (no exception/cancel) -- match
+			// the interpreter's `if (addr & 3) return;`.
+			case 0x31:
+			{
+				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				Label skip;
+				m.Tst(w0, 3); m.B(&skip, ne);
+				m.Mov(x16, reinterpret_cast<uint64_t>(&eeRead32_arm64)); m.Blr(x16);
+				m.Mov(x1, reinterpret_cast<uint64_t>(&fpuRegs)); m.Str(w0, MemOperand(x1, rt * 4));
+				m.Bind(&skip);
+				return true;
+			}
+			// SWC1 ft, off(base): write32(addr, fpr[ft].UL); misalign silently skipped.
+			case 0x39:
+			{
+				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				Label skip;
+				m.Tst(w0, 3); m.B(&skip, ne);
+				m.Mov(x1, reinterpret_cast<uint64_t>(&fpuRegs)); m.Ldr(w1, MemOperand(x1, rt * 4));
+				m.Mov(x16, reinterpret_cast<uint64_t>(&eeWrite32_arm64)); m.Blr(x16);
+				m.Bind(&skip);
+				return true;
+			}
 			default: return false;
 		}
 	}
@@ -238,11 +321,13 @@ namespace
 				default: return false;
 			}
 		}
+		if (op == 0x11) return Cop1RegSupported(insn);
 		switch (op)
 		{
 			case 0x09: case 0x19: case 0x0a: case 0x0b: case 0x0c: case 0x0d: case 0x0e: case 0x0f:
 			case 0x20: case 0x21: case 0x23: case 0x24: case 0x25: case 0x27: case 0x37:
-			case 0x28: case 0x29: case 0x2b: case 0x3f: return true;
+			case 0x28: case 0x29: case 0x2b: case 0x3f:
+			case 0x31: case 0x39: return true;
 			default: return false;
 		}
 	}
