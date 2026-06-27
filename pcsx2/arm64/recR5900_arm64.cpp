@@ -54,7 +54,16 @@ namespace
 	std::unordered_map<u32, BlockFn>          s_blocks;
 	std::unordered_map<u32, std::vector<u32>> s_page;
 
-	inline u32 Norm(u32 a) { return a & 0x1fffffff; }
+	// Direct-mapped block cache for the 32 MB EE RAM (the hot region): O(1) array
+	// index instead of a hash lookup per block. ROM/scratchpad fall back to the
+	// hash. (Foundation for cheaper block-ending; full block-linking is future.)
+	constexpr u32 kRamBytes = 0x02000000;
+	constexpr u32 kRamWords = kRamBytes >> 2;
+	BlockFn*      s_lut      = nullptr;
+
+	inline u32  Norm(u32 a)  { return a & 0x1fffffff; }
+	inline bool InRam(u32 np) { return np < kRamBytes; }
+	inline void LutClearAll() { if (s_lut) madvise(s_lut, (size_t)kRamWords * sizeof(BlockFn), MADV_DONTNEED); }
 
 	bool VixlEmitSelfTest()
 	{
@@ -189,6 +198,7 @@ namespace
 		{
 			s_blocks.clear();
 			s_page.clear();
+			LutClearAll();
 			s_code_pos = 0;
 		}
 
@@ -241,6 +251,7 @@ namespace
 		BlockFn fn = reinterpret_cast<BlockFn>(start);
 		s_blocks.emplace(pc, fn);
 		const u32 ns = Norm(pc), ne = Norm(p > pc ? p : pc + 4);
+		if (InRam(ns)) s_lut[ns >> 2] = fn;
 		for (u32 pg = ns >> kPageShift; pg <= (ne - 1) >> kPageShift; pg++)
 			s_page[pg].push_back(pc);
 		return fn;
@@ -248,6 +259,12 @@ namespace
 
 	inline BlockFn BlockForPC(u32 pc)
 	{
+		const u32 np = Norm(pc);
+		if (InRam(np))
+		{
+			BlockFn f = s_lut[np >> 2];
+			return f ? f : CompileBlock(pc);
+		}
 		auto it = s_blocks.find(pc);
 		return it != s_blocks.end() ? it->second : CompileBlock(pc);
 	}
@@ -262,14 +279,21 @@ void eeJitReserve_arm64(void)
 		                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		if (s_code == MAP_FAILED) s_code = nullptr;
 	}
-	s_ok = s_ok && (s_code != nullptr);
-	Console.WriteLn("arm64 EE rec (C.3-3): %s.", s_ok ? "native ALU+load/store JIT active" : "FAILED");
+	if (!s_lut)
+	{
+		s_lut = (BlockFn*)mmap(nullptr, (size_t)kRamWords * sizeof(BlockFn), PROT_READ | PROT_WRITE,
+		                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (s_lut == MAP_FAILED) s_lut = nullptr;
+	}
+	s_ok = s_ok && s_code && s_lut;
+	Console.WriteLn("arm64 EE rec (C.3-3): %s.", s_ok ? "native ALU+load/store JIT active (LUT dispatch)" : "FAILED");
 }
 
 void eeJitReset_arm64(void)
 {
 	s_blocks.clear();
 	s_page.clear();
+	LutClearAll();
 	s_code_pos = 0;
 }
 
@@ -285,7 +309,11 @@ void eeJitClear_arm64(u32 addr, u32 size)
 		if (it == s_page.end())
 			continue;
 		for (u32 spc : it->second)
+		{
 			s_blocks.erase(spc);
+			const u32 np = Norm(spc);
+			if (InRam(np)) s_lut[np >> 2] = nullptr;
+		}
 		s_page.erase(it);
 	}
 }
@@ -295,6 +323,7 @@ void eeJitShutdown_arm64(void)
 	s_blocks.clear();
 	s_page.clear();
 	if (s_code) { munmap(s_code, kCodeCacheSize); s_code = nullptr; }
+	if (s_lut) { munmap(s_lut, (size_t)kRamWords * sizeof(BlockFn)); s_lut = nullptr; }
 	s_code_pos = 0;
 }
 
