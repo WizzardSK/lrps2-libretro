@@ -192,6 +192,34 @@ namespace
 		}
 	}
 
+	// Block epilogue with tail-chaining: restore the frame, then dispatch directly
+	// to the next block (cpuRegs.pc) via the RAM LUT -- staying in JIT code instead
+	// of returning to the C++ GAME_RUNNING loop. On a LUT miss (uncompiled block or
+	// non-RAM pc) it returns to the dispatcher, which compiles it and re-enters.
+	// x30 (the original return address into eeJitRunBlock) propagates through the
+	// chain, so the final `ret` returns to the C++ caller.
+	void EmitChainEpilogue(MacroAssembler& m)
+	{
+		m.Ldp(x19, x30, MemOperand(sp, 0));
+		m.Add(sp, sp, 16);
+
+		m.Mov(x0, reinterpret_cast<uint64_t>(&cpuRegs.pc));
+		m.Ldr(w1, MemOperand(x0));          // pc
+		m.And(w2, w1, 0x1fffffff);          // np = pc & mirror mask
+		m.Mov(w3, kRamBytes);
+		Label ret_path;
+		m.Cmp(w2, w3);
+		m.B(&ret_path, hs);                 // not RAM -> return to dispatcher
+		m.Mov(x0, reinterpret_cast<uint64_t>(&s_lut));
+		m.Ldr(x0, MemOperand(x0));          // s_lut base
+		m.Lsr(w2, w2, 2);                   // idx = np >> 2
+		m.Ldr(x3, MemOperand(x0, w2, UXTW, 3)); // fn = s_lut[idx]
+		m.Cbz(x3, &ret_path);               // uncompiled -> return
+		m.Br(x3);                           // tail-jump to next block
+		m.Bind(&ret_path);
+		m.Ret();
+	}
+
 	BlockFn CompileBlock(u32 pc)
 	{
 		if (s_code_pos + 8192 > kCodeCacheSize)
@@ -239,9 +267,7 @@ namespace
 		// finish the basic block (branch + everything not translated) via interpreter
 		masm.Mov(x16, reinterpret_cast<uint64_t>(&eeRunBasicBlock_arm64));
 		masm.Blr(x16);
-		masm.Ldp(x19, x30, MemOperand(sp, 0));
-		masm.Add(sp, sp, 16);
-		masm.Ret();
+		EmitChainEpilogue(masm); // tail-chain to the next block instead of returning
 		masm.FinalizeCode();
 
 		const size_t sz = masm.GetSizeOfCodeGenerated();
@@ -286,7 +312,7 @@ void eeJitReserve_arm64(void)
 		if (s_lut == MAP_FAILED) s_lut = nullptr;
 	}
 	s_ok = s_ok && s_code && s_lut;
-	Console.WriteLn("arm64 EE rec (C.3-3): %s.", s_ok ? "native ALU+load/store JIT active (LUT dispatch)" : "FAILED");
+	Console.WriteLn("arm64 EE rec (C.3-6): %s.", s_ok ? "native ALU+mem JIT active (LUT + block-linking)" : "FAILED");
 }
 
 void eeJitReset_arm64(void)
