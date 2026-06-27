@@ -31,6 +31,12 @@ using namespace vixl::aarch64;
 
 extern "C" void eeRunBasicBlock_arm64(void); // Interpreter.cpp
 extern u32 cpuBlockCycles;                    // Interpreter.cpp
+// EE memory wrappers + misalign cancel (Interpreter.cpp), for native loads/stores.
+extern "C" u32  eeRead8_arm64(u32),  eeRead16_arm64(u32), eeRead32_arm64(u32);
+extern "C" u64  eeRead64_arm64(u32);
+extern "C" void eeWrite8_arm64(u32, u32),  eeWrite16_arm64(u32, u32);
+extern "C" void eeWrite32_arm64(u32, u32), eeWrite64_arm64(u32, u64);
+extern "C" void eeCancelInstruction_arm64(void);
 
 namespace
 {
@@ -131,6 +137,48 @@ namespace
 			case 0x0d: if (rt) { LoadGpr(m, x0, gpr, rs); m.Mov(x1, (uint64_t)zimm); m.Orr(x0, x0, x1); StoreGpr(m, x0, gpr, rt); } return true; // ORI
 			case 0x0e: if (rt) { LoadGpr(m, x0, gpr, rs); m.Mov(x1, (uint64_t)zimm); m.Eor(x0, x0, x1); StoreGpr(m, x0, gpr, rt); } return true; // XORI
 			case 0x0f: if (rt) { m.Mov(w0, zimm << 16); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rt); } return true; // LUI
+
+			// Loads (LB/LBU/LH/LHU/LW/LWU/LD). Address = rs.UL[0] + simm (32-bit).
+			// The interpreter cancels (fastjmp) on a misaligned LH/LW/LD, so do the
+			// same; reads run even when rt==0 (side effects). Memory goes through
+			// the EE vtlb wrappers. gpr (x19) is callee-saved across the calls.
+			case 0x20: case 0x24: case 0x21: case 0x25: case 0x23: case 0x27: case 0x37:
+			{
+				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				const u32 amask = (op == 0x37) ? 7 : (op == 0x23 || op == 0x27) ? 3 : (op == 0x21 || op == 0x25) ? 1 : 0;
+				if (amask) { Label ok; m.Tst(w0, amask); m.B(&ok, eq); m.Mov(x16, reinterpret_cast<uint64_t>(&eeCancelInstruction_arm64)); m.Blr(x16); m.Bind(&ok); }
+				uint64_t fn = (op == 0x37) ? reinterpret_cast<uint64_t>(&eeRead64_arm64)
+				            : (op == 0x23 || op == 0x27) ? reinterpret_cast<uint64_t>(&eeRead32_arm64)
+				            : (op == 0x21 || op == 0x25) ? reinterpret_cast<uint64_t>(&eeRead16_arm64)
+				            : reinterpret_cast<uint64_t>(&eeRead8_arm64);
+				m.Mov(x16, fn); m.Blr(x16); // result in x0 (u32 returns are zero-extended in x0)
+				if (rt)
+				{
+					switch (op)
+					{
+						case 0x20: m.Sxtb(x0, w0); break; // LB
+						case 0x21: m.Sxth(x0, w0); break; // LH
+						case 0x23: m.Sxtw(x0, w0); break; // LW
+						default: break;                   // LBU/LHU/LWU (zero-extended), LD (full 64)
+					}
+					StoreGpr(m, x0, gpr, rt);
+				}
+				return true;
+			}
+			// Stores (SB/SH/SW/SD).
+			case 0x28: case 0x29: case 0x2b: case 0x3f:
+			{
+				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				const u32 amask = (op == 0x3f) ? 7 : (op == 0x2b) ? 3 : (op == 0x29) ? 1 : 0;
+				if (amask) { Label ok; m.Tst(w0, amask); m.B(&ok, eq); m.Mov(x16, reinterpret_cast<uint64_t>(&eeCancelInstruction_arm64)); m.Blr(x16); m.Bind(&ok); }
+				LoadGpr(m, x1, gpr, rt); // value (low bits used by the wrapper)
+				uint64_t fn = (op == 0x3f) ? reinterpret_cast<uint64_t>(&eeWrite64_arm64)
+				            : (op == 0x2b) ? reinterpret_cast<uint64_t>(&eeWrite32_arm64)
+				            : (op == 0x29) ? reinterpret_cast<uint64_t>(&eeWrite16_arm64)
+				            : reinterpret_cast<uint64_t>(&eeWrite8_arm64);
+				m.Mov(x16, fn); m.Blr(x16);
+				return true;
+			}
 			default: return false;
 		}
 	}
@@ -215,7 +263,7 @@ void eeJitReserve_arm64(void)
 		if (s_code == MAP_FAILED) s_code = nullptr;
 	}
 	s_ok = s_ok && (s_code != nullptr);
-	Console.WriteLn("arm64 EE rec (C.3-2): %s.", s_ok ? "native integer-ALU JIT active" : "FAILED");
+	Console.WriteLn("arm64 EE rec (C.3-3): %s.", s_ok ? "native ALU+load/store JIT active" : "FAILED");
 }
 
 void eeJitReset_arm64(void)

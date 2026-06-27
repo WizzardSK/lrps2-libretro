@@ -579,6 +579,20 @@ void eeRecExecute_arm64(void)
 	g_ee_block_runner = &eeJitRunBlock_arm64;
 	eeExecuteLoop();
 }
+
+// Non-template EE memory wrappers + misalign cancel, called from the arm64 EE
+// JIT's natively-translated loads/stores (Phase C.3-3). Defined here so they see
+// Memory.h / Cpu. Cpu->CancelInstruction() fastjmps to intJmpBuf, which is safe
+// from JIT code (fastjmp restores sp and callee-saved regs).
+extern "C" u32  eeRead8_arm64 (u32 a) { return memRead8(a); }
+extern "C" u32  eeRead16_arm64(u32 a) { return memRead16(a); }
+extern "C" u32  eeRead32_arm64(u32 a) { return memRead32(a); }
+extern "C" u64  eeRead64_arm64(u32 a) { return memRead64(a); }
+extern "C" void eeWrite8_arm64 (u32 a, u32 v) { memWrite8(a, (u8)v); }
+extern "C" void eeWrite16_arm64(u32 a, u32 v) { memWrite16(a, (u16)v); }
+extern "C" void eeWrite32_arm64(u32 a, u32 v) { memWrite32(a, v); }
+extern "C" void eeWrite64_arm64(u32 a, u64 v) { memWrite64(a, v); }
+extern "C" void eeCancelInstruction_arm64(void) { Cpu->CancelInstruction(); }
 #endif
 
 static void intClear(u32 Addr, u32 Size) { }
