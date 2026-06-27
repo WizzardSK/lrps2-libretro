@@ -10,9 +10,10 @@
 // exact. The EE GPRs are 128-bit; integer ops touch only the low 64 bits
 // (GPR.r[i].UD[0] at byte offset i*16). 32-bit MIPS ops produce a sign-extended
 // 64-bit result; the D* forms are full 64-bit. Cycle accounting mirrors execI
-// (cpuBlockCycles += opcode.cycles * (2 - CP0.Config[18]); all translated ALU
-// ops use the Default 9-cycle cost). Self-modifying code -> granular per-page
-// (mirror-normalised) invalidation, as Cpu->Clear is called on EE writes.
+// (cpuBlockCycles += opcode.cycles * (2 - CP0.Config[18])), summed per block via
+// OpCycles() with the real per-class costs (Default 9, Branch 11, Mult 16, Div
+// 112). Self-modifying code -> granular per-page (mirror-normalised) invalidation,
+// as Cpu->Clear is called on EE writes.
 
 #include "common/Pcsx2Types.h"
 #include "R5900.h"
@@ -47,7 +48,6 @@ namespace
 	constexpr size_t kCodeCacheSize = 32 * 1024 * 1024;
 	constexpr int    kMaxInsns      = 64;
 	constexpr u32    kPageShift     = 12;
-	constexpr int    kEECycles      = 9; // Default cost; every ALU op we translate uses it
 
 	u8*    s_code     = nullptr;
 	size_t s_code_pos = 0;
@@ -265,6 +265,91 @@ namespace
 		m.Str(q0, MemOperand(gpr, rd * 16));
 	}
 
+	// ---- Integer mult/div + HI/LO moves (opcode 0x00) ----
+	// All bit-exact, side-effect-free integer ops on the low 32 bits, with the
+	// 64-bit HI/LO results stored sign-extended, matching the interpreter exactly
+	// (R5900OpcodeImpl.cpp MULT/MULTU/DIV/DIVU). HI/LO live right after the 32
+	// 128-bit GPRs: HI at byte offset 32*16, LO at 32*16+16 (low 64 bits used).
+	constexpr u32 kHI = 32 * 16;
+	constexpr u32 kLO = kHI + 16;
+
+	// Load the low 32 bits of a GPR into a w-register (r0 reads as zero).
+	inline void LoadW(MacroAssembler& m, const Register& wd, const Register& gpr, u32 idx)
+	{
+		if (idx == 0) m.Mov(wd, 0);
+		else          m.Ldr(wd, MemOperand(gpr, idx * 16));
+	}
+
+	void EmitMulDiv(MacroAssembler& m, const Register& gpr, u32 funct, u32 rs, u32 rt, u32 rd)
+	{
+		switch (funct)
+		{
+			case 0x10: if (rd) { m.Ldr(x0, MemOperand(gpr, kHI)); StoreGpr(m, x0, gpr, rd); } return; // MFHI
+			case 0x12: if (rd) { m.Ldr(x0, MemOperand(gpr, kLO)); StoreGpr(m, x0, gpr, rd); } return; // MFLO
+			case 0x11: LoadGpr(m, x0, gpr, rs); m.Str(x0, MemOperand(gpr, kHI)); return;              // MTHI
+			case 0x13: LoadGpr(m, x0, gpr, rs); m.Str(x0, MemOperand(gpr, kLO)); return;              // MTLO
+
+			case 0x18: // MULT (signed)
+			case 0x19: // MULTU (unsigned)
+			{
+				LoadW(m, w0, gpr, rs); LoadW(m, w1, gpr, rt);
+				if (funct == 0x18) m.Smull(x0, w0, w1); else m.Umull(x0, w0, w1);
+				m.Sxtw(x2, w0);                // LO = (s32)(res & 0xffffffff)
+				m.Lsr(x3, x0, 32); m.Sxtw(x3, w3); // HI = (s32)(res >> 32)
+				m.Str(x2, MemOperand(gpr, kLO));
+				m.Str(x3, MemOperand(gpr, kHI));
+				if (rd) StoreGpr(m, x2, gpr, rd); // rd = LO.UD[0]
+				return;
+			}
+			case 0x1a: // DIV (signed)
+			{
+				LoadW(m, w0, gpr, rs); LoadW(m, w1, gpr, rt);
+				Label zero, normal, store;
+				m.Cbz(w1, &zero);
+				m.Mov(w5, 0x80000000); m.Cmp(w0, w5); m.B(&normal, ne); // overflow: rs==INT_MIN
+				m.Cmn(w1, 1); m.B(&normal, ne);                         // && rt==-1
+				m.Mov(x2, (uint64_t)(int64_t)(s32)0x80000000); m.Mov(x3, 0); m.B(&store);
+				m.Bind(&normal);
+				m.Sdiv(w2, w0, w1); m.Msub(w4, w2, w1, w0);             // q, rem=rs-q*rt
+				m.Sxtw(x2, w2); m.Sxtw(x3, w4); m.B(&store);
+				m.Bind(&zero);                                          // div by 0
+				m.Mov(w6, 1); m.Mov(w7, -1); m.Cmp(w0, 0); m.Csel(w2, w6, w7, lt); // LO=(rs<0)?1:-1
+				m.Sxtw(x2, w2); m.Sxtw(x3, w0);                        // HI=sext(rs)
+				m.Bind(&store);
+				m.Str(x2, MemOperand(gpr, kLO)); m.Str(x3, MemOperand(gpr, kHI));
+				return;
+			}
+			case 0x1b: // DIVU (unsigned)
+			{
+				LoadW(m, w0, gpr, rs); LoadW(m, w1, gpr, rt);
+				Label zero, store;
+				m.Cbz(w1, &zero);
+				m.Udiv(w2, w0, w1); m.Msub(w4, w2, w1, w0);
+				m.Sxtw(x2, w2); m.Sxtw(x3, w4); m.B(&store);
+				m.Bind(&zero);
+				m.Mov(x2, (uint64_t)-1); m.Sxtw(x3, w0);              // LO=-1, HI=sext(rs)
+				m.Bind(&store);
+				m.Str(x2, MemOperand(gpr, kLO)); m.Str(x3, MemOperand(gpr, kHI));
+				return;
+			}
+		}
+	}
+
+	// Per-opcode cycle cost, mirroring R5900OpcodeTables.cpp: Default=9, Branch=11,
+	// Mult=2*8=16, Div=14*8=112. Used to accumulate cpuBlockCycles accurately
+	// (cpuBlockCycles += cost * (2 - CP0.Config[18]), summed over the block's ops).
+	int OpCycles(u32 insn)
+	{
+		const u32 op = insn >> 26, funct = insn & 0x3f;
+		if (op == 0x00)
+		{
+			if (funct == 0x18 || funct == 0x19) return 16;  // MULT/MULTU
+			if (funct == 0x1a || funct == 0x1b) return 112; // DIV/DIVU
+		}
+		if (op == 0x01 || op == 0x04 || op == 0x05 || op == 0x06 || op == 0x07) return 11; // Branch
+		return 9; // Default (incl. JR/JALR/J/JAL)
+	}
+
 	// Translate one simple integer ALU op (32- and 64-bit forms). Returns false,
 	// emitting nothing, for control flow / memory / FPU / MMI / anything else.
 	bool EmitSimple(MacroAssembler& m, const Register& gpr, u32 insn)
@@ -311,6 +396,10 @@ namespace
 					case 0x3c: if (rd) { LoadGpr(m, x0, gpr, rt); m.Lsl(x0, x0, sa + 32); StoreGpr(m, x0, gpr, rd); } return true; // DSLL32
 					case 0x3e: if (rd) { LoadGpr(m, x0, gpr, rt); m.Lsr(x0, x0, sa + 32); StoreGpr(m, x0, gpr, rd); } return true; // DSRL32
 					case 0x3f: if (rd) { LoadGpr(m, x0, gpr, rt); m.Asr(x0, x0, sa + 32); StoreGpr(m, x0, gpr, rd); } return true; // DSRA32
+					// HI/LO moves + integer mult/div (bit-exact, sign-extended results)
+					case 0x10: case 0x11: case 0x12: case 0x13: // MFHI/MTHI/MFLO/MTLO
+					case 0x18: case 0x19: case 0x1a: case 0x1b: // MULT/MULTU/DIV/DIVU
+						EmitMulDiv(m, gpr, funct, rs, rt, rd); return true;
 					default: return false;
 				}
 			case 0x09: if (rt) { LoadGpr(m, x0, gpr, rs); m.Mov(w1, (u32)simm); m.Add(w0, w0, w1); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rt); } return true; // ADDIU
@@ -445,7 +534,10 @@ namespace
 				case 0x21: case 0x23: case 0x24: case 0x25: case 0x26: case 0x27:
 				case 0x2a: case 0x2b: case 0x2c: case 0x2d:
 				case 0x14: case 0x16: case 0x17: case 0x38: case 0x3a: case 0x3b:
-				case 0x3c: case 0x3e: case 0x3f: return true;
+				case 0x3c: case 0x3e: case 0x3f:
+				case 0x10: case 0x11: case 0x12: case 0x13: // MFHI/MTHI/MFLO/MTLO
+				case 0x18: case 0x19: case 0x1a: case 0x1b: // MULT/MULTU/DIV/DIVU
+					return true;
 				default: return false;
 			}
 		}
@@ -461,11 +553,13 @@ namespace
 		}
 	}
 
-	void EmitCycleBookkeeping(MacroAssembler& m, int count)
+	// cyc = raw sum of the block's per-op cycle costs (see OpCycles); the
+	// (2 - CP0.Config[18]) factor is applied here, matching execI.
+	void EmitCycleBookkeeping(MacroAssembler& m, int cyc)
 	{
 		m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.CP0.n.Config));
 		m.Ldr(w1, MemOperand(x10));
-		m.Mov(w2, kEECycles * count); m.Mov(w3, kEECycles * count * 2);
+		m.Mov(w2, cyc); m.Mov(w3, cyc * 2);
 		m.Tst(w1, 1u << 18);
 		m.Csel(w2, w2, w3, ne);
 		m.Mov(x10, reinterpret_cast<uint64_t>(&cpuBlockCycles));
@@ -483,7 +577,7 @@ namespace
 	// delay slot runs only when taken; intEventTest() runs on both paths; not-taken
 	// continues at bpc+4. Likely branches / Goemon-HLE JAL / untranslatable delay
 	// slot -> false (interpreter finishes the basic block).
-	bool EmitBranch(MacroAssembler& m, const Register& gpr, u32 bpc, u32 insn, int n_leading)
+	bool EmitBranch(MacroAssembler& m, const Register& gpr, u32 bpc, u32 insn, int cyc_leading)
 	{
 		const u32 op = insn >> 26, rs = (insn >> 21) & 31, rt = (insn >> 16) & 31, funct = insn & 0x3f;
 		const int32_t simm = (int16_t)(insn & 0xffff);
@@ -518,6 +612,11 @@ namespace
 		if (!IsTranslatable(ds))
 			return false;
 
+		// Taken/uncond runs the branch + its delay slot inline; not-taken runs only
+		// the branch (the delay slot at bpc+4 is executed by the continuation).
+		const int cyc_taken = cyc_leading + OpCycles(insn) + OpCycles(ds);
+		const int cyc_nt    = cyc_leading + OpCycles(insn);
+
 		const uint64_t evt = reinterpret_cast<uint64_t>(&eeEventTest_arm64);
 		const uint64_t upd = reinterpret_cast<uint64_t>(&eeUpdateCycles_arm64);
 		const bool nt_evt = (op == 0x04 || op == 0x05); // only BEQ/BNE event-test on not-taken
@@ -528,7 +627,7 @@ namespace
 		if (uncond)
 		{
 			EmitSimple(m, gpr, ds);
-			EmitCycleBookkeeping(m, n_leading + 2);
+			EmitCycleBookkeeping(m, cyc_taken);
 			if (is_jr) StorePC(m, w20); else StorePCImm(m, tconst);
 			m.Mov(x16, upd); m.Blr(x16);
 			m.Mov(x16, evt); m.Blr(x16);
@@ -541,13 +640,13 @@ namespace
 		Label not_taken;
 		m.B(&not_taken, InvertCondition(cond));
 		EmitSimple(m, gpr, ds);
-		EmitCycleBookkeeping(m, n_leading + 2);
+		EmitCycleBookkeeping(m, cyc_taken);
 		StorePCImm(m, tconst);
 		m.Mov(x16, upd); m.Blr(x16);
 		m.Mov(x16, evt); m.Blr(x16);
 		EmitChainEpilogue(m);
 		m.Bind(&not_taken);
-		EmitCycleBookkeeping(m, n_leading + 1);
+		EmitCycleBookkeeping(m, cyc_nt);
 		StorePCImm(m, bpc + 4);
 		if (nt_evt) { m.Mov(x16, evt); m.Blr(x16); }
 		EmitChainEpilogue(m);
@@ -575,12 +674,13 @@ namespace
 
 		u32 p = pc;
 		int n = 0;
+		int cyc = 0; // raw sum of the leading translated ops' cycle costs
 		bool done = false;
 		while (n < kMaxInsns)
 		{
 			const u32 insn = memRead32(p);
-			if (EmitSimple(masm, gpr, insn)) { p += 4; n++; continue; }
-			if (EmitBranch(masm, gpr, p, insn, n)) { done = true; break; } // emits bookkeeping + pc + eventtest + chain epilogue
+			if (EmitSimple(masm, gpr, insn)) { cyc += OpCycles(insn); p += 4; n++; continue; }
+			if (EmitBranch(masm, gpr, p, insn, cyc)) { done = true; break; } // emits bookkeeping + pc + eventtest + chain epilogue
 			break; // unsupported -> interpreter finishes the basic block
 		}
 
@@ -590,7 +690,7 @@ namespace
 			{
 				masm.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.pc));
 				masm.Ldr(w0, MemOperand(x10)); masm.Add(w0, w0, 4 * n); masm.Str(w0, MemOperand(x10));
-				EmitCycleBookkeeping(masm, n);
+				EmitCycleBookkeeping(masm, cyc);
 			}
 			masm.Mov(x16, reinterpret_cast<uint64_t>(&eeRunBasicBlock_arm64));
 			masm.Blr(x16);
@@ -641,7 +741,7 @@ void eeJitReserve_arm64(void)
 		if (s_lut == MAP_FAILED) s_lut = nullptr;
 	}
 	s_ok = s_ok && s_code && s_lut;
-	Console.WriteLn("arm64 EE rec (C.3-7): %s.", s_ok ? "native ALU+mem+branch JIT active (block-linking)" : "FAILED");
+	Console.WriteLn("arm64 EE rec (C.7): %s.", s_ok ? "native ALU+mem+branch+FPU-mov+MMI+muldiv JIT (block-linking)" : "FAILED");
 }
 
 void eeJitReset_arm64(void)
