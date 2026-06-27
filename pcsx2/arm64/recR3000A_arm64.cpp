@@ -50,6 +50,15 @@ namespace
 
 	inline u32 Norm(u32 a) { return a & 0x1fffffff; }
 
+	// Direct-mapped block cache for the 2 MB IOP RAM (hot region) + asm block-linking
+	// (block-to-block tail-chaining), mirroring the EE recompiler. ROM/scratchpad
+	// fall back to the hash.
+	constexpr u32 kRamBytes = 0x00200000;
+	constexpr u32 kRamWords = kRamBytes >> 2;
+	BlockFn*      s_lut      = nullptr;
+	inline bool InRam(u32 np) { return np < kRamBytes; }
+	inline void LutClearAll() { if (s_lut) madvise(s_lut, (size_t)kRamWords * sizeof(BlockFn), MADV_DONTNEED); }
+
 	bool VixlEmitSelfTest()
 	{
 		MacroAssembler masm;
@@ -187,11 +196,33 @@ namespace
 		m.Ldr(w0, MemOperand(x10)); m.Sub(w0, w0, w2); m.Str(w0, MemOperand(x10));
 	}
 
+	// Restore the frame, then tail-chain straight to the next block via the RAM LUT
+	// (staying in JIT code). IOP has a cycle budget, so only chain while
+	// iopCycleEE > 0; otherwise (budget spent / LUT miss / non-RAM pc) return to
+	// recExecuteBlock. x30 propagates so the final ret unwinds to the dispatcher.
 	void EmitEpilogue(MacroAssembler& m)
 	{
 		m.Ldp(x19, x20, MemOperand(sp, 0));
 		m.Ldp(x21, x30, MemOperand(sp, 16));
 		m.Add(sp, sp, 32);
+		Label ret_path;
+		m.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.iopCycleEE));
+		m.Ldr(w0, MemOperand(x10));
+		m.Cmp(w0, 0);
+		m.B(&ret_path, le);                  // budget exhausted -> return to dispatcher
+		m.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.pc));
+		m.Ldr(w1, MemOperand(x10));
+		m.And(w2, w1, 0x1fffffff);
+		m.Mov(w3, kRamBytes);
+		m.Cmp(w2, w3);
+		m.B(&ret_path, hs);                  // not RAM -> return
+		m.Mov(x0, reinterpret_cast<uint64_t>(&s_lut));
+		m.Ldr(x0, MemOperand(x0));
+		m.Lsr(w2, w2, 2);
+		m.Ldr(x3, MemOperand(x0, w2, UXTW, 3));
+		m.Cbz(x3, &ret_path);
+		m.Br(x3);
+		m.Bind(&ret_path);
 		m.Ret();
 	}
 
@@ -275,6 +306,7 @@ namespace
 		{
 			s_blocks.clear();
 			s_page.clear();
+			LutClearAll();
 			s_code_pos = 0;
 		}
 
@@ -319,6 +351,7 @@ namespace
 		BlockFn fn = reinterpret_cast<BlockFn>(start);
 		s_blocks.emplace(pc, fn);
 		const u32 ns = Norm(pc), ne = Norm(p > pc ? p : pc + 4);
+		if (InRam(ns)) s_lut[ns >> 2] = fn;
 		for (u32 pg = ns >> kPageShift; pg <= (ne - 1) >> kPageShift; pg++)
 			s_page[pg].push_back(pc);
 		return fn;
@@ -326,6 +359,12 @@ namespace
 
 	inline BlockFn BlockForPC(u32 pc)
 	{
+		const u32 np = Norm(pc);
+		if (InRam(np))
+		{
+			BlockFn f = s_lut[np >> 2];
+			return f ? f : CompileBlock(pc);
+		}
 		auto it = s_blocks.find(pc);
 		return it != s_blocks.end() ? it->second : CompileBlock(pc);
 	}
@@ -340,7 +379,13 @@ static void recReserve(void)
 		                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		if (s_code == MAP_FAILED) s_code = nullptr;
 	}
-	s_ok = s_ok && (s_code != nullptr);
+	if (!s_lut)
+	{
+		s_lut = (BlockFn*)mmap(nullptr, (size_t)kRamWords * sizeof(BlockFn), PROT_READ | PROT_WRITE,
+		                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (s_lut == MAP_FAILED) s_lut = nullptr;
+	}
+	s_ok = s_ok && s_code && s_lut;
 	Console.WriteLn("arm64 IOP rec (C.2b-4): %s.", s_ok ? "native ALU+mem+branch JIT active" : "FAILED -> interpreter fallback");
 }
 
@@ -348,6 +393,7 @@ static void recResetIOP(void)
 {
 	s_blocks.clear();
 	s_page.clear();
+	LutClearAll();
 	s_code_pos = 0;
 }
 
@@ -363,7 +409,11 @@ static void recClearIOP(u32 addr, u32 size)
 		if (it == s_page.end())
 			continue;
 		for (u32 spc : it->second)
+		{
 			s_blocks.erase(spc);
+			const u32 np = Norm(spc);
+			if (InRam(np)) s_lut[np >> 2] = nullptr;
+		}
 		s_page.erase(it);
 	}
 }
