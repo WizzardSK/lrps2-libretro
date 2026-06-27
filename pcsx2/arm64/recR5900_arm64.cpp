@@ -143,6 +143,128 @@ namespace
 		m.Str(w0, MemOperand(x1, 252));
 	}
 
+	// ---- MMI (opcode 0x1C): 128-bit parallel integer ops -> ARM NEON ----
+	// The EE GPRs are 128 bits; MMI does packed byte/half/word arithmetic over the
+	// whole register, which maps 1:1 onto AArch64 NEON Q-registers. We translate
+	// only the bit-exact, side-effect-free ops (parallel add/sub incl. saturating,
+	// logical, signed compares, signed max/min, and the EXTL/EXTU interleaves).
+	// PMFHL/PMTHL, the HI/LO multiply-divide ops, pack, variable shifts, PMADD,
+	// PCPY*, etc. stay with the interpreter.
+	enum { M_ADD, M_SUB, M_SQADD, M_UQADD, M_SQSUB, M_UQSUB, M_AND, M_ORR, M_EOR,
+	       M_NOR, M_CMGT, M_CMEQ, M_SMAX, M_SMIN, M_ZIP1, M_ZIP2 };
+
+	// Decode an MMI instruction to (action, lane fmt: 0=16B,1=8H,2=4S). Returns the
+	// action or -1 if not natively supported. funct selects the sub-class
+	// (MMI0=0x08, MMI1=0x28, MMI2=0x09, MMI3=0x29); (insn>>6)&0x1f the op.
+	int MmiAction(u32 insn, int* fmt)
+	{
+		const u32 funct = insn & 0x3f;
+		const u32 sub   = (insn >> 6) & 0x1f;
+		switch (funct)
+		{
+			case 0x08: // MMI0
+				switch (sub)
+				{
+					case 0x00: *fmt = 2; return M_ADD;   // PADDW
+					case 0x01: *fmt = 2; return M_SUB;   // PSUBW
+					case 0x02: *fmt = 2; return M_CMGT;  // PCGTW
+					case 0x03: *fmt = 2; return M_SMAX;  // PMAXW
+					case 0x04: *fmt = 1; return M_ADD;   // PADDH
+					case 0x05: *fmt = 1; return M_SUB;   // PSUBH
+					case 0x06: *fmt = 1; return M_CMGT;  // PCGTH
+					case 0x07: *fmt = 1; return M_SMAX;  // PMAXH
+					case 0x08: *fmt = 0; return M_ADD;   // PADDB
+					case 0x09: *fmt = 0; return M_SUB;   // PSUBB
+					case 0x0a: *fmt = 0; return M_CMGT;  // PCGTB
+					case 0x10: *fmt = 2; return M_SQADD; // PADDSW
+					case 0x11: *fmt = 2; return M_SQSUB; // PSUBSW
+					case 0x12: *fmt = 2; return M_ZIP1;  // PEXTLW
+					case 0x14: *fmt = 1; return M_SQADD; // PADDSH
+					case 0x15: *fmt = 1; return M_SQSUB; // PSUBSH
+					case 0x16: *fmt = 1; return M_ZIP1;  // PEXTLH
+					case 0x18: *fmt = 0; return M_SQADD; // PADDSB
+					case 0x19: *fmt = 0; return M_SQSUB; // PSUBSB
+					case 0x1a: *fmt = 0; return M_ZIP1;  // PEXTLB
+				}
+				return -1;
+			case 0x28: // MMI1
+				switch (sub)
+				{
+					case 0x02: *fmt = 2; return M_CMEQ;  // PCEQW
+					case 0x03: *fmt = 2; return M_SMIN;  // PMINW
+					case 0x06: *fmt = 1; return M_CMEQ;  // PCEQH
+					case 0x07: *fmt = 1; return M_SMIN;  // PMINH
+					case 0x0a: *fmt = 0; return M_CMEQ;  // PCEQB
+					case 0x10: *fmt = 2; return M_UQADD; // PADDUW
+					case 0x11: *fmt = 2; return M_UQSUB; // PSUBUW
+					case 0x12: *fmt = 2; return M_ZIP2;  // PEXTUW
+					case 0x14: *fmt = 1; return M_UQADD; // PADDUH
+					case 0x15: *fmt = 1; return M_UQSUB; // PSUBUH
+					case 0x16: *fmt = 1; return M_ZIP2;  // PEXTUH
+					case 0x18: *fmt = 0; return M_UQADD; // PADDUB
+					case 0x19: *fmt = 0; return M_UQSUB; // PSUBUB
+					case 0x1a: *fmt = 0; return M_ZIP2;  // PEXTUB
+				}
+				return -1;
+			case 0x09: // MMI2
+				if (sub == 0x12) { *fmt = 0; return M_AND; } // PAND
+				if (sub == 0x13) { *fmt = 0; return M_EOR; } // PXOR
+				return -1;
+			case 0x29: // MMI3
+				if (sub == 0x12) { *fmt = 0; return M_ORR; } // POR
+				if (sub == 0x13) { *fmt = 0; return M_NOR; } // PNOR
+				return -1;
+		}
+		return -1;
+	}
+
+	bool MmiSupported(u32 insn) { int f; return MmiAction(insn, &f) >= 0; }
+
+	// Load a full 128-bit GPR into a NEON Q-register (r0 reads as all-zero).
+	void LoadQ(MacroAssembler& m, const VRegister& q, const Register& gpr, u32 idx)
+	{
+		if (idx == 0) m.Movi(q.V2D(), (uint64_t)0);
+		else          m.Ldr(q, MemOperand(gpr, idx * 16));
+	}
+
+	void EmitMmi(MacroAssembler& m, const Register& gpr, u32 insn)
+	{
+		int fmt;
+		const int act = MmiAction(insn, &fmt);
+		const u32 rd = (insn >> 11) & 31, rs = (insn >> 21) & 31, rt = (insn >> 16) & 31;
+		if (!rd) return; // result discarded (r0 stays zero)
+
+		LoadQ(m, q1, gpr, rs); // rs -> v1
+		LoadQ(m, q2, gpr, rt); // rt -> v2
+		VRegister d, n, o;     // n = rs(v1), o = rt(v2)
+		switch (fmt)
+		{
+			case 0:  d = v0.V16B(); n = v1.V16B(); o = v2.V16B(); break;
+			case 1:  d = v0.V8H();  n = v1.V8H();  o = v2.V8H();  break;
+			default: d = v0.V4S();  n = v1.V4S();  o = v2.V4S();  break;
+		}
+		switch (act)
+		{
+			case M_ADD:   m.Add(d, n, o);   break;
+			case M_SUB:   m.Sub(d, n, o);   break;
+			case M_SQADD: m.Sqadd(d, n, o); break;
+			case M_UQADD: m.Uqadd(d, n, o); break;
+			case M_SQSUB: m.Sqsub(d, n, o); break;
+			case M_UQSUB: m.Uqsub(d, n, o); break;
+			case M_AND:   m.And(d, n, o);   break;
+			case M_ORR:   m.Orr(d, n, o);   break;
+			case M_EOR:   m.Eor(d, n, o);   break;
+			case M_NOR:   m.Orr(d, n, o); m.Mvn(d, d); break;
+			case M_CMGT:  m.Cmgt(d, n, o);  break;
+			case M_CMEQ:  m.Cmeq(d, n, o);  break;
+			case M_SMAX:  m.Smax(d, n, o);  break;
+			case M_SMIN:  m.Smin(d, n, o);  break;
+			case M_ZIP1:  m.Zip1(d, o, n);  break; // PEXTL: interleave rt then rs
+			case M_ZIP2:  m.Zip2(d, o, n);  break; // PEXTU
+		}
+		m.Str(q0, MemOperand(gpr, rd * 16));
+	}
+
 	// Translate one simple integer ALU op (32- and 64-bit forms). Returns false,
 	// emitting nothing, for control flow / memory / FPU / MMI / anything else.
 	bool EmitSimple(MacroAssembler& m, const Register& gpr, u32 insn)
@@ -249,6 +371,12 @@ namespace
 				EmitCop1Reg(m, gpr, insn);
 				return true;
 
+			// MMI (128-bit parallel integer) -> NEON, for the bit-exact subset.
+			case 0x1c:
+				if (!MmiSupported(insn)) return false;
+				EmitMmi(m, gpr, insn);
+				return true;
+
 			// LWC1 ft, off(base): fpr[ft].UL = read32(addr). Unlike integer LW, a
 			// misaligned address is *silently skipped* (no exception/cancel) -- match
 			// the interpreter's `if (addr & 3) return;`.
@@ -322,6 +450,7 @@ namespace
 			}
 		}
 		if (op == 0x11) return Cop1RegSupported(insn);
+		if (op == 0x1c) return MmiSupported(insn);
 		switch (op)
 		{
 			case 0x09: case 0x19: case 0x0a: case 0x0b: case 0x0c: case 0x0d: case 0x0e: case 0x0f:
