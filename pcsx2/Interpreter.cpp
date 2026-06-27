@@ -593,6 +593,12 @@ extern "C" void eeWrite16_arm64(u32 a, u32 v) { memWrite16(a, (u16)v); }
 extern "C" void eeWrite32_arm64(u32 a, u32 v) { memWrite32(a, v); }
 extern "C" void eeWrite64_arm64(u32 a, u64 v) { memWrite64(a, v); }
 extern "C" void eeCancelInstruction_arm64(void) { Cpu->CancelInstruction(); }
+// EE event test, called by the JIT after BEQ/BNE not-taken and (with the cycle
+// update) after every taken/unconditional branch -- matching doBranch() and the
+// interpreter branch handlers. intUpdateCPUCycles() flushes cpuBlockCycles into
+// cpuRegs.cycle so events actually fire (without it the JIT livelocks).
+extern "C" void eeEventTest_arm64(void)   { intEventTest(); }
+extern "C" void eeUpdateCycles_arm64(void){ intUpdateCPUCycles(); }
 #endif
 
 static void intClear(u32 Addr, u32 Size) { }

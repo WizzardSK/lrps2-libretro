@@ -37,6 +37,8 @@ extern "C" u64  eeRead64_arm64(u32);
 extern "C" void eeWrite8_arm64(u32, u32),  eeWrite16_arm64(u32, u32);
 extern "C" void eeWrite32_arm64(u32, u32), eeWrite64_arm64(u32, u64);
 extern "C" void eeCancelInstruction_arm64(void);
+extern "C" void eeEventTest_arm64(void);
+extern "C" void eeUpdateCycles_arm64(void);
 
 namespace
 {
@@ -200,8 +202,9 @@ namespace
 	// chain, so the final `ret` returns to the C++ caller.
 	void EmitChainEpilogue(MacroAssembler& m)
 	{
-		m.Ldp(x19, x30, MemOperand(sp, 0));
-		m.Add(sp, sp, 16);
+		m.Ldp(x19, x20, MemOperand(sp, 0));
+		m.Ldp(x21, x30, MemOperand(sp, 16));
+		m.Add(sp, sp, 32);
 
 		m.Mov(x0, reinterpret_cast<uint64_t>(&cpuRegs.pc));
 		m.Ldr(w1, MemOperand(x0));          // pc
@@ -220,6 +223,123 @@ namespace
 		m.Ret();
 	}
 
+	bool IsTranslatable(u32 insn)
+	{
+		const u32 op = insn >> 26, funct = insn & 0x3f;
+		if (op == 0x00)
+		{
+			switch (funct)
+			{
+				case 0x00: case 0x02: case 0x03: case 0x04: case 0x06: case 0x07:
+				case 0x21: case 0x23: case 0x24: case 0x25: case 0x26: case 0x27:
+				case 0x2a: case 0x2b: case 0x2c: case 0x2d:
+				case 0x14: case 0x16: case 0x17: case 0x38: case 0x3a: case 0x3b:
+				case 0x3c: case 0x3e: case 0x3f: return true;
+				default: return false;
+			}
+		}
+		switch (op)
+		{
+			case 0x09: case 0x19: case 0x0a: case 0x0b: case 0x0c: case 0x0d: case 0x0e: case 0x0f:
+			case 0x20: case 0x21: case 0x23: case 0x24: case 0x25: case 0x27: case 0x37:
+			case 0x28: case 0x29: case 0x2b: case 0x3f: return true;
+			default: return false;
+		}
+	}
+
+	void EmitCycleBookkeeping(MacroAssembler& m, int count)
+	{
+		m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.CP0.n.Config));
+		m.Ldr(w1, MemOperand(x10));
+		m.Mov(w2, kEECycles * count); m.Mov(w3, kEECycles * count * 2);
+		m.Tst(w1, 1u << 18);
+		m.Csel(w2, w2, w3, ne);
+		m.Mov(x10, reinterpret_cast<uint64_t>(&cpuBlockCycles));
+		m.Ldr(w0, MemOperand(x10)); m.Add(w0, w0, w2); m.Str(w0, MemOperand(x10));
+	}
+
+	inline void StorePC(MacroAssembler& m, const Register& wsrc)
+	{
+		m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.pc));
+		m.Str(wsrc, MemOperand(x10));
+	}
+	inline void StorePCImm(MacroAssembler& m, u32 v) { m.Mov(w0, v); StorePC(m, w0); }
+
+	// Translate a branch/jump (ends the block via the chaining epilogue). EE: the
+	// delay slot runs only when taken; intEventTest() runs on both paths; not-taken
+	// continues at bpc+4. Likely branches / Goemon-HLE JAL / untranslatable delay
+	// slot -> false (interpreter finishes the basic block).
+	bool EmitBranch(MacroAssembler& m, const Register& gpr, u32 bpc, u32 insn, int n_leading)
+	{
+		const u32 op = insn >> 26, rs = (insn >> 21) & 31, rt = (insn >> 16) & 31, funct = insn & 0x3f;
+		const int32_t simm = (int16_t)(insn & 0xffff);
+
+		bool uncond = false, is_jr = false, two = false, one = false;
+		int  link = -1;
+		Condition cond = al;
+		u32  tconst = 0;
+		const u32 jtarget = (((bpc + 4) & 0xf0000000) | ((insn & 0x3ffffff) << 2));
+
+		if      (op == 0x00 && funct == 0x08) { uncond = true; is_jr = true; }
+		else if (op == 0x00 && funct == 0x09) { uncond = true; is_jr = true; link = (int)((insn >> 11) & 31); }
+		else if (op == 0x02) { uncond = true; tconst = jtarget; }
+		else if (op == 0x03) { uncond = true; link = 31; tconst = jtarget;
+			if (jtarget == 0x3563b8 || jtarget == 0x35d628 || jtarget == 0x35c118) return false; }
+		else if (op == 0x04) { two = true; cond = eq; tconst = bpc + 4 + simm * 4; }
+		else if (op == 0x05) { two = true; cond = ne; tconst = bpc + 4 + simm * 4; }
+		else if (op == 0x06) { one = true; cond = le; tconst = bpc + 4 + simm * 4; }
+		else if (op == 0x07) { one = true; cond = gt; tconst = bpc + 4 + simm * 4; }
+		else if (op == 0x01)
+		{
+			const u32 t = bpc + 4 + simm * 4;
+			if      (rt == 0x00) { one = true; cond = lt; tconst = t; }
+			else if (rt == 0x01) { one = true; cond = ge; tconst = t; }
+			else if (rt == 0x10) { one = true; cond = lt; tconst = t; link = 31; }
+			else if (rt == 0x11) { one = true; cond = ge; tconst = t; link = 31; }
+			else return false;
+		}
+		else return false;
+
+		const u32 ds = memRead32(bpc + 4);
+		if (!IsTranslatable(ds))
+			return false;
+
+		const uint64_t evt = reinterpret_cast<uint64_t>(&eeEventTest_arm64);
+		const uint64_t upd = reinterpret_cast<uint64_t>(&eeUpdateCycles_arm64);
+		const bool nt_evt = (op == 0x04 || op == 0x05); // only BEQ/BNE event-test on not-taken
+
+		if (link > 0) { m.Mov(w0, bpc + 8); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, (u32)link); }
+		if (is_jr) LoadGpr(m, x20, gpr, rs);
+
+		if (uncond)
+		{
+			EmitSimple(m, gpr, ds);
+			EmitCycleBookkeeping(m, n_leading + 2);
+			if (is_jr) StorePC(m, w20); else StorePCImm(m, tconst);
+			m.Mov(x16, upd); m.Blr(x16);
+			m.Mov(x16, evt); m.Blr(x16);
+			EmitChainEpilogue(m);
+			return true;
+		}
+
+		LoadGpr(m, x0, gpr, rs);
+		if (two) { LoadGpr(m, x1, gpr, rt); m.Cmp(x0, x1); } else m.Cmp(x0, 0);
+		Label not_taken;
+		m.B(&not_taken, InvertCondition(cond));
+		EmitSimple(m, gpr, ds);
+		EmitCycleBookkeeping(m, n_leading + 2);
+		StorePCImm(m, tconst);
+		m.Mov(x16, upd); m.Blr(x16);
+		m.Mov(x16, evt); m.Blr(x16);
+		EmitChainEpilogue(m);
+		m.Bind(&not_taken);
+		EmitCycleBookkeeping(m, n_leading + 1);
+		StorePCImm(m, bpc + 4);
+		if (nt_evt) { m.Mov(x16, evt); m.Blr(x16); }
+		EmitChainEpilogue(m);
+		return true;
+	}
+
 	BlockFn CompileBlock(u32 pc)
 	{
 		if (s_code_pos + 8192 > kCodeCacheSize)
@@ -234,40 +354,35 @@ namespace
 		MacroAssembler masm(start, kCodeCacheSize - s_code_pos, PositionDependentCode);
 
 		const Register gpr = x19;
-		masm.Sub(sp, sp, 16);
-		masm.Stp(x19, x30, MemOperand(sp, 0));
+		masm.Sub(sp, sp, 32);
+		masm.Stp(x19, x20, MemOperand(sp, 0));
+		masm.Stp(x21, x30, MemOperand(sp, 16));
 		masm.Mov(gpr, reinterpret_cast<uint64_t>(&cpuRegs.GPR.r[0]));
 
 		u32 p = pc;
 		int n = 0;
+		bool done = false;
 		while (n < kMaxInsns)
 		{
 			const u32 insn = memRead32(p);
-			if (!EmitSimple(masm, gpr, insn))
-				break;
-			p += 4;
-			n++;
+			if (EmitSimple(masm, gpr, insn)) { p += 4; n++; continue; }
+			if (EmitBranch(masm, gpr, p, insn, n)) { done = true; break; } // emits bookkeeping + pc + eventtest + chain epilogue
+			break; // unsupported -> interpreter finishes the basic block
 		}
 
-		if (n > 0)
+		if (!done)
 		{
-			// cpuRegs.pc += 4n
-			masm.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.pc));
-			masm.Ldr(w0, MemOperand(x10)); masm.Add(w0, w0, 4 * n); masm.Str(w0, MemOperand(x10));
-			// cpuBlockCycles += 9n * (2 - CP0.Config[18])  ->  9n if bit set else 18n
-			masm.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.CP0.n.Config));
-			masm.Ldr(w1, MemOperand(x10));
-			masm.Mov(w2, kEECycles * n); masm.Mov(w3, kEECycles * n * 2);
-			masm.Tst(w1, 1u << 18);
-			masm.Csel(w2, w2, w3, ne);
-			masm.Mov(x10, reinterpret_cast<uint64_t>(&cpuBlockCycles));
-			masm.Ldr(w0, MemOperand(x10)); masm.Add(w0, w0, w2); masm.Str(w0, MemOperand(x10));
+			if (n > 0)
+			{
+				masm.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.pc));
+				masm.Ldr(w0, MemOperand(x10)); masm.Add(w0, w0, 4 * n); masm.Str(w0, MemOperand(x10));
+				EmitCycleBookkeeping(masm, n);
+			}
+			masm.Mov(x16, reinterpret_cast<uint64_t>(&eeRunBasicBlock_arm64));
+			masm.Blr(x16);
+			EmitChainEpilogue(masm);
 		}
 
-		// finish the basic block (branch + everything not translated) via interpreter
-		masm.Mov(x16, reinterpret_cast<uint64_t>(&eeRunBasicBlock_arm64));
-		masm.Blr(x16);
-		EmitChainEpilogue(masm); // tail-chain to the next block instead of returning
 		masm.FinalizeCode();
 
 		const size_t sz = masm.GetSizeOfCodeGenerated();
@@ -312,7 +427,7 @@ void eeJitReserve_arm64(void)
 		if (s_lut == MAP_FAILED) s_lut = nullptr;
 	}
 	s_ok = s_ok && s_code && s_lut;
-	Console.WriteLn("arm64 EE rec (C.3-6): %s.", s_ok ? "native ALU+mem JIT active (LUT + block-linking)" : "FAILED");
+	Console.WriteLn("arm64 EE rec (C.3-7): %s.", s_ok ? "native ALU+mem+branch JIT active (block-linking)" : "FAILED");
 }
 
 void eeJitReset_arm64(void)
