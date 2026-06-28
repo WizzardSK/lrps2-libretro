@@ -359,7 +359,7 @@ namespace
 	// the interpreter, to bisect which native EE JIT feature breaks MMX7's
 	// post-logo progression. Read once. Mirrored in IsTranslatable so the block
 	// builder and delay-slot handling stay consistent with EmitSimple.
-	struct EeDiagFlags { int no_mmi, no_muldiv, no_cop1, no_mem, no_load, no_store, no_branch; };
+	struct EeDiagFlags { int no_mmi, no_muldiv, no_cop1, no_mem, no_load, no_store, no_branch, no_ld64; };
 	const EeDiagFlags& eeDiag()
 	{
 		static EeDiagFlags f = {
@@ -370,6 +370,7 @@ namespace
 			(getenv("LRPS2_NO_EE_MEM") || getenv("LRPS2_NO_EE_LOAD"))  ? 1 : 0,
 			(getenv("LRPS2_NO_EE_MEM") || getenv("LRPS2_NO_EE_STORE")) ? 1 : 0,
 			getenv("LRPS2_NO_EE_BRANCH") ? 1 : 0,
+			getenv("LRPS2_NO_EE_LD64")   ? 1 : 0,
 		};
 		return f;
 	}
@@ -388,6 +389,7 @@ namespace
 		const int no_mmi = eeDiag().no_mmi, no_muldiv = eeDiag().no_muldiv;
 		const int no_cop1 = eeDiag().no_cop1;
 		const int no_load = eeDiag().no_load, no_store = eeDiag().no_store;
+		const int no_ld64 = eeDiag().no_ld64;
 
 		switch (op)
 		{
@@ -446,7 +448,7 @@ namespace
 			// the EE vtlb wrappers. gpr (x19) is callee-saved across the calls.
 			case 0x20: case 0x24: case 0x21: case 0x25: case 0x23: case 0x27: case 0x37:
 			{
-				if (no_load) return false;
+				if (no_load || (no_ld64 && op == 0x37)) return false;
 				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
 				const u32 amask = (op == 0x37) ? 7 : (op == 0x23 || op == 0x27) ? 3 : (op == 0x21 || op == 0x25) ? 1 : 0;
 				if (amask) { Label ok; m.Tst(w0, amask); m.B(&ok, eq); m.Mov(x16, reinterpret_cast<uint64_t>(&eeCancelInstruction_arm64)); m.Blr(x16); m.Bind(&ok); }
@@ -471,7 +473,7 @@ namespace
 			// Stores (SB/SH/SW/SD).
 			case 0x28: case 0x29: case 0x2b: case 0x3f:
 			{
-				if (no_store) return false;
+				if (no_store || (no_ld64 && op == 0x3f)) return false;
 				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
 				const u32 amask = (op == 0x3f) ? 7 : (op == 0x2b) ? 3 : (op == 0x29) ? 1 : 0;
 				if (amask) { Label ok; m.Tst(w0, amask); m.B(&ok, eq); m.Mov(x16, reinterpret_cast<uint64_t>(&eeCancelInstruction_arm64)); m.Blr(x16); m.Bind(&ok); }
@@ -585,10 +587,12 @@ namespace
 		{
 			case 0x09: case 0x19: case 0x0a: case 0x0b: case 0x0c: case 0x0d: case 0x0e: case 0x0f:
 				return true;
-			case 0x20: case 0x21: case 0x23: case 0x24: case 0x25: case 0x27: case 0x37:
+			case 0x20: case 0x21: case 0x23: case 0x24: case 0x25: case 0x27:
 				return !eeDiag().no_load;
-			case 0x28: case 0x29: case 0x2b: case 0x3f:
+			case 0x37: return !eeDiag().no_load && !eeDiag().no_ld64; // LD
+			case 0x28: case 0x29: case 0x2b:
 				return !eeDiag().no_store;
+			case 0x3f: return !eeDiag().no_store && !eeDiag().no_ld64; // SD
 			case 0x31: case 0x39: return !eeDiag().no_cop1; // LWC1/SWC1 are COP1 moves
 			default: return false;
 		}
