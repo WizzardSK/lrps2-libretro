@@ -632,6 +632,10 @@ void SH()
 	memWrite16(addr, cpuRegs.GPR.r[_Rt_].US[0]);
 }
 
+#ifdef ARCH_ARM64
+extern "C" void eeDiagLogWrite(u32 a, u64 v, int w); // TEMP diagnostic (LRPS2_WLOG)
+#endif
+
 void SW()
 {
 	u32 addr = cpuRegs.GPR.r[_Rs_].UL[0] + _Imm_;
@@ -639,6 +643,9 @@ void SW()
 	if (unlikely(addr & 3))
 		Cpu->CancelInstruction();
 
+#ifdef ARCH_ARM64
+	eeDiagLogWrite(addr, cpuRegs.GPR.r[_Rt_].UL[0], 4);
+#endif
 	memWrite32(addr, cpuRegs.GPR.r[_Rt_].UL[0]);
 }
 
@@ -692,6 +699,9 @@ void SD()
 	if (unlikely(addr & 7))
 		Cpu->CancelInstruction();
 
+#ifdef ARCH_ARM64
+	eeDiagLogWrite(addr, cpuRegs.GPR.r[_Rt_].UD[0], 8);
+#endif
 	memWrite64(addr,cpuRegs.GPR.r[_Rt_].UD[0]);
 }
 

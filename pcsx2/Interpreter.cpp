@@ -617,10 +617,26 @@ extern "C" u32  eeRead32_arm64(u32 a)
 extern "C" u32  eeRead32_arm64(u32 a) { return memRead32(a); }
 #endif
 extern "C" u64  eeRead64_arm64(u32 a) { return memRead64(a); }
-extern "C" void eeWrite8_arm64 (u32 a, u32 v) { memWrite8(a, (u8)v); }
-extern "C" void eeWrite16_arm64(u32 a, u32 v) { memWrite16(a, (u16)v); }
-extern "C" void eeWrite32_arm64(u32 a, u32 v) { memWrite32(a, v); }
-extern "C" void eeWrite64_arm64(u32 a, u64 v) { memWrite64(a, v); }
+// TEMP diagnostic (LRPS2_WLOG): log EE stores to the MMX7 IPU-handshake RAM
+// regions so a JIT run and a NO_MEM (interpreter) run can be diffed to find the
+// first divergent written value. Called from both the JIT store wrappers below
+// and the interpreter SW/SD ops (R5900OpcodeImpl.cpp).
+extern "C" void eeDiagLogWrite(u32 a, u64 v, int w)
+{
+	static int on = -1; static u64 seq = 0; static u64 n = 0;
+	if (on < 0) on = getenv("LRPS2_WLOG") ? 1 : 0;
+	if (!on) return;
+	const u32 p = a & 0x1fffffff;
+	const bool hot = (p >= 0x01400800 && p <= 0x0140087f) || (p >= 0x004009c0 && p <= 0x004009ff);
+	if (!hot) return;
+	seq++;
+	if (n < 6000) { n++; fprintf(stderr, "[w] seq=%llu a=%08x v=%016llx w=%d\n",
+		(unsigned long long)seq, p, (unsigned long long)v, w); }
+}
+extern "C" void eeWrite8_arm64 (u32 a, u32 v) { eeDiagLogWrite(a, v, 1); memWrite8(a, (u8)v); }
+extern "C" void eeWrite16_arm64(u32 a, u32 v) { eeDiagLogWrite(a, v, 2); memWrite16(a, (u16)v); }
+extern "C" void eeWrite32_arm64(u32 a, u32 v) { eeDiagLogWrite(a, v, 4); memWrite32(a, v); }
+extern "C" void eeWrite64_arm64(u32 a, u64 v) { eeDiagLogWrite(a, v, 8); memWrite64(a, v); }
 extern "C" void eeCancelInstruction_arm64(void) { Cpu->CancelInstruction(); }
 // EE event test, called by the JIT after BEQ/BNE not-taken and (with the cycle
 // update) after every taken/unconditional branch -- matching doBranch() and the
