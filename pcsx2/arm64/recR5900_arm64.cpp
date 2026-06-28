@@ -24,7 +24,10 @@
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
+#include <algorithm>
 #include <sys/mman.h>
+
+// #define EE_PC_SAMPLE 1 // TEMP: EE PC histogram diagnostic (disables block-linking when on)
 
 #include "aarch64/macro-assembler-aarch64.h"
 
@@ -352,6 +355,25 @@ namespace
 
 	// Translate one simple integer ALU op (32- and 64-bit forms). Returns false,
 	// emitting nothing, for control flow / memory / FPU / MMI / anything else.
+	// TEMP diagnostic: env-gated toggles to force categories of EE ops back to
+	// the interpreter, to bisect which native EE JIT feature breaks MMX7's
+	// post-logo progression. Read once. Mirrored in IsTranslatable so the block
+	// builder and delay-slot handling stay consistent with EmitSimple.
+	struct EeDiagFlags { int no_mmi, no_muldiv, no_cop1, no_mem, no_load, no_store, no_branch; };
+	const EeDiagFlags& eeDiag()
+	{
+		static EeDiagFlags f = {
+			getenv("LRPS2_NO_EE_MMI")    ? 1 : 0,
+			getenv("LRPS2_NO_EE_MULDIV") ? 1 : 0,
+			getenv("LRPS2_NO_EE_COP1")   ? 1 : 0,
+			getenv("LRPS2_NO_EE_MEM")    ? 1 : 0,
+			(getenv("LRPS2_NO_EE_MEM") || getenv("LRPS2_NO_EE_LOAD"))  ? 1 : 0,
+			(getenv("LRPS2_NO_EE_MEM") || getenv("LRPS2_NO_EE_STORE")) ? 1 : 0,
+			getenv("LRPS2_NO_EE_BRANCH") ? 1 : 0,
+		};
+		return f;
+	}
+
 	bool EmitSimple(MacroAssembler& m, const Register& gpr, u32 insn)
 	{
 		const u32 op = insn >> 26;
@@ -360,6 +382,12 @@ namespace
 		const int32_t simm = (int16_t)(insn & 0xffff);
 		const uint64_t simm64 = (uint64_t)(int64_t)simm;
 		const u32 zimm = insn & 0xffff;
+
+		// TEMP diagnostic toggles (see eeDiag): force a category of EE ops back
+		// to the interpreter to bisect which native EE JIT feature breaks MMX7.
+		const int no_mmi = eeDiag().no_mmi, no_muldiv = eeDiag().no_muldiv;
+		const int no_cop1 = eeDiag().no_cop1;
+		const int no_load = eeDiag().no_load, no_store = eeDiag().no_store;
 
 		switch (op)
 		{
@@ -399,6 +427,7 @@ namespace
 					// HI/LO moves + integer mult/div (bit-exact, sign-extended results)
 					case 0x10: case 0x11: case 0x12: case 0x13: // MFHI/MTHI/MFLO/MTLO
 					case 0x18: case 0x19: case 0x1a: case 0x1b: // MULT/MULTU/DIV/DIVU
+						if (no_muldiv) return false;
 						EmitMulDiv(m, gpr, funct, rs, rt, rd); return true;
 					default: return false;
 				}
@@ -417,6 +446,7 @@ namespace
 			// the EE vtlb wrappers. gpr (x19) is callee-saved across the calls.
 			case 0x20: case 0x24: case 0x21: case 0x25: case 0x23: case 0x27: case 0x37:
 			{
+				if (no_load) return false;
 				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
 				const u32 amask = (op == 0x37) ? 7 : (op == 0x23 || op == 0x27) ? 3 : (op == 0x21 || op == 0x25) ? 1 : 0;
 				if (amask) { Label ok; m.Tst(w0, amask); m.B(&ok, eq); m.Mov(x16, reinterpret_cast<uint64_t>(&eeCancelInstruction_arm64)); m.Blr(x16); m.Bind(&ok); }
@@ -441,6 +471,7 @@ namespace
 			// Stores (SB/SH/SW/SD).
 			case 0x28: case 0x29: case 0x2b: case 0x3f:
 			{
+				if (no_store) return false;
 				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
 				const u32 amask = (op == 0x3f) ? 7 : (op == 0x2b) ? 3 : (op == 0x29) ? 1 : 0;
 				if (amask) { Label ok; m.Tst(w0, amask); m.B(&ok, eq); m.Mov(x16, reinterpret_cast<uint64_t>(&eeCancelInstruction_arm64)); m.Blr(x16); m.Bind(&ok); }
@@ -456,13 +487,13 @@ namespace
 			// COP1 register ops (MFC1/MTC1/MOV.S/NEG.S/ABS.S only -- arithmetic and
 			// BC1/CFC1/CTC1 hand off to the interpreter).
 			case 0x11:
-				if (!Cop1RegSupported(insn)) return false;
+				if (no_cop1 || !Cop1RegSupported(insn)) return false;
 				EmitCop1Reg(m, gpr, insn);
 				return true;
 
 			// MMI (128-bit parallel integer) -> NEON, for the bit-exact subset.
 			case 0x1c:
-				if (!MmiSupported(insn)) return false;
+				if (no_mmi || !MmiSupported(insn)) return false;
 				EmitMmi(m, gpr, insn);
 				return true;
 
@@ -471,6 +502,7 @@ namespace
 			// the interpreter's `if (addr & 3) return;`.
 			case 0x31:
 			{
+				if (no_cop1) return false;
 				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
 				Label skip;
 				m.Tst(w0, 3); m.B(&skip, ne);
@@ -482,6 +514,7 @@ namespace
 			// SWC1 ft, off(base): write32(addr, fpr[ft].UL); misalign silently skipped.
 			case 0x39:
 			{
+				if (no_cop1) return false;
 				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
 				Label skip;
 				m.Tst(w0, 3); m.B(&skip, ne);
@@ -506,6 +539,10 @@ namespace
 		m.Ldp(x21, x30, MemOperand(sp, 16));
 		m.Add(sp, sp, 32);
 
+#ifdef EE_PC_SAMPLE
+		m.Ret(); // TEMP: disable block-linking so every block returns to the dispatcher (PC sampling)
+		return;
+#endif
 		m.Mov(x0, reinterpret_cast<uint64_t>(&cpuRegs.pc));
 		m.Ldr(w1, MemOperand(x0));          // pc
 		m.And(w2, w1, 0x1fffffff);          // np = pc & mirror mask
@@ -535,20 +572,24 @@ namespace
 				case 0x2a: case 0x2b: case 0x2c: case 0x2d:
 				case 0x14: case 0x16: case 0x17: case 0x38: case 0x3a: case 0x3b:
 				case 0x3c: case 0x3e: case 0x3f:
+					return true;
 				case 0x10: case 0x11: case 0x12: case 0x13: // MFHI/MTHI/MFLO/MTLO
 				case 0x18: case 0x19: case 0x1a: case 0x1b: // MULT/MULTU/DIV/DIVU
-					return true;
+					return !eeDiag().no_muldiv;
 				default: return false;
 			}
 		}
-		if (op == 0x11) return Cop1RegSupported(insn);
-		if (op == 0x1c) return MmiSupported(insn);
+		if (op == 0x11) return !eeDiag().no_cop1 && Cop1RegSupported(insn);
+		if (op == 0x1c) return !eeDiag().no_mmi && MmiSupported(insn);
 		switch (op)
 		{
 			case 0x09: case 0x19: case 0x0a: case 0x0b: case 0x0c: case 0x0d: case 0x0e: case 0x0f:
+				return true;
 			case 0x20: case 0x21: case 0x23: case 0x24: case 0x25: case 0x27: case 0x37:
+				return !eeDiag().no_load;
 			case 0x28: case 0x29: case 0x2b: case 0x3f:
-			case 0x31: case 0x39: return true;
+				return !eeDiag().no_store;
+			case 0x31: case 0x39: return !eeDiag().no_cop1; // LWC1/SWC1 are COP1 moves
 			default: return false;
 		}
 	}
@@ -579,6 +620,7 @@ namespace
 	// slot -> false (interpreter finishes the basic block).
 	bool EmitBranch(MacroAssembler& m, const Register& gpr, u32 bpc, u32 insn, int cyc_leading)
 	{
+		if (eeDiag().no_branch) return false; // TEMP diagnostic: force branches to interpreter
 		const u32 op = insn >> 26, rs = (insn >> 21) & 31, rt = (insn >> 16) & 31, funct = insn & 0x3f;
 		const int32_t simm = (int16_t)(insn & 0xffff);
 
@@ -648,7 +690,12 @@ namespace
 		m.Bind(&not_taken);
 		EmitCycleBookkeeping(m, cyc_nt);
 		StorePCImm(m, bpc + 4);
-		if (nt_evt) { m.Mov(x16, evt); m.Blr(x16); }
+		// Must flush cpuBlockCycles into cpuRegs.cycle (eeUpdateCycles) BEFORE the
+		// event test, exactly like the taken path -- otherwise a spin/poll loop that
+		// keeps falling through this branch event-tests with a stale cpuRegs.cycle,
+		// so scheduled IPU/DMA/counter events never reach their trigger and the EE
+		// livelocks (MMX7 stuck polling IPU after the logo).
+		if (nt_evt) { m.Mov(x16, upd); m.Blr(x16); m.Mov(x16, evt); m.Blr(x16); }
 		EmitChainEpilogue(m);
 		return true;
 	}
@@ -671,6 +718,24 @@ namespace
 		masm.Stp(x19, x20, MemOperand(sp, 0));
 		masm.Stp(x21, x30, MemOperand(sp, 16));
 		masm.Mov(gpr, reinterpret_cast<uint64_t>(&cpuRegs.GPR.r[0]));
+
+		// TEMP: one-shot disasm dump of the MMX7 stall loop block range.
+		if (getenv("LRPS2_DUMP_STALL") && (pc & 0x1fffffff) >= 0x0010b7a8 && (pc & 0x1fffffff) <= 0x0010bd74)
+		{
+			static u32 dumped = 0;
+			if (!(dumped & (1u << ((pc >> 4) & 31))))
+			{
+				dumped |= (1u << ((pc >> 4) & 31));
+				for (u32 q = pc, k = 0; k < 24; q += 4, k++)
+				{
+					u32 i = memRead32(q);
+					fprintf(stderr, "[stall] %08x: %08x op=%02x funct=%02x rs=%u rt=%u rd=%u imm=%04x xlat=%d\n",
+						q, i, i >> 26, i & 0x3f, (i >> 21) & 31, (i >> 16) & 31, (i >> 11) & 31, i & 0xffff, IsTranslatable(i));
+					if ((i >> 26) == 0x02 || (i >> 26) == 0x03 || ((i >> 26) == 0 && ((i & 0x3f) == 8 || (i & 0x3f) == 9))
+						|| ((i >> 26) >= 0x04 && (i >> 26) <= 0x07) || (i >> 26) == 0x01) { fprintf(stderr, "[stall]   ^branch, +delayslot\n"); break; }
+				}
+			}
+		}
 
 		u32 p = pc;
 		int n = 0;
@@ -784,5 +849,27 @@ void eeJitShutdown_arm64(void)
 
 extern "C" void eeJitRunBlock_arm64(void)
 {
+#ifdef EE_PC_SAMPLE
+	// TEMP diagnostic: sample EE PC 1/256 dispatches, dump the hottest 14 PCs
+	// every ~3M samples to find the loop the game spins on while stalled.
+	{
+		static std::unordered_map<u32, u64> hist;
+		static u64 samples = 0;
+		if (samples == 0) Console.WriteLn("[ee-sample] dispatch hook live");
+		{
+			hist[cpuRegs.pc & 0x1fffffff]++;
+			if (++samples % 20000 == 0)
+			{
+				std::vector<std::pair<u32, u64>> v(hist.begin(), hist.end());
+				std::partial_sort(v.begin(), v.begin() + (v.size() < 14 ? v.size() : 14), v.end(),
+					[](auto& a, auto& b) { return a.second > b.second; });
+				Console.WriteLn("=== EE PC histogram (uniq=%zu) ===", v.size());
+				for (size_t i = 0; i < v.size() && i < 14; i++)
+					Console.WriteLn("  pc=0x%08x  %llu", v[i].first, (unsigned long long)v[i].second);
+				hist.clear();
+			}
+		}
+	}
+#endif
 	BlockForPC(cpuRegs.pc)();
 }

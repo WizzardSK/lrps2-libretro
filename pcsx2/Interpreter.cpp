@@ -576,7 +576,12 @@ extern "C" void eeRunBasicBlock_arm64(void)
 
 void eeRecExecute_arm64(void)
 {
-	g_ee_block_runner = &eeJitRunBlock_arm64;
+	// TEMP diagnostic toggle: LRPS2_NO_EEREC=1 runs the EE through the pure
+	// interpreter even though the recompiler provider is selected, to bisect
+	// whether a stall is a JIT correctness bug or shared C++ (IPU/DMA/timing).
+	static int no_eerec = -1;
+	if (no_eerec < 0) no_eerec = getenv("LRPS2_NO_EEREC") ? 1 : 0;
+	g_ee_block_runner = no_eerec ? nullptr : &eeJitRunBlock_arm64;
 	eeExecuteLoop();
 }
 
@@ -584,9 +589,33 @@ void eeRecExecute_arm64(void)
 // JIT's natively-translated loads/stores (Phase C.3-3). Defined here so they see
 // Memory.h / Cpu. Cpu->CancelInstruction() fastjmps to intJmpBuf, which is safe
 // from JIT code (fastjmp restores sp and callee-saved regs).
+// #define EE_RD_SAMPLE 1 // TEMP: EE read32 address histogram diagnostic (off)
 extern "C" u32  eeRead8_arm64 (u32 a) { return memRead8(a); }
 extern "C" u32  eeRead16_arm64(u32 a) { return memRead16(a); }
+#ifdef EE_RD_SAMPLE
+#include <unordered_map>
+#include <vector>
+#include <algorithm>
+extern "C" u32  eeRead32_arm64(u32 a)
+{
+	// TEMP diagnostic: histogram read32 addresses; dump top 16 every 4M reads
+	// (cleared each dump, so the final dump reflects the current/stall phase).
+	static std::unordered_map<u32, u64> h; static u64 n = 0;
+	h[a]++;
+	if (++n % 4000000 == 0)
+	{
+		std::vector<std::pair<u32,u64>> v(h.begin(), h.end());
+		size_t k = v.size() < 16 ? v.size() : 16;
+		std::partial_sort(v.begin(), v.begin()+k, v.end(), [](auto&x,auto&y){return x.second>y.second;});
+		fprintf(stderr, "=== EE read32 addr histogram (uniq=%zu) ===\n", v.size());
+		for (size_t i=0;i<k;i++) fprintf(stderr, "  addr=0x%08x  %llu\n", v[i].first,(unsigned long long)v[i].second);
+		h.clear();
+	}
+	return memRead32(a);
+}
+#else
 extern "C" u32  eeRead32_arm64(u32 a) { return memRead32(a); }
+#endif
 extern "C" u64  eeRead64_arm64(u32 a) { return memRead64(a); }
 extern "C" void eeWrite8_arm64 (u32 a, u32 v) { memWrite8(a, (u8)v); }
 extern "C" void eeWrite16_arm64(u32 a, u32 v) { memWrite16(a, (u16)v); }

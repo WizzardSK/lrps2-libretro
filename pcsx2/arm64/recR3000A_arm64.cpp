@@ -420,7 +420,10 @@ static void recClearIOP(u32 addr, u32 size)
 
 static s32 recExecuteBlock(s32 eeCycles)
 {
-	if (!s_ok)
+	// TEMP diagnostic toggle: LRPS2_NO_IOPREC=1 forces the IOP interpreter.
+	static int no_ioprec = -1;
+	if (no_ioprec < 0) no_ioprec = getenv("LRPS2_NO_IOPREC") ? 1 : 0;
+	if (!s_ok || no_ioprec)
 		return psxInt.ExecuteBlock(eeCycles);
 
 	psxRegs.iopBreak   = 0;
