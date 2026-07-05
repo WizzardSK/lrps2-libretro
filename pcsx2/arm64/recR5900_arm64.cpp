@@ -40,6 +40,7 @@ extern "C" u32  eeRead8_arm64(u32),  eeRead16_arm64(u32), eeRead32_arm64(u32);
 extern "C" u64  eeRead64_arm64(u32);
 extern "C" void eeWrite8_arm64(u32, u32),  eeWrite16_arm64(u32, u32);
 extern "C" void eeWrite32_arm64(u32, u32), eeWrite64_arm64(u32, u64);
+extern "C" void eeRead128_arm64(u32, u128*), eeWrite128_arm64(u32, const u128*);
 extern "C" void eeCancelInstruction_arm64(void);
 extern "C" void eeEventTest_arm64(void);
 extern "C" void eeUpdateCycles_arm64(void);
@@ -92,6 +93,33 @@ namespace
 		if (idx == 0) m.Mov(xd, 0);
 		else          m.Ldr(xd, MemOperand(gpr, idx * 16));
 	}
+
+	// Inline vtlb fast path (Phase C.12): with the guest address in w0 (upper
+	// half of x0 zero, as left by 32-bit address arithmetic), emit the vmap
+	// lookup and leave the HOST pointer in x10, branching to 'slow' when the
+	// entry is a handler (hw register -> take the C wrapper call instead).
+	// Mirrors vtlb_memRead/Write's direct case exactly: vmv = vmap[addr>>12];
+	// handler iff (s64)(vmv.value + addr) < 0; host = vmv.value + addr.
+	// x10/x11 are scratch; w0/x1/q0 (address/value) are preserved.
+	inline bool InlineMemEnabled()
+	{
+		// LRPS2_WLOG needs every access to go through the wrappers (that's
+		// where the watch hooks live); LRPS2_NO_INLINE_MEM forces it off for
+		// A/B diagnosis.
+		static int on = -1;
+		if (on < 0) on = (getenv("LRPS2_WLOG") || getenv("LRPS2_NO_INLINE_MEM")) ? 0 : 1;
+		return on != 0;
+	}
+	inline void EmitVmapLookup(MacroAssembler& m, Label* slow)
+	{
+		m.Mov(x10, reinterpret_cast<uint64_t>(&vtlb_private::vtlbdata.vmap));
+		m.Ldr(x10, MemOperand(x10));                 // vmap array base (realloc-safe)
+		m.Lsr(w11, w0, 12);
+		m.Ldr(x10, MemOperand(x10, x11, LSL, 3));    // vmv.value
+		m.Add(x10, x10, x0);                         // + guest addr
+		m.Tbnz(x10, 63, slow);                       // sign bit = handler
+	}
+
 	inline void StoreGpr(MacroAssembler& m, const Register& xs, const Register& gpr, u32 idx)
 	{
 		m.Str(xs, MemOperand(gpr, idx * 16));
@@ -498,7 +526,27 @@ namespace
 				            : (op == 0x23 || op == 0x27) ? reinterpret_cast<uint64_t>(&eeRead32_arm64)
 				            : (op == 0x21 || op == 0x25) ? reinterpret_cast<uint64_t>(&eeRead16_arm64)
 				            : reinterpret_cast<uint64_t>(&eeRead8_arm64);
-				m.Mov(x16, fn); m.Blr(x16); // result in x0 (u32 returns are zero-extended in x0)
+				if (InlineMemEnabled())
+				{
+					// Inline vtlb direct case; handlers (hw regs) fall back to
+					// the wrapper call. Same value semantics: Ldrb/Ldrh/Ldr w0
+					// zero-extend into x0 exactly like the u32-returning
+					// wrappers.
+					Label slow, done;
+					EmitVmapLookup(m, &slow);
+					switch (op)
+					{
+						case 0x20: case 0x24: m.Ldrb(w0, MemOperand(x10)); break; // LB/LBU
+						case 0x21: case 0x25: m.Ldrh(w0, MemOperand(x10)); break; // LH/LHU
+						case 0x23: case 0x27: m.Ldr (w0, MemOperand(x10)); break; // LW/LWU
+						default:              m.Ldr (x0, MemOperand(x10)); break; // LD
+					}
+					m.B(&done);
+					m.Bind(&slow);
+					m.Mov(x16, fn); m.Blr(x16);
+					m.Bind(&done);
+				}
+				else { m.Mov(x16, fn); m.Blr(x16); } // result in x0 (u32 returns are zero-extended in x0)
 				if (rt)
 				{
 					switch (op)
@@ -524,7 +572,70 @@ namespace
 				            : (op == 0x2b) ? reinterpret_cast<uint64_t>(&eeWrite32_arm64)
 				            : (op == 0x29) ? reinterpret_cast<uint64_t>(&eeWrite16_arm64)
 				            : reinterpret_cast<uint64_t>(&eeWrite8_arm64);
-				m.Mov(x16, fn); m.Blr(x16);
+				if (InlineMemEnabled())
+				{
+					// Inline direct store. A store into a write-protected RAM
+					// page (holding compiled blocks) SIGSEGVs -> vtlb
+					// PageFaultHandler -> mmap_ClearCpuBlock unprotects and
+					// drops the stale blocks -> the kernel retries this Str;
+					// identical flow to interpreter stores.
+					Label slow, done;
+					EmitVmapLookup(m, &slow);
+					switch (op)
+					{
+						case 0x28: m.Strb(w1, MemOperand(x10)); break; // SB
+						case 0x29: m.Strh(w1, MemOperand(x10)); break; // SH
+						case 0x2b: m.Str (w1, MemOperand(x10)); break; // SW
+						default:   m.Str (x1, MemOperand(x10)); break; // SD
+					}
+					m.B(&done);
+					m.Bind(&slow);
+					m.Mov(x16, fn); m.Blr(x16);
+					m.Bind(&done);
+				}
+				else { m.Mov(x16, fn); m.Blr(x16); }
+				return true;
+			}
+			// LQ/SQ (128-bit; the hardware silently aligns -- addr & ~0xf, no
+			// misalign exception). Previously untranslated: every LQ/SQ ended
+			// the block with an interpreter handoff, and they are everywhere in
+			// compiler-generated 128-bit copies.
+			case 0x1e: // LQ
+			{
+				if (no_load || !rt) return false; // rt==0: rare, leave to interp
+				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				m.And(w0, w0, 0xfffffff0);
+				Label slow, done;
+				if (InlineMemEnabled())
+				{
+					EmitVmapLookup(m, &slow);
+					m.Ldr(q0, MemOperand(x10));
+					m.Str(q0, MemOperand(gpr, rt * 16));
+					m.B(&done);
+					m.Bind(&slow);
+				}
+				m.Add(x1, gpr, rt * 16);
+				m.Mov(x16, reinterpret_cast<uint64_t>(&eeRead128_arm64)); m.Blr(x16);
+				m.Bind(&done);
+				return true;
+			}
+			case 0x1f: // SQ
+			{
+				if (no_store) return false;
+				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				m.And(w0, w0, 0xfffffff0);
+				Label slow, done;
+				if (InlineMemEnabled())
+				{
+					EmitVmapLookup(m, &slow);
+					m.Ldr(q0, MemOperand(gpr, rt * 16)); // GPR.r[0] is kept zero
+					m.Str(q0, MemOperand(x10));
+					m.B(&done);
+					m.Bind(&slow);
+				}
+				m.Add(x1, gpr, rt * 16);
+				m.Mov(x16, reinterpret_cast<uint64_t>(&eeWrite128_arm64)); m.Blr(x16);
+				m.Bind(&done);
 				return true;
 			}
 
@@ -631,9 +742,11 @@ namespace
 				return true;
 			case 0x20: case 0x21: case 0x23: case 0x24: case 0x25: case 0x27:
 				return !eeDiag().no_load;
+			case 0x1e: return !eeDiag().no_load && ((insn >> 16) & 31) != 0; // LQ (rt==0 -> interp)
 			case 0x37: return !eeDiag().no_load && !eeDiag().no_ld64; // LD
 			case 0x28: case 0x29: case 0x2b:
 				return !eeDiag().no_store;
+			case 0x1f: return !eeDiag().no_store; // SQ
 			case 0x3f: return !eeDiag().no_store && !eeDiag().no_ld64; // SD
 			case 0x31: case 0x39: return !eeDiag().no_cop1; // LWC1/SWC1 are COP1 moves
 			default: return false;
@@ -659,6 +772,7 @@ namespace
 		m.Str(wsrc, MemOperand(x10));
 	}
 	inline void StorePCImm(MacroAssembler& m, u32 v) { m.Mov(w0, v); StorePC(m, w0); }
+
 
 	// Translate a branch/jump (ends the block via the chaining epilogue). EE: the
 	// delay slot runs only when taken; intEventTest() runs on both paths; not-taken
@@ -728,6 +842,30 @@ namespace
 		const uint64_t evt = reinterpret_cast<uint64_t>(&eeEventTest_arm64);
 		const uint64_t upd = reinterpret_cast<uint64_t>(&eeUpdateCycles_arm64);
 
+		// WaitLoop speedhack for the EE kernel idle loop at 0x81fc0 (6 nops +
+		// `beq zero,zero,-6`): the interpreter fast-forwards cpuRegs.cycle to
+		// nextEventCycle when spinning there (_doBranch_shared, gated on
+		// Cpu==&intCpu so the JIT never benefited). Mirror it on the taken
+		// path: after the cycle flush (upd), before the event test, do
+		// `if (nextEventCycle != cycle) cycle = nextEventCycle` -- the next
+		// event then fires immediately instead of burning host time emulating
+		// millions of idle iterations. Same effect as the interpreter's
+		// `(s64)(u32(nev-cyc)) > 0` condition (true iff the u32s differ).
+		const bool idle_skip = EmuConfig.Speedhacks.WaitLoop && !is_jr
+			&& ((tconst & 0x1fffffff) == 0x00081fc0);
+		const auto EmitIdleSkip = [&m]()
+		{
+			Label skip;
+			m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.cycle));
+			m.Mov(x11, reinterpret_cast<uint64_t>(&cpuRegs.nextEventCycle));
+			m.Ldr(w0, MemOperand(x10));
+			m.Ldr(w1, MemOperand(x11));
+			m.Cmp(w1, w0);
+			m.B(&skip, eq);
+			m.Str(w1, MemOperand(x10)); // cycle = nextEventCycle
+			m.Bind(&skip);
+		};
+
 		// Link value is ZERO-extended to match the interpreter's _SetLink
 		// (R5900.h: UD[0] = u32 pc+4) -- NOT sign-extended as real MIPS64 would.
 		// Kernel return addresses (0x8xxxxxxx) otherwise get 0xffffffff upper
@@ -741,6 +879,7 @@ namespace
 			EmitCycleBookkeeping(m, cyc_taken);
 			if (is_jr) StorePC(m, w20); else StorePCImm(m, tconst);
 			m.Mov(x16, upd); m.Blr(x16);
+			if (idle_skip) EmitIdleSkip();
 			m.Mov(x16, evt); m.Blr(x16);
 			EmitChainEpilogue(m);
 			return true;
@@ -754,6 +893,7 @@ namespace
 		EmitCycleBookkeeping(m, cyc_taken);
 		StorePCImm(m, tconst);
 		m.Mov(x16, upd); m.Blr(x16);
+		if (idle_skip) EmitIdleSkip();
 		m.Mov(x16, evt); m.Blr(x16);
 		EmitChainEpilogue(m);
 		m.Bind(&not_taken);

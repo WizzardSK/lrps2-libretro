@@ -776,6 +776,12 @@ extern "C" void eeDiagLogMem(int rd, u32 a, u64 v, int w)
 	}
 }
 extern "C" void eeDiagLogWrite(u32 a, u64 v, int w) { eeDiagLogMem(0, a, v, w); }
+// 128-bit LQ/SQ wrappers (Phase C.12). LQ/SQ silently align (addr & ~0xf on the
+// caller side); dst/src is &cpuRegs.GPR.r[rt]. These are the slow path -- the
+// JIT inlines the vtlb direct-pointer case and only calls here for handlers
+// (or with LRPS2_WLOG, where inlining is disabled so the watch hooks fire).
+extern "C" void eeRead128_arm64 (u32 a, u128* dst)       { memRead128(a, dst); eeDiagLogMem(1, a, dst->lo, 16); }
+extern "C" void eeWrite128_arm64(u32 a, const u128* src) { eeDiagLogMem(0, a, src->lo, 16); memWrite128(a, src); }
 extern "C" void eeWrite8_arm64 (u32 a, u32 v) { eeDiagLogWrite(a, v, 1); memWrite8(a, (u8)v); }
 extern "C" void eeWrite16_arm64(u32 a, u32 v) { eeDiagLogWrite(a, v, 2); memWrite16(a, (u16)v); }
 extern "C" void eeWrite32_arm64(u32 a, u32 v) { eeDiagLogWrite(a, v, 4); memWrite32(a, v); }

@@ -161,7 +161,9 @@ __fi u32 ipuRead32(u32 mem)
 		{
 			ipuRegs.ctrl.IFC = g_BP.IFC;
 			ipuRegs.ctrl.CBP = coded_block_pattern;
-			if (getenv("LRPS2_IPU_CTRL_LOG"))
+			static int ctrl_log = -1; // cached: getenv on every CTRL read showed up in profiles
+			if (ctrl_log < 0) ctrl_log = getenv("LRPS2_IPU_CTRL_LOG") ? 1 : 0;
+			if (ctrl_log)
 			{
 				static u64 c = 0;
 				if (((++c) & 0x3ffff) == 1)
