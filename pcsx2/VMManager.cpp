@@ -1273,6 +1273,16 @@ static void SetMTVUAndAffinityControlDefault(SettingsInterface& si)
 	const bool mtvu = getenv("LRPS2_MTVU") != nullptr && std::thread::hardware_concurrency() >= 3;
 	Console.WriteLn(mtvu ? "  Enabling MTVU (LRPS2_MTVU opt-in)." : "  MTVU disabled (opt-in via LRPS2_MTVU=1; continuous-kick VU1 programs can deadlock it).");
 	si.SetBoolValue("EmuCore/Speedhacks", "vuThread", mtvu);
+	// Instant VU1 assumes the VU1 provider finishes a program quickly (x86
+	// microVU). With the VU1 INTERPRETER, a continuous microprogram (endless
+	// loop streaming XGKICK -- GT3's arcade attract) burns the full
+	// vu1RunCycles=3M budget on EVERY kick: the EE thread spends seconds per
+	// frame inside InterpVU1::Execute and the frontend appears hung. Run VU1
+	// in small interleaved slices instead (upstream's non-instant scheduling).
+	// LRPS2_VU1_INSTANT=1 restores instant mode for A/B testing.
+	const bool vu1_instant = getenv("LRPS2_VU1_INSTANT") != nullptr;
+	Console.WriteLn(vu1_instant ? "  Instant VU1 ENABLED (LRPS2_VU1_INSTANT)." : "  Instant VU1 disabled (interpreter VU1 runs interleaved).");
+	si.SetBoolValue("EmuCore/Speedhacks", "vu1Instant", vu1_instant);
 }
 
 #else
