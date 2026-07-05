@@ -18,6 +18,8 @@
 #include "IPUdma.h"
 #include "IPU_MultiISA.h"
 
+extern "C" volatile u64 g_diag_frame; // Interpreter.cpp (TEMP diagnostic)
+
 static IPUDMAStatus IPU1Status;
 
 void ipuDmaReset(void)
@@ -42,13 +44,16 @@ static __fi int IPU1chain(void)
 
 	if (pMem)
 	{
-		// TEMP diagnostic (LRPS2_WLOG): log the DMA source addr + leading data
-		// words fed to the IPU input FIFO, to diff a JIT vs NO_MEM run.
+		// TEMP diagnostic (LRPS2_WLOG, or LRPS2_IPU_LOG_FRAME=N for the stall
+		// window): log the DMA source addr + leading data words fed to the IPU
+		// input FIFO, to diff a JIT vs NO_MEM run / inspect the stall-time feed.
 		{
-			static int on = -1; static int n = 0;
+			static int on = -1; static int n = 0; static int lf = -2;
 			if (on < 0) on = getenv("LRPS2_WLOG") ? 1 : 0;
-			if (on && n < 400) { n++; fprintf(stderr, "[d] madr=%08x qwc=%d w0=%08x %08x %08x %08x\n",
-				ipu1ch.madr, ipu1ch.qwc, pMem[0], pMem[1], pMem[2], pMem[3]); }
+			if (lf == -2) { const char* s = getenv("LRPS2_IPU_LOG_FRAME"); lf = s ? atoi(s) : -1; }
+			const bool go = (on && n < 400) || (lf >= 0 && g_diag_frame >= (u64)lf && n < 700);
+			if (go) { n++; fprintf(stderr, "[d] frame=%llu madr=%08x qwc=%d w0=%08x %08x %08x %08x\n",
+				(unsigned long long)g_diag_frame, ipu1ch.madr, ipu1ch.qwc, pMem[0], pMem[1], pMem[2], pMem[3]); }
 		}
 		//Write our data to the FIFO
 		int qwc      = ipu_fifo.in.write(pMem, ipu1ch.qwc);

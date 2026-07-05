@@ -48,10 +48,18 @@
 	#error Unsupported architecture
 #endif
 
-#if (defined(_M_ARM64) || defined(__aarch64__))
+#if (defined(_M_ARM64) || defined(__aarch64__)) && defined(__APPLE__)
 /* Apple Silicon uses 16KB pages and 128 byte cache lines. */
 #define __pagesize 0x4000
 #define __pageshift 14
+#define __cachelinesize 128
+#elif (defined(_M_ARM64) || defined(__aarch64__))
+/* Linux aarch64 (this port's targets) uses 4KB pages; keep the conservative
+   128-byte cache line. A 16K __pagesize here breaks vtlb page protection:
+   the fault handler masks si_addr with a 16K mask, mis-attributing faults on
+   a 4K kernel (addr can round below eeMem->Main) -> unhandled -> abort. */
+#define __pagesize 0x1000
+#define __pageshift 12
 #define __cachelinesize 128
 #else
 // X86 uses a 4KB granularity and 64 byte cache lines.

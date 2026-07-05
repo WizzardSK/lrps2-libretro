@@ -1377,6 +1377,16 @@ void mmap_MarkCountedRamPage(u32 paddr)
 	uptr ptr = (uptr)PSM(paddr);
 	int rampage = (ptr - (uptr)eeMem->Main) >> __pageshift;
 
+	// Defensive: PSM() can yield a pointer outside Main (handler-mapped page,
+	// TLB-remapped, SPR) -- protecting a page outside Main both corrupts
+	// m_PageProtectInfo (OOB) and mprotects unrelated host memory.
+	if (!ptr || rampage < 0 || rampage >= (int)(Ps2MemSize::MainRam >> __pageshift))
+	{
+		if (getenv("LRPS2_FAULT_LOG"))
+			fprintf(stderr, "[mark-skip] paddr=%08x ptr=%p rampage=%d\n", paddr, (void*)ptr, rampage);
+		return;
+	}
+
 	// Important: Update the ReverseRamMap here because TLB changes could alter the paddr
 	// mapping into eeMem->Main.
 
@@ -1414,6 +1424,10 @@ static __fi void mmap_ClearCpuBlock(uint offset)
 
 bool vtlb_private::PageFaultHandler(const PageFaultInfo& info)
 {
+	// TEMP diagnostic (LRPS2_FAULT_LOG; stderr is not async-signal-safe, debug only)
+	if (getenv("LRPS2_FAULT_LOG"))
+		fprintf(stderr, "[fault] pc=%p addr=%p main=%p off=%lx\n", (void*)info.pc, (void*)info.addr,
+			(void*)eeMem->Main, (long)(info.addr - (uptr)eeMem->Main));
 	u32 vaddr;
 	if (CHECK_FASTMEM && vtlb_GetGuestAddress(info.addr, &vaddr))
 	{

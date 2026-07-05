@@ -87,6 +87,39 @@ void intUpdateCPUCycles()
 // arm64 EE JIT (recR5900_arm64.cpp CompileBlock).
 volatile u64 g_diag_frame = 0; // set per-frame from retro_run (TEMP diagnostic)
 u32 GetEECycle(void) { return cpuRegs.cycle; } // TEMP diagnostic (LRPS2_RAMCRC)
+
+// TEMP diagnostic (LRPS2_EXCLOG=<path>): log COP0 Cause/EPC/Status/Count +
+// cpuRegs.cycle + frame at every entry to the EE interrupt vector 0x80000200,
+// so a full-JIT run and a NO_EE_MEM run can be diffed to see whether interrupts
+// are taken at different cycles / with different pending-cause bits (the suspected
+// sub-frame interrupt-timing residual behind the MMX7 post-logo stall). Called at
+// block entry from the arm64 EE JIT and per-instruction from execI.
+extern "C" void eeLogExc(u32 pc)
+{
+	static FILE* f = nullptr; static int on = -1;
+	static u32 last_pc = 0; static u32 last_epc = 0; static u64 last_n = 0;
+	if (on < 0) { const char* p = getenv("LRPS2_EXCLOG"); f = p ? fopen(p, "w") : nullptr; on = f ? 1 : 0; }
+	if (!on) return;
+	const u32 pp = pc & 0x1fffffff;
+	if (pp != 0x200 && pp != 0x180) return;
+	// Dedup: with NO_EE_MEM the vector block may be entered via the JIT block
+	// hook AND execI at the same pc/EPC -- log each vector entry once.
+	static u64 n = 0; n++;
+	if (pp == last_pc && cpuRegs.CP0.n.EPC == last_epc && n == last_n + 1) { last_n = n; return; }
+	last_pc = pp; last_epc = cpuRegs.CP0.n.EPC; last_n = n;
+	// Cause IP field (bits 10-15) = pending HW interrupt lines (IP2/bit10 is the
+	// INTC/DMAC aggregate on the EE); EXCCODE = Cause bits 2-6.
+	const u32 cause = cpuRegs.CP0.n.Cause;
+	fprintf(f, "frame=%llu vec=%03x cyc=%u Cause=%08x(exc=%u,IP=%02x) EPC=%08x",
+		(unsigned long long)g_diag_frame, pp, cpuRegs.cycle, cause,
+		(cause >> 2) & 0x1f, (cause >> 10) & 0x3f, cpuRegs.CP0.n.EPC);
+	if (pp == 0x180) // syscall/common vector: log the call# ($v1) and args
+		fprintf(f, " v1=%02llx a=%08llx,%08llx,%08llx,%08llx",
+			(unsigned long long)cpuRegs.GPR.n.v1.UL[0], (unsigned long long)cpuRegs.GPR.n.a0.UL[0],
+			(unsigned long long)cpuRegs.GPR.n.a1.UL[0], (unsigned long long)cpuRegs.GPR.n.a2.UL[0],
+			(unsigned long long)cpuRegs.GPR.n.a3.UL[0]);
+	fprintf(f, "\n");
+}
 extern "C" void eeTraceHook(u32 pc)
 {
 	static FILE* f = nullptr; static int on = -1; static u32 lo = 0, hi = 0; static u64 n = 0;
@@ -111,14 +144,16 @@ extern "C" void eeTraceHook(u32 pc)
 	hsh ^= cpuRegs.LO.UD[0];
 	u64 rec[2] = { pc, hsh };
 	fwrite(rec, 16, 1, f);
-	// Targeted register dump at the first control-flow divergence (0x0010e2f8
-	// `ld v1,24(s1)` / 0x0010e2fc `sltu v0,v1,s0`). r3=v1 r16=s0 r17=s1 r22=s6.
-	if (pp == 0x0010e2f8 || pp == 0x0010e2fc)
+	// Targeted register dump around the frame-217 divergence at 0x001051d0
+	// (`daddu v1,v1,a1`): dump v0,v1,a0,a1,a2 before each op of the byte-
+	// assembly tail of 0x105138.
+	if (pp >= 0x001051b0 && pp <= 0x001051e0)
 	{
 		static u64 dn = 0;
-		if (dn < 20) { dn++; fprintf(stderr, "[div] pc=%08x v1(r3)=%016llx s0(r16)=%016llx s1(r17)=%016llx s6(r22)=%016llx\n",
-			pp, (unsigned long long)cpuRegs.GPR.r[3].UD[0], (unsigned long long)cpuRegs.GPR.r[16].UD[0],
-			(unsigned long long)cpuRegs.GPR.r[17].UD[0], (unsigned long long)cpuRegs.GPR.r[22].UD[0]); }
+		if (dn < 60) { dn++; fprintf(stderr, "[div] pc=%08x v0=%016llx v1=%016llx a0=%016llx a1=%016llx a2=%016llx\n",
+			pp, (unsigned long long)cpuRegs.GPR.r[2].UD[0], (unsigned long long)cpuRegs.GPR.r[3].UD[0],
+			(unsigned long long)cpuRegs.GPR.r[4].UD[0], (unsigned long long)cpuRegs.GPR.r[5].UD[0],
+			(unsigned long long)cpuRegs.GPR.r[6].UD[0]); }
 	}
 	// Compact per-op register line (LRPS2_TRACE_SHOW): dumps a few regs for the
 	// first ~400 in-range ops so a JIT vs interp diff pinpoints the first op that
@@ -145,6 +180,7 @@ static void execI(void)
 	u32 pc = cpuRegs.pc;
 #ifdef ARCH_ARM64
 	eeTraceHook(pc);
+	eeLogExc(pc);
 #endif
 	// We need to increase the pc before executing the memRead32. An exception could appears
 	// and it expects the PC counter to be pre-incremented
@@ -501,6 +537,25 @@ static void intReset()
 
 static void intEventTest()
 {
+	// TEMP diagnostic (LRPS2_EVTLOG=<path>, LRPS2_EVT_LO/HI=<frame range>): log
+	// every EE event test (cycle vs nextEventCycle, pc, pending INTC/DMAC bits)
+	// so a full-JIT and a NO_EE_MEM run can be diffed to find the first test
+	// where interrupt recognition diverges.
+	{
+		static FILE* f = nullptr; static int on = -1; static u64 flo = 0, fhi = 0;
+		if (on < 0)
+		{
+			const char* p = getenv("LRPS2_EVTLOG");
+			f = p ? fopen(p, "w") : nullptr; on = f ? 1 : 0;
+			const char* l = getenv("LRPS2_EVT_LO"); const char* h = getenv("LRPS2_EVT_HI");
+			flo = l ? strtoull(l, 0, 10) : 0; fhi = h ? strtoull(h, 0, 10) : ~0ull;
+		}
+		if (on && g_diag_frame >= flo && g_diag_frame <= fhi)
+			fprintf(f, "f=%llu cyc=%u nev=%d pc=%08x int=%08x is=%04x im=%04x\n",
+				(unsigned long long)g_diag_frame, cpuRegs.cycle,
+				(int)(s32)(cpuRegs.nextEventCycle - cpuRegs.cycle), cpuRegs.pc,
+				cpuRegs.interrupt, psHu16(INTC_STAT), psHu16(INTC_MASK));
+	}
 	// Perform counters, ints, and IOP updates:
 	_cpuEventTest_Shared();
 
@@ -685,17 +740,25 @@ extern "C" u64  eeRead64_arm64(u32 a) { u64 v = memRead64(a); eeDiagLogMem(1, a,
 extern "C" void eeDiagLogMem(int rd, u32 a, u64 v, int w)
 {
 	static int on = -1; static u64 seq = 0; static u64 n = 0;
-	if (on < 0) on = getenv("LRPS2_WLOG") ? 1 : 0;
+	static u32 wlo = 0, whi = 0; static u64 wframe = 0;
+	if (on < 0)
+	{
+		on = getenv("LRPS2_WLOG") ? 1 : 0;
+		// Watch window: LRPS2_WLO/LRPS2_WHI (hex phys addr, half-open range) and
+		// LRPS2_WFRAME (log only from this frame on) -- env-tunable so retargeting
+		// the watch needs no rebuild.
+		const char* s;
+		wlo = (s = getenv("LRPS2_WLO")) ? (u32)strtoul(s, 0, 16) : 0x00018c20;
+		whi = (s = getenv("LRPS2_WHI")) ? (u32)strtoul(s, 0, 16) : 0x00018c30;
+		wframe = (s = getenv("LRPS2_WFRAME")) ? (u64)strtoull(s, 0, 10) : 0;
+	}
 	if (!on) return;
 	const u32 p = a & 0x1fffffff;
-	// Divergent global at 0x00015370 (a kernel/thread-table pointer). Log all
-	// accesses during the target frame (LRPS2_WFRAME) to find the divergent write.
-	if (p < 0x00015360 || p >= 0x00015380) return;
-	const char* wf = getenv("LRPS2_WFRAME");
-	if (wf && g_diag_frame != (u64)strtoull(wf, 0, 10)) return;
+	if (p + (u32)w <= wlo || p >= whi) return;
+	if (g_diag_frame < wframe) return;
 	seq++;
-	if (n < 20000) { n++; fprintf(stderr, "[%c] seq=%llu a=%08x v=%016llx w=%d pc=%08x\n",
-		rd ? 'r' : 'w', (unsigned long long)seq, p, (unsigned long long)v, w, cpuRegs.pc); }
+	if (n < 20000) { n++; fprintf(stderr, "[%c] f=%llu seq=%llu a=%08x v=%016llx w=%d pc=%08x\n",
+		rd ? 'r' : 'w', (unsigned long long)g_diag_frame, (unsigned long long)seq, p, (unsigned long long)v, w, cpuRegs.pc); }
 	// Sync-point RAM dump (LRPS2_DUMP=<path>): on the first D4_MADR write of the
 	// MMX7 stream buffer address, dump main RAM + scratchpad for A/B diffing.
 	if (!rd && p == 0x1000b410 && (u32)v == 0x0162d210)

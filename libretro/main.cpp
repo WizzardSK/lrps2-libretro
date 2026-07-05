@@ -2297,6 +2297,11 @@ void retro_run(void)
 			u64 h = 1469598103934665603ull;
 			const u64* w = reinterpret_cast<const u64*>(ram);
 			for (u32 i = 0; i < (32u << 20) / 8; i++) { h ^= w[i]; h *= 1099511628211ull; }
+			// Scratchpad too -- game state parked in SPR survives frames invisibly
+			// to a main-RAM-only hash (learned the hard way on MMX7 frames 167-216).
+			extern u8* GetEEScratch();
+			if (const u64* s = reinterpret_cast<const u64*>(GetEEScratch()))
+				for (u32 i = 0; i < 16384 / 8; i++) { h ^= s[i]; h *= 1099511628211ull; }
 			extern u32 GetEECycle();
 			fprintf(stderr, "[ramcrc] frame=%llu crc=%016llx cyc=%u\n", (unsigned long long)fr, (unsigned long long)h, GetEECycle());
 			const char* df = getenv("LRPS2_DUMP_FRAME");

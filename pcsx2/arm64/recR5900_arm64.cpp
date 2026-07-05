@@ -44,6 +44,7 @@ extern "C" void eeCancelInstruction_arm64(void);
 extern "C" void eeEventTest_arm64(void);
 extern "C" void eeUpdateCycles_arm64(void);
 extern "C" void eeTraceHook(u32 pc); // Interpreter.cpp (TEMP diagnostic, LRPS2_TRACE)
+extern "C" void eeLogExc(u32 pc);    // Interpreter.cpp (TEMP diagnostic, LRPS2_EXCLOG)
 
 namespace
 {
@@ -445,8 +446,16 @@ namespace
 					case 0x27: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Orr(x0, x0, x1); m.Mvn(x0, x0); StoreGpr(m, x0, gpr, rd); } return true; // NOR
 					case 0x2a: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Cmp(x0, x1); m.Cset(x0, lt); StoreGpr(m, x0, gpr, rd); } return true; // SLT
 					case 0x2b: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Cmp(x0, x1); m.Cset(x0, lo); StoreGpr(m, x0, gpr, rd); } return true; // SLTU
-					case 0x2c: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Add(x0, x0, x1); StoreGpr(m, x0, gpr, rd); } return true; // DADDU
-					case 0x2d: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Sub(x0, x0, x1); StoreGpr(m, x0, gpr, rd); } return true; // DSUBU
+					// funct map: 0x2c=DADD 0x2d=DADDU 0x2e=DSUB 0x2f=DSUBU (the
+					// interpreter's DADD/DSUB don't trap on overflow, so both
+					// pairs emit the same Add/Sub). 0x2d used to emit Sub --
+					// every real DADDU rd,rs,rt computed rs-rt; it survived boot
+					// because `move rd,rs` == `daddu rd,rs,$zero` where rs-0 is
+					// accidentally correct (MMX7 post-logo stall, C.9).
+					case 0x2c:
+					case 0x2d: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Add(x0, x0, x1); StoreGpr(m, x0, gpr, rd); } return true; // DADD/DADDU
+					case 0x2e:
+					case 0x2f: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Sub(x0, x0, x1); StoreGpr(m, x0, gpr, rd); } return true; // DSUB/DSUBU
 					// 64-bit shifts (variable)
 					case 0x14: if (rd) { LoadGpr(m, x0, gpr, rt); LoadGpr(m, x1, gpr, rs); m.Lsl(x0, x0, x1); StoreGpr(m, x0, gpr, rd); } return true; // DSLLV
 					case 0x16: if (rd) { LoadGpr(m, x0, gpr, rt); LoadGpr(m, x1, gpr, rs); m.Lsr(x0, x0, x1); StoreGpr(m, x0, gpr, rd); } return true; // DSRLV
@@ -603,7 +612,7 @@ namespace
 			{
 				case 0x00: case 0x02: case 0x03: case 0x04: case 0x06: case 0x07:
 				case 0x21: case 0x23: case 0x24: case 0x25: case 0x26: case 0x27:
-				case 0x2a: case 0x2b: case 0x2c: case 0x2d:
+				case 0x2a: case 0x2b: case 0x2c: case 0x2d: case 0x2e: case 0x2f:
 				case 0x14: case 0x16: case 0x17: case 0x38: case 0x3a: case 0x3b:
 				case 0x3c: case 0x3e: case 0x3f:
 					return true;
@@ -697,9 +706,12 @@ namespace
 
 		const uint64_t evt = reinterpret_cast<uint64_t>(&eeEventTest_arm64);
 		const uint64_t upd = reinterpret_cast<uint64_t>(&eeUpdateCycles_arm64);
-		const bool nt_evt = (op == 0x04 || op == 0x05); // only BEQ/BNE event-test on not-taken
 
-		if (link > 0) { m.Mov(w0, bpc + 8); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, (u32)link); }
+		// Link value is ZERO-extended to match the interpreter's _SetLink
+		// (R5900.h: UD[0] = u32 pc+4) -- NOT sign-extended as real MIPS64 would.
+		// Kernel return addresses (0x8xxxxxxx) otherwise get 0xffffffff upper
+		// halves that the interpreter path never produces.
+		if (link > 0) { m.Mov(w0, bpc + 8); StoreGpr(m, x0, gpr, (u32)link); }
 		if (is_jr) LoadGpr(m, x20, gpr, rs);
 
 		if (uncond)
@@ -726,12 +738,15 @@ namespace
 		m.Bind(&not_taken);
 		EmitCycleBookkeeping(m, cyc_nt);
 		StorePCImm(m, bpc + 4);
-		// Must flush cpuBlockCycles into cpuRegs.cycle (eeUpdateCycles) BEFORE the
-		// event test, exactly like the taken path -- otherwise a spin/poll loop that
-		// keeps falling through this branch event-tests with a stale cpuRegs.cycle,
-		// so scheduled IPU/DMA/counter events never reach their trigger and the EE
-		// livelocks (MMX7 stuck polling IPU after the logo).
-		if (nt_evt) { m.Mov(x16, upd); m.Blr(x16); m.Mov(x16, evt); m.Blr(x16); }
+		// Mirror the interpreter EXACTLY: of the non-likely conditionals, only
+		// BEQ/BNE call intEventTest() on the not-taken path (BGEZ/BGTZ/BLEZ/BLTZ
+		// and the AL forms do nothing there -- see Interpreter.cpp), and they do
+		// it WITHOUT intUpdateCPUCycles (no cpuBlockCycles flush). Deviating in
+		// either direction (extra/missing test points, or flushing first) shifts
+		// interrupt delivery (EPC) inside wait loops relative to the interpreter,
+		// which cascades into different kernel-scheduler decisions (MMX7 FMV
+		// loader wedge).
+		if (op == 0x04 || op == 0x05) { m.Mov(x16, evt); m.Blr(x16); }
 		EmitChainEpilogue(m);
 		return true;
 	}
@@ -754,6 +769,15 @@ namespace
 		masm.Stp(x19, x20, MemOperand(sp, 0));
 		masm.Stp(x21, x30, MemOperand(sp, 16));
 		masm.Mov(gpr, reinterpret_cast<uint64_t>(&cpuRegs.GPR.r[0]));
+
+		// TEMP diagnostic (LRPS2_EXCLOG): only the EE exception vector blocks
+		// (pc 0x8000_0180/0200) call eeLogExc, dumping COP0 Cause/EPC + cycle.
+		if ((pc & 0x1fffffff) == 0x200 || (pc & 0x1fffffff) == 0x180)
+		{
+			masm.Mov(w0, pc);
+			masm.Mov(x16, reinterpret_cast<uint64_t>(&eeLogExc));
+			masm.Blr(x16);
+		}
 
 		// TEMP diagnostic (LRPS2_TRACE): call eeTraceHook(pc) at block entry so a
 		// full-JIT run can be state-diffed against a pure-interpreter run.
@@ -813,7 +837,26 @@ namespace
 				masm.Mov(x16, reinterpret_cast<uint64_t>(&eeTraceHook));
 				masm.Blr(x16);
 			}
-			if (EmitSimple(masm, gpr, insn)) { cyc += OpCycles(insn); p += 4; n++; continue; }
+			if (EmitSimple(masm, gpr, insn))
+			{
+				cyc += OpCycles(insn); p += 4; n++;
+				// TEMP diagnostic (LRPS2_EE_SPLIT_MEM): execute mem ops natively but
+				// end the block right after each one (shortest-possible native blocks,
+				// like NO_EE_MEM's block shape but keeping native mem execution) -- to
+				// bisect "native mem op is wrong" vs "long native block interaction".
+				static int split_mem = -1;
+				if (split_mem < 0) split_mem = getenv("LRPS2_EE_SPLIT_MEM") ? 1 : 0;
+				const u32 mop = insn >> 26;
+				const bool is_mem = (mop >= 0x20 && mop <= 0x2b) || mop == 0x37 || mop == 0x3f || mop == 0x31 || mop == 0x39;
+				if (split_mem && is_mem)
+				{
+					StorePCImm(masm, p);
+					EmitCycleBookkeeping(masm, cyc);
+					EmitChainEpilogue(masm);
+					done = true; break;
+				}
+				continue;
+			}
 			if (EmitBranch(masm, gpr, p, insn, cyc)) { done = true; break; } // emits bookkeeping + pc + eventtest + chain epilogue
 			break; // unsupported -> interpreter finishes the basic block
 		}
@@ -842,7 +885,18 @@ namespace
 		const u32 ns = Norm(pc), ne = Norm(p > pc ? p : pc + 4);
 		if (InRam(ns)) s_lut[ns >> 2] = fn;
 		for (u32 pg = ns >> kPageShift; pg <= (ne - 1) >> kPageShift; pg++)
+		{
 			s_page[pg].push_back(pc);
+			// Write-protect the source page so ANY host write to it (interpreter
+			// store, JIT wrapper store, SIF/IPU DMA memcpy, overlay load) faults ->
+			// vtlb PageFaultHandler -> mmap_ClearCpuBlock -> Cpu->Clear ->
+			// eeJitClear_arm64 drops the stale blocks. Without this nothing ever
+			// invalidates EE blocks on self-modifying code / game overlay loads
+			// (MMX7 loads an overlay ~frame 111 and later runs STALE translated
+			// code at 0x105138 -> its FMV loader wedges -> post-logo black stall).
+			if (InRam(pg << kPageShift))
+				mmap_MarkCountedRamPage(pg << kPageShift);
+		}
 		return fn;
 	}
 
