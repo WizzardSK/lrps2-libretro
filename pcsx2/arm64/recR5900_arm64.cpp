@@ -361,6 +361,7 @@ namespace
 				return 9;                                       // ALU/shift/JR/JALR/MFHI...
 			case 0x01:                                          // REGIMM branches
 			case 0x04: case 0x05: case 0x06: case 0x07:         // BEQ/BNE/BLEZ/BGTZ
+			case 0x14: case 0x15: case 0x16: case 0x17:         // BEQL/BNEL/BLEZL/BGTZL
 				return 11;                                      // Branch
 			case 0x11:                                          // COP1 (MFC1/MTC1/MOV/NEG/ABS.S)
 				return 7;                                       // CopDefault
@@ -669,7 +670,7 @@ namespace
 		const u32 op = insn >> 26, rs = (insn >> 21) & 31, rt = (insn >> 16) & 31, funct = insn & 0x3f;
 		const int32_t simm = (int16_t)(insn & 0xffff);
 
-		bool uncond = false, is_jr = false, two = false, one = false;
+		bool uncond = false, is_jr = false, two = false, one = false, likely = false;
 		int  link = -1;
 		Condition cond = al;
 		u32  tconst = 0;
@@ -684,11 +685,20 @@ namespace
 		else if (op == 0x05) { two = true; cond = ne; tconst = bpc + 4 + simm * 4; }
 		else if (op == 0x06) { one = true; cond = le; tconst = bpc + 4 + simm * 4; }
 		else if (op == 0x07) { one = true; cond = gt; tconst = bpc + 4 + simm * 4; }
+		// Likely branches: taken == normal (delay slot inline); not-taken SKIPS
+		// the delay slot (continue at bpc+8) and, like the interpreter's
+		// BEQL/BNEL/BLEZL/BGTZL/BLTZL/BGEZL, calls intEventTest there.
+		else if (op == 0x14) { two = true; cond = eq; tconst = bpc + 4 + simm * 4; likely = true; }
+		else if (op == 0x15) { two = true; cond = ne; tconst = bpc + 4 + simm * 4; likely = true; }
+		else if (op == 0x16) { one = true; cond = le; tconst = bpc + 4 + simm * 4; likely = true; }
+		else if (op == 0x17) { one = true; cond = gt; tconst = bpc + 4 + simm * 4; likely = true; }
 		else if (op == 0x01)
 		{
 			const u32 t = bpc + 4 + simm * 4;
 			if      (rt == 0x00) { one = true; cond = lt; tconst = t; }
 			else if (rt == 0x01) { one = true; cond = ge; tconst = t; }
+			else if (rt == 0x02) { one = true; cond = lt; tconst = t; likely = true; } // BLTZL
+			else if (rt == 0x03) { one = true; cond = ge; tconst = t; likely = true; } // BGEZL
 			else if (rt == 0x10) { one = true; cond = lt; tconst = t; link = 31; }
 			else if (rt == 0x11) { one = true; cond = ge; tconst = t; link = 31; }
 			else return false;
@@ -698,6 +708,17 @@ namespace
 		const u32 ds = memRead32(bpc + 4);
 		if (!IsTranslatable(ds))
 			return false;
+
+		// TEMP diagnostic (LRPS2_JIT_STATS): confirm the likely-branch path is
+		// actually exercised (compiled), not just harmless.
+		if (likely && getenv("LRPS2_JIT_STATS"))
+		{
+			static u64 n = 0;
+			n++;
+			if (n <= 5 || (n & 0x3ff) == 0)
+				fprintf(stderr, "[jit] likely branch #%llu compiled at %08x (op=%02x)\n",
+					(unsigned long long)n, bpc, op);
+		}
 
 		// Taken/uncond runs the branch + its delay slot inline; not-taken runs only
 		// the branch (the delay slot at bpc+4 is executed by the continuation).
@@ -737,16 +758,17 @@ namespace
 		EmitChainEpilogue(m);
 		m.Bind(&not_taken);
 		EmitCycleBookkeeping(m, cyc_nt);
-		StorePCImm(m, bpc + 4);
+		// Likely branches skip their delay slot when not taken.
+		StorePCImm(m, bpc + (likely ? 8 : 4));
 		// Mirror the interpreter EXACTLY: of the non-likely conditionals, only
 		// BEQ/BNE call intEventTest() on the not-taken path (BGEZ/BGTZ/BLEZ/BLTZ
-		// and the AL forms do nothing there -- see Interpreter.cpp), and they do
-		// it WITHOUT intUpdateCPUCycles (no cpuBlockCycles flush). Deviating in
-		// either direction (extra/missing test points, or flushing first) shifts
-		// interrupt delivery (EPC) inside wait loops relative to the interpreter,
-		// which cascades into different kernel-scheduler decisions (MMX7 FMV
-		// loader wedge).
-		if (op == 0x04 || op == 0x05) { m.Mov(x16, evt); m.Blr(x16); }
+		// and the AL forms do nothing there -- see Interpreter.cpp); ALL likely
+		// branches do. Always WITHOUT intUpdateCPUCycles (no cpuBlockCycles
+		// flush). Deviating in either direction (extra/missing test points, or
+		// flushing first) shifts interrupt delivery (EPC) inside wait loops
+		// relative to the interpreter, which cascades into different kernel-
+		// scheduler decisions (MMX7 FMV loader wedge).
+		if (op == 0x04 || op == 0x05 || likely) { m.Mov(x16, evt); m.Blr(x16); }
 		EmitChainEpilogue(m);
 		return true;
 	}
