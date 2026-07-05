@@ -1259,13 +1259,19 @@ static void InitializeCPUInfo(void)
 static void SetMTVUAndAffinityControlDefault(SettingsInterface& si)
 {
 	VMManager::EnsureCPUInfoInitialized();
-	// arm64: MTVU works since the worker sets VPU_STAT busy around interpreter
-	// VU1 programs (see MTVU.cpp; without it the interp Execute loop ran zero
-	// instructions -> empty XGKICK packets -> black VU1-drawn scenes, and before
-	// that the worker thread wasn't even spawned outside the x86 microVU init).
-	// Default ON like upstream when enough cores; LRPS2_NO_MTVU=1 disables.
-	const bool mtvu = !getenv("LRPS2_NO_MTVU") && std::thread::hardware_concurrency() >= 3;
-	Console.WriteLn(mtvu ? "  Enabling MTVU." : "  MTVU disabled (LRPS2_NO_MTVU or <3 cores).");
+	// arm64 MTVU status: the worker thread spawns (InitializeCPUProviders) and
+	// sets VPU_STAT busy around interpreter VU1 programs (MTVU.cpp), which makes
+	// MTVU produce correct XGKICK output. However, games driving a CONTINUOUS
+	// VU1 program (an endless microprogram streaming XGKICK packets, e.g. GT3's
+	// arcade attract) deadlock the one-packet-per-program MTVU handoff with the
+	// VU1 INTERPRETER: the worker drip-feeds gsPack mid-program until path1's
+	// 9MB buffer fills (CopyGSPacketData -> WaitGS(true) with an empty
+	// gsPackQueue), while MTGS sits in semaXGkick.Wait() for a program end that
+	// never comes. Needs a partial-packet flush protocol (or a VU recompiler
+	// with upstream's XGKICK handling) -- until then MTVU is OPT-IN:
+	// LRPS2_MTVU=1 (helps VU-light titles; MMX7 verified pixel-identical).
+	const bool mtvu = getenv("LRPS2_MTVU") != nullptr && std::thread::hardware_concurrency() >= 3;
+	Console.WriteLn(mtvu ? "  Enabling MTVU (LRPS2_MTVU opt-in)." : "  MTVU disabled (opt-in via LRPS2_MTVU=1; continuous-kick VU1 programs can deadlock it).");
 	si.SetBoolValue("EmuCore/Speedhacks", "vuThread", mtvu);
 }
 
