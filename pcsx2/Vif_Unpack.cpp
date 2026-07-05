@@ -478,7 +478,9 @@ __ri void _nVifUnpackLoop(const u8* data)
 	//uint vn = (vif.cmd >> 2) & 0x3;
 	//uint vSize = ((32 >> vl) * (vn+1)) / 8;		// size of data (in bytes) used for each write cycle
 
+#ifndef ARCH_ARM64
 	const nVifCall* fnbase = &nVifUpk[((usn * 2 * 16) + upkNum) * (4 * 1)];
+#endif
 	const UNPACKFUNCTYPE ft = VIFfuncTable[idx][doMode ? vifRegs.mode : 0][((usn * 2 * 16) + upkNum)];
 
 	do
@@ -491,8 +493,17 @@ __ri void _nVifUnpackLoop(const u8* data)
 		}
 		else
 		{
+#ifdef ARCH_ARM64
+			// nVifUpk is emitted by the x86 SSE dynarec (newVif_UnpackSSE.cpp),
+			// which isn't built on arm64 -- the table is all NULLs and calling
+			// through it crashed GT3. The portable C table handles the same
+			// no-mode case: upkNum bit 4 selects the doMask variant and
+			// writeXYZW applies the per-cycle mask via vif.cl internally.
+			ft(dest, data);
+#else
 			uint cl3 = std::min(vif.cl, 3);
 			fnbase[cl3](dest, data);
+#endif
 		}
 
 		vif.tag.addr += 16;
