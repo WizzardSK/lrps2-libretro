@@ -19,7 +19,7 @@ RetroArch flatpak + musl test host).
 | VU0/VU1 | Interpreter (VU recompilers are future work) |
 | VIF unpack | Portable C path (x86 SSE dynarec tables are bypassed) |
 | SMC / overlays | Compiled pages are write-protected; faults invalidate stale blocks (vtlb `mmap_MarkCountedRamPage` flow) |
-| MTVU (VU1 thread) | **Experimental, default off** — enable with `LRPS2_MTVU=1`. Verified pixel-identical on MMX7; GT3 currently regresses to black with it on |
+| MTVU (VU1 thread) | **On by default** (≥3 cores; `LRPS2_NO_MTVU=1` disables). Worker sets VPU_STAT busy around interpreter VU1 programs — without it the interp executed zero instructions on the worker |
 | GS renderer | Standard **Vulkan** renderer (`pcsx2_renderer = "Vulkan"`). paraLLEl-GS requires GPU features (8/16-bit storage, small subgroups) that e.g. Adreno 618 lacks |
 | MTGS | Works (GS thread active); MTVU is the only gated thread |
 
@@ -57,7 +57,8 @@ Bisection switches:
 | `LRPS2_NO_EE_MEM/LOAD/STORE/BRANCH/MMI/MULDIV/COP1/LD64=1` | Route the given EE op class to the interpreter |
 | `LRPS2_EE_SPLIT_MEM=1` | End the block after every native mem op |
 | `LRPS2_NO_INLINE_MEM=1` | Disable the inline vtlb fast path (wrapper calls only) |
-| `LRPS2_MTVU=1` | Enable the experimental MTVU worker thread |
+| `LRPS2_NO_MTVU=1` | Disable the MTVU (VU1 worker thread) |
+| `LRPS2_MTVU_LOG=1` | MTVU worker/GS packet + per-path GS byte counters |
 
 Tracing/logging:
 

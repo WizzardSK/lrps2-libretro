@@ -158,7 +158,29 @@ void VU_Thread::ExecuteRingBuffer(void)
 					if (addr != -1)
 						vuRegs[1].VI[REG_TPC].UL = addr & 0x7FF;
 					CpuVU1->SetStartPC(vuRegs[1].VI[REG_TPC].UL << 3);
+					// The EE-side vu1ExecMicro intentionally CLEARS VPU_STAT's VU1
+					// busy bit in MTVU mode ("pretend the VU finished instantly").
+					// The x86 microVU worker doesn't care, but the VU1 INTERPRETER's
+					// Execute loop breaks immediately when the busy bit is clear --
+					// the worker then executes ZERO instructions, produces no XGKICK
+					// output, and every MTVU GS packet arrives empty (GT3's VU1-drawn
+					// FMV went black). Set busy for the duration of the program like
+					// the non-MTVU path does; the interpreter's E-bit end clears it.
+					vuRegs[0].VI[REG_VPU_STAT].UL |= 0x0100;
 					CpuVU1->Execute(vu1RunCycles);
+					// TEMP diagnostic (LRPS2_MTVU_LOG): count worker-side VU1 programs
+					// and the GS-packet bytes they produced.
+					{
+						static int log_on = -1; static u64 n = 0, bytes = 0;
+						if (log_on < 0) log_on = getenv("LRPS2_MTVU_LOG") ? 1 : 0;
+						if (log_on)
+						{
+							n++; bytes += gifUnit.gifPath[GIF_PATH_1].gsPack.size;
+							if (n <= 4 || (n & 0xf) == 0)
+								fprintf(stderr, "[mtvu-w] progs=%llu path1_bytes=%llu\n",
+									(unsigned long long)n, (unsigned long long)bytes);
+						}
+					}
 					gifUnit.gifPath[GIF_PATH_1].FinishGSPacketMTVU();
 					semaXGkick.Post(); // Tell MTGS a path1 packet is complete
 					vuCycles[vuCycleIdx].store(vuRegs[1].cycle, std::memory_order_release);
@@ -194,6 +216,12 @@ void VU_Thread::ExecuteRingBuffer(void)
 					break;
 				case MTVU_VIF_UNPACK:
 				{
+					// TEMP diagnostic (LRPS2_MTVU_LOG)
+					{
+						static int log_on = -1; static u64 n = 0;
+						if (log_on < 0) log_on = getenv("LRPS2_MTVU_LOG") ? 1 : 0;
+						if (log_on) { n++; if (n <= 4 || (n & 0x3ff) == 0) fprintf(stderr, "[mtvu-u] unpacks=%llu\n", (unsigned long long)n); }
+					}
 					u32 vif_copy_size = (uptr)&vif.StructEnd - (uptr)&vif.tag;
 					Read(&vif.tag, vif_copy_size);
 					ReadRegs(&vifRegs);

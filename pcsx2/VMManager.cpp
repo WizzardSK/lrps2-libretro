@@ -1259,12 +1259,13 @@ static void InitializeCPUInfo(void)
 static void SetMTVUAndAffinityControlDefault(SettingsInterface& si)
 {
 	VMManager::EnsureCPUInfoInitialized();
-	// arm64: with MTVU on, the GS never presented a frame (set_image was never
-	// called -> black screen); VU1 runs on the EE thread by default. The MTVU
-	// handoff is still broken/under investigation -- LRPS2_MTVU=1 re-enables it
-	// for debugging without a rebuild.
-	const bool mtvu = getenv("LRPS2_MTVU") != nullptr;
-	Console.WriteLn(mtvu ? "  MTVU ENABLED (LRPS2_MTVU debug)." : "  MTVU disabled (arm64 GS-present experiment).");
+	// arm64: MTVU works since the worker sets VPU_STAT busy around interpreter
+	// VU1 programs (see MTVU.cpp; without it the interp Execute loop ran zero
+	// instructions -> empty XGKICK packets -> black VU1-drawn scenes, and before
+	// that the worker thread wasn't even spawned outside the x86 microVU init).
+	// Default ON like upstream when enough cores; LRPS2_NO_MTVU=1 disables.
+	const bool mtvu = !getenv("LRPS2_NO_MTVU") && std::thread::hardware_concurrency() >= 3;
+	Console.WriteLn(mtvu ? "  Enabling MTVU." : "  MTVU disabled (LRPS2_NO_MTVU or <3 cores).");
 	si.SetBoolValue("EmuCore/Speedhacks", "vuThread", mtvu);
 }
 
