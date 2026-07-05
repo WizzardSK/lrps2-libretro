@@ -80,6 +80,60 @@ void intUpdateCPUCycles()
 
 // These macros are used to assemble the repassembler functions
 
+#ifdef ARCH_ARM64
+// TEMP diagnostic (LRPS2_TRACE=<path>, LRPS2_TRACE_LO/HI=<hex phys pc>): binary
+// (pc, GPR-state-hash) trace for A/B-diffing JIT vs interpreter execution of a
+// pc range. Called per-instruction from execI and per-block-entry from the
+// arm64 EE JIT (recR5900_arm64.cpp CompileBlock).
+volatile u64 g_diag_frame = 0; // set per-frame from retro_run (TEMP diagnostic)
+extern "C" void eeTraceHook(u32 pc)
+{
+	static FILE* f = nullptr; static int on = -1; static u32 lo = 0, hi = 0; static u64 n = 0;
+	static u64 tframe = ~0ull;
+	if (on < 0)
+	{
+		const char* p = getenv("LRPS2_TRACE");
+		const char* l = getenv("LRPS2_TRACE_LO");
+		const char* h = getenv("LRPS2_TRACE_HI");
+		const char* fr = getenv("LRPS2_TRACE_FRAME");
+		if (p && l && h) { f = fopen(p, "wb"); lo = (u32)strtoul(l, 0, 16); hi = (u32)strtoul(h, 0, 16); }
+		if (fr) tframe = (u64)strtoull(fr, 0, 10);
+		on = f ? 1 : 0;
+	}
+	if (!on || n >= 200000000ull) return;
+	if (tframe != ~0ull && g_diag_frame != tframe) return;
+	const u32 pp = pc & 0x1fffffff;
+	if (pp < lo || pp >= hi) return;
+	u64 hsh = 0;
+	for (int i = 1; i < 32; i++) { hsh ^= cpuRegs.GPR.r[i].UD[0] + 0x9e3779b97f4a7c15ull * (u64)i; hsh = (hsh << 7) | (hsh >> 57); }
+	hsh ^= cpuRegs.HI.UD[0]; hsh = (hsh << 7) | (hsh >> 57);
+	hsh ^= cpuRegs.LO.UD[0];
+	u64 rec[2] = { pc, hsh };
+	fwrite(rec, 16, 1, f);
+	// Targeted register dump at the first control-flow divergence (0x0010e2f8
+	// `ld v1,24(s1)` / 0x0010e2fc `sltu v0,v1,s0`). r3=v1 r16=s0 r17=s1 r22=s6.
+	if (pp == 0x0010e2f8 || pp == 0x0010e2fc)
+	{
+		static u64 dn = 0;
+		if (dn < 20) { dn++; fprintf(stderr, "[div] pc=%08x v1(r3)=%016llx s0(r16)=%016llx s1(r17)=%016llx s6(r22)=%016llx\n",
+			pp, (unsigned long long)cpuRegs.GPR.r[3].UD[0], (unsigned long long)cpuRegs.GPR.r[16].UD[0],
+			(unsigned long long)cpuRegs.GPR.r[17].UD[0], (unsigned long long)cpuRegs.GPR.r[22].UD[0]); }
+	}
+	// Compact per-op register line (LRPS2_TRACE_SHOW): dumps a few regs for the
+	// first ~400 in-range ops so a JIT vs interp diff pinpoints the first op that
+	// produces a divergent (sign-extended) value.
+	if (getenv("LRPS2_TRACE_SHOW"))
+	{
+		static u64 sn = 0;
+		if (sn < 400) { sn++; fprintf(stderr, "[op] pc=%08x v0=%016llx v1=%016llx a1=%016llx a2=%016llx t2=%016llx\n",
+			pp, (unsigned long long)cpuRegs.GPR.r[2].UD[0], (unsigned long long)cpuRegs.GPR.r[3].UD[0],
+			(unsigned long long)cpuRegs.GPR.r[5].UD[0], (unsigned long long)cpuRegs.GPR.r[6].UD[0],
+			(unsigned long long)cpuRegs.GPR.r[10].UD[0]); }
+	}
+	if ((++n & 0xffff) == 0) fflush(f);
+}
+#endif
+
 static void execI(void)
 {
 	// execI is called for every instruction so it must remains as light as possible.
@@ -88,6 +142,9 @@ static void execI(void)
 	// Extra note: due to some cycle count issue PCSX2's internal debugger is
 	// not yet usable with the interpreter
 	u32 pc = cpuRegs.pc;
+#ifdef ARCH_ARM64
+	eeTraceHook(pc);
+#endif
 	// We need to increase the pc before executing the memRead32. An exception could appears
 	// and it expects the PC counter to be pre-incremented
 	cpuRegs.pc += 4;
@@ -614,25 +671,49 @@ extern "C" u32  eeRead32_arm64(u32 a)
 	return memRead32(a);
 }
 #else
-extern "C" u32  eeRead32_arm64(u32 a) { return memRead32(a); }
+extern "C" void eeDiagLogMem(int rd, u32 a, u64 v, int w); // fwd (TEMP diagnostic, defined below)
+extern "C" u32  eeRead32_arm64(u32 a) { u32 v = memRead32(a); eeDiagLogMem(1, a, v, 4); return v; }
 #endif
-extern "C" u64  eeRead64_arm64(u32 a) { return memRead64(a); }
-// TEMP diagnostic (LRPS2_WLOG): log EE stores to the MMX7 IPU-handshake RAM
-// regions so a JIT run and a NO_MEM (interpreter) run can be diffed to find the
-// first divergent written value. Called from both the JIT store wrappers below
-// and the interpreter SW/SD ops (R5900OpcodeImpl.cpp).
-extern "C" void eeDiagLogWrite(u32 a, u64 v, int w)
+extern "C" u64  eeRead64_arm64(u32 a) { u64 v = memRead64(a); eeDiagLogMem(1, a, v, 8); return v; }
+// TEMP diagnostic (LRPS2_WLOG): log EE loads/stores touching the MMX7
+// IPU-handshake RAM regions and the IPU registers (0x10002000+) so a JIT run
+// and a NO_MEM (interpreter) run can be diffed to find the first divergent
+// value and the CMD-write/CTRL-poll/CMD-read ordering around it. Called from
+// the JIT mem wrappers below and the interpreter LW/LD/SW/SD ops
+// (R5900OpcodeImpl.cpp).
+extern "C" void eeDiagLogMem(int rd, u32 a, u64 v, int w)
 {
 	static int on = -1; static u64 seq = 0; static u64 n = 0;
 	if (on < 0) on = getenv("LRPS2_WLOG") ? 1 : 0;
 	if (!on) return;
 	const u32 p = a & 0x1fffffff;
-	const bool hot = (p >= 0x01400800 && p <= 0x0140087f) || (p >= 0x004009c0 && p <= 0x004009ff);
-	if (!hot) return;
+	// The divergent 64-bit LD target 0x01fe7c78. Log writes there whose value's
+	// low byte is 0x18 (JIT-wrong) or 0xe8 (interp-correct) — the demuxer-phase
+	// accesses, skipping boot-time noise.
+	if (p != 0x01fe7c78) return;
+	if (rd) return;
+	const u8 lo = (u8)v;
+	if (lo != 0x18 && lo != 0xe8 && lo != 0x00) return;
 	seq++;
-	if (n < 6000) { n++; fprintf(stderr, "[w] seq=%llu a=%08x v=%016llx w=%d\n",
-		(unsigned long long)seq, p, (unsigned long long)v, w); }
+	if (n < 20000) { n++; fprintf(stderr, "[%c] seq=%llu a=%08x v=%016llx w=%d pc=%08x\n",
+		rd ? 'r' : 'w', (unsigned long long)seq, p, (unsigned long long)v, w, cpuRegs.pc); }
+	// Sync-point RAM dump (LRPS2_DUMP=<path>): on the first D4_MADR write of the
+	// MMX7 stream buffer address, dump main RAM + scratchpad for A/B diffing.
+	if (!rd && p == 0x1000b410 && (u32)v == 0x0162d210)
+	{
+		static int dumped = 0;
+		const char* dp = getenv("LRPS2_DUMP");
+		if (dp && !dumped)
+		{
+			dumped = 1;
+			FILE* f = fopen(dp, "wb");
+			if (f) { fwrite(eeMem->Main, 1, Ps2MemSize::MainRam, f);
+			         fwrite(eeMem->Scratch, 1, Ps2MemSize::Scratch, f); fclose(f); }
+			fprintf(stderr, "[dump] RAM+SPR written to %s at seq=%llu\n", dp, (unsigned long long)seq);
+		}
+	}
 }
+extern "C" void eeDiagLogWrite(u32 a, u64 v, int w) { eeDiagLogMem(0, a, v, w); }
 extern "C" void eeWrite8_arm64 (u32 a, u32 v) { eeDiagLogWrite(a, v, 1); memWrite8(a, (u8)v); }
 extern "C" void eeWrite16_arm64(u32 a, u32 v) { eeDiagLogWrite(a, v, 2); memWrite16(a, (u16)v); }
 extern "C" void eeWrite32_arm64(u32 a, u32 v) { eeDiagLogWrite(a, v, 4); memWrite32(a, v); }

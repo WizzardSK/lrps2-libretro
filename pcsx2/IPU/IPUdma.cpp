@@ -42,6 +42,14 @@ static __fi int IPU1chain(void)
 
 	if (pMem)
 	{
+		// TEMP diagnostic (LRPS2_WLOG): log the DMA source addr + leading data
+		// words fed to the IPU input FIFO, to diff a JIT vs NO_MEM run.
+		{
+			static int on = -1; static int n = 0;
+			if (on < 0) on = getenv("LRPS2_WLOG") ? 1 : 0;
+			if (on && n < 400) { n++; fprintf(stderr, "[d] madr=%08x qwc=%d w0=%08x %08x %08x %08x\n",
+				ipu1ch.madr, ipu1ch.qwc, pMem[0], pMem[1], pMem[2], pMem[3]); }
+		}
 		//Write our data to the FIFO
 		int qwc      = ipu_fifo.in.write(pMem, ipu1ch.qwc);
 		ipu1ch.madr += qwc << 4;

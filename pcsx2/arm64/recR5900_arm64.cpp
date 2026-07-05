@@ -43,6 +43,7 @@ extern "C" void eeWrite32_arm64(u32, u32), eeWrite64_arm64(u32, u64);
 extern "C" void eeCancelInstruction_arm64(void);
 extern "C" void eeEventTest_arm64(void);
 extern "C" void eeUpdateCycles_arm64(void);
+extern "C" void eeTraceHook(u32 pc); // Interpreter.cpp (TEMP diagnostic, LRPS2_TRACE)
 
 namespace
 {
@@ -338,19 +339,50 @@ namespace
 		}
 	}
 
-	// Per-opcode cycle cost, mirroring R5900OpcodeTables.cpp: Default=9, Branch=11,
-	// Mult=2*8=16, Div=14*8=112. Used to accumulate cpuBlockCycles accurately
+	// Per-opcode cycle cost, mirroring R5900OpcodeTables.cpp exactly (Cycles::*):
+	// Default=9, Branch=11, CopDefault=7, Mult=2*8=16, Div=14*8=112, Load=14,
+	// Store=14, MMI_Default=14. Used to accumulate cpuBlockCycles accurately
 	// (cpuBlockCycles += cost * (2 - CP0.Config[18]), summed over the block's ops).
+	// NOTE: loads/stores/COP1-moves/MMI must NOT fall through to Default(9) --
+	// undercounting their cost makes the JIT's cpuRegs.cycle lag the interpreter's,
+	// so scheduled vsync/timer/DMA interrupts fire at different instruction
+	// boundaries. That timing drift is what made MMX7 stall after the logo (the EE
+	// idle loop 0x00081fc0 spins waiting for an interrupt that the JIT delivered
+	// late relative to a NO_EE_MEM reference).
 	int OpCycles(u32 insn)
 	{
 		const u32 op = insn >> 26, funct = insn & 0x3f;
-		if (op == 0x00)
+		switch (op)
 		{
-			if (funct == 0x18 || funct == 0x19) return 16;  // MULT/MULTU
-			if (funct == 0x1a || funct == 0x1b) return 112; // DIV/DIVU
+			case 0x00: // SPECIAL
+				if (funct == 0x18 || funct == 0x19) return 16;  // MULT/MULTU
+				if (funct == 0x1a || funct == 0x1b) return 112; // DIV/DIVU
+				return 9;                                       // ALU/shift/JR/JALR/MFHI...
+			case 0x01:                                          // REGIMM branches
+			case 0x04: case 0x05: case 0x06: case 0x07:         // BEQ/BNE/BLEZ/BGTZ
+				return 11;                                      // Branch
+			case 0x11:                                          // COP1 (MFC1/MTC1/MOV/NEG/ABS.S)
+				return 7;                                       // CopDefault
+			case 0x1c:                                          // MMI (packed integer)
+				return 14;                                      // MMI_Default
+			case 0x1a: case 0x1b:                               // LDL/LDR
+			case 0x1e:                                          // LQ
+			case 0x20: case 0x21: case 0x22: case 0x23:         // LB/LH/LWL/LW
+			case 0x24: case 0x25: case 0x26: case 0x27:         // LBU/LHU/LWR/LWU
+			case 0x31:                                          // LWC1
+			case 0x36:                                          // LQC2
+			case 0x37:                                          // LD
+				return 14;                                      // Load
+			case 0x1f:                                          // SQ
+			case 0x28: case 0x29: case 0x2a: case 0x2b:         // SB/SH/SWL/SW
+			case 0x2c: case 0x2d: case 0x2e:                    // SDL/SDR/SWR
+			case 0x39:                                          // SWC1
+			case 0x3e:                                          // SQC2
+			case 0x3f:                                          // SD
+				return 14;                                      // Store
+			default:
+				return 9;                                       // Default (addi/ori/lui/J/JAL/daddi...)
 		}
-		if (op == 0x01 || op == 0x04 || op == 0x05 || op == 0x06 || op == 0x07) return 11; // Branch
-		return 9; // Default (incl. JR/JALR/J/JAL)
 	}
 
 	// Translate one simple integer ALU op (32- and 64-bit forms). Returns false,
@@ -723,6 +755,24 @@ namespace
 		masm.Stp(x21, x30, MemOperand(sp, 16));
 		masm.Mov(gpr, reinterpret_cast<uint64_t>(&cpuRegs.GPR.r[0]));
 
+		// TEMP diagnostic (LRPS2_TRACE): call eeTraceHook(pc) at block entry so a
+		// full-JIT run can be state-diffed against a pure-interpreter run.
+		{
+			static int trc = -1; static u32 tlo = 0, thi = 0;
+			if (trc < 0)
+			{
+				const char* l = getenv("LRPS2_TRACE_LO"); const char* h = getenv("LRPS2_TRACE_HI");
+				trc = (getenv("LRPS2_TRACE") && !getenv("LRPS2_TRACE_STEP") && l && h) ? 1 : 0;
+				if (trc) { tlo = (u32)strtoul(l, 0, 16); thi = (u32)strtoul(h, 0, 16); }
+			}
+			if (trc && (pc & 0x1fffffff) >= tlo && (pc & 0x1fffffff) < thi)
+			{
+				masm.Mov(w0, pc);
+				masm.Mov(x16, reinterpret_cast<uint64_t>(&eeTraceHook));
+				masm.Blr(x16);
+			}
+		}
+
 		// TEMP: one-shot disasm dump of the MMX7 stall loop block range.
 		if (getenv("LRPS2_DUMP_STALL") && (pc & 0x1fffffff) >= 0x0010b7a8 && (pc & 0x1fffffff) <= 0x0010bd74)
 		{
@@ -745,9 +795,24 @@ namespace
 		int n = 0;
 		int cyc = 0; // raw sum of the leading translated ops' cycle costs
 		bool done = false;
+		// TEMP diagnostic (LRPS2_TRACE_STEP): per-instruction trace-hook calls so
+		// the JIT pc stream is 1:1 comparable with a pure-interpreter run.
+		static int trcstep = -1; static u32 slo = 0, shi = 0;
+		if (trcstep < 0)
+		{
+			const char* l = getenv("LRPS2_TRACE_LO"); const char* h = getenv("LRPS2_TRACE_HI");
+			trcstep = (getenv("LRPS2_TRACE_STEP") && l && h) ? 1 : 0;
+			if (trcstep) { slo = (u32)strtoul(l, 0, 16); shi = (u32)strtoul(h, 0, 16); }
+		}
 		while (n < kMaxInsns)
 		{
 			const u32 insn = memRead32(p);
+			if (trcstep && (p & 0x1fffffff) >= slo && (p & 0x1fffffff) < shi && IsTranslatable(insn))
+			{
+				masm.Mov(w0, p);
+				masm.Mov(x16, reinterpret_cast<uint64_t>(&eeTraceHook));
+				masm.Blr(x16);
+			}
 			if (EmitSimple(masm, gpr, insn)) { cyc += OpCycles(insn); p += 4; n++; continue; }
 			if (EmitBranch(masm, gpr, p, insn, cyc)) { done = true; break; } // emits bookkeeping + pc + eventtest + chain epilogue
 			break; // unsupported -> interpreter finishes the basic block
