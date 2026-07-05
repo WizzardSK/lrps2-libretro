@@ -837,6 +837,12 @@ void VMManager::InitializeCPUProviders()
 	// recompiler (recCpu, Phase C.3) so their code caches/self-tests come up.
 	psxRec.Reserve();
 	recCpu.Reserve();
+	// The MTVU worker thread is normally spawned by recMicroVU1::Reserve()
+	// (x86/microVU.cpp), which doesn't exist in this build -- with vuThread
+	// enabled the EE would push to vu1Thread's ring and wait on its WorkSema
+	// forever (boot hang / black screen). The worker runs VU1 through
+	// CpuVU1->Execute(), so it works with the VU interpreter provider too.
+	vu1Thread.Open();
 #endif
 
 	GSCodeReserve::GetInstance().Assign(GetVmMemory().CodeMemory());
@@ -862,6 +868,7 @@ void VMManager::ShutdownCPUProviders()
 	psxRec.Shutdown();
 	recCpu.Shutdown();
 #else
+	vu1Thread.Close();
 	psxRec.Shutdown();
 	recCpu.Shutdown();
 #endif
@@ -1252,10 +1259,13 @@ static void InitializeCPUInfo(void)
 static void SetMTVUAndAffinityControlDefault(SettingsInterface& si)
 {
 	VMManager::EnsureCPUInfoInitialized();
-	// arm64 experiment: with MTVU on, the GS never presented a frame (set_image
-	// was never called -> black screen). Run VU1 on the EE thread instead.
-	Console.WriteLn("  MTVU disabled (arm64 GS-present experiment).");
-	si.SetBoolValue("EmuCore/Speedhacks", "vuThread", false);
+	// arm64: with MTVU on, the GS never presented a frame (set_image was never
+	// called -> black screen); VU1 runs on the EE thread by default. The MTVU
+	// handoff is still broken/under investigation -- LRPS2_MTVU=1 re-enables it
+	// for debugging without a rebuild.
+	const bool mtvu = getenv("LRPS2_MTVU") != nullptr;
+	Console.WriteLn(mtvu ? "  MTVU ENABLED (LRPS2_MTVU debug)." : "  MTVU disabled (arm64 GS-present experiment).");
+	si.SetBoolValue("EmuCore/Speedhacks", "vuThread", mtvu);
 }
 
 #else
