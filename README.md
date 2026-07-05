@@ -21,7 +21,7 @@ RetroArch flatpak + musl test host).
 | SMC / overlays | Compiled pages are write-protected; faults invalidate stale blocks (vtlb `mmap_MarkCountedRamPage` flow) |
 | MTVU (VU1 thread) | **On by default** (≥3 cores; `LRPS2_NO_MTVU=1` disables). Worker sets VPU_STAT busy around interpreter VU1 programs — without it the interp executed zero instructions on the worker |
 | GS renderer | Standard **Vulkan** renderer (`pcsx2_renderer = "Vulkan"`). paraLLEl-GS requires GPU features (8/16-bit storage, small subgroups) that e.g. Adreno 618 lacks |
-| MTGS | Works (GS thread active); MTVU is the only gated thread |
+| MTGS | Works (GS thread active) |
 
 Correctness methodology: headless libretro harness runs are compared for
 byte-identical framebuffer output against the interpreter (`LRPS2_NO_EEREC=1`)
