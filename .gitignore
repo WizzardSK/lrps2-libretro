@@ -108,3 +108,5 @@ build*/
 *.files
 *.includes
 *.autosave
+*.o
+*.d
