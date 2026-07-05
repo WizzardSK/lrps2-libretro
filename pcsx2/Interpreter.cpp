@@ -86,6 +86,7 @@ void intUpdateCPUCycles()
 // pc range. Called per-instruction from execI and per-block-entry from the
 // arm64 EE JIT (recR5900_arm64.cpp CompileBlock).
 volatile u64 g_diag_frame = 0; // set per-frame from retro_run (TEMP diagnostic)
+u32 GetEECycle(void) { return cpuRegs.cycle; } // TEMP diagnostic (LRPS2_RAMCRC)
 extern "C" void eeTraceHook(u32 pc)
 {
 	static FILE* f = nullptr; static int on = -1; static u32 lo = 0, hi = 0; static u64 n = 0;
@@ -687,13 +688,11 @@ extern "C" void eeDiagLogMem(int rd, u32 a, u64 v, int w)
 	if (on < 0) on = getenv("LRPS2_WLOG") ? 1 : 0;
 	if (!on) return;
 	const u32 p = a & 0x1fffffff;
-	// The divergent 64-bit LD target 0x01fe7c78. Log writes there whose value's
-	// low byte is 0x18 (JIT-wrong) or 0xe8 (interp-correct) — the demuxer-phase
-	// accesses, skipping boot-time noise.
-	if (p != 0x01fe7c78) return;
-	if (rd) return;
-	const u8 lo = (u8)v;
-	if (lo != 0x18 && lo != 0xe8 && lo != 0x00) return;
+	// Divergent global at 0x00015370 (a kernel/thread-table pointer). Log all
+	// accesses during the target frame (LRPS2_WFRAME) to find the divergent write.
+	if (p < 0x00015360 || p >= 0x00015380) return;
+	const char* wf = getenv("LRPS2_WFRAME");
+	if (wf && g_diag_frame != (u64)strtoull(wf, 0, 10)) return;
 	seq++;
 	if (n < 20000) { n++; fprintf(stderr, "[%c] seq=%llu a=%08x v=%016llx w=%d pc=%08x\n",
 		rd ? 'r' : 'w', (unsigned long long)seq, p, (unsigned long long)v, w, cpuRegs.pc); }

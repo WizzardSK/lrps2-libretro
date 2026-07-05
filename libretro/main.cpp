@@ -2297,7 +2297,8 @@ void retro_run(void)
 			u64 h = 1469598103934665603ull;
 			const u64* w = reinterpret_cast<const u64*>(ram);
 			for (u32 i = 0; i < (32u << 20) / 8; i++) { h ^= w[i]; h *= 1099511628211ull; }
-			fprintf(stderr, "[ramcrc] frame=%llu crc=%016llx\n", (unsigned long long)fr, (unsigned long long)h);
+			extern u32 GetEECycle();
+			fprintf(stderr, "[ramcrc] frame=%llu crc=%016llx cyc=%u\n", (unsigned long long)fr, (unsigned long long)h, GetEECycle());
 			const char* df = getenv("LRPS2_DUMP_FRAME");
 			const char* dp = getenv("LRPS2_DUMP");
 			if (df && dp && fr == (u64)strtoull(df, 0, 10))
