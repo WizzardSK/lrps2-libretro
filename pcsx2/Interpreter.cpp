@@ -88,6 +88,11 @@ void intUpdateCPUCycles()
 volatile u64 g_diag_frame = 0; // set per-frame from retro_run (TEMP diagnostic)
 u32 GetEECycle(void) { return cpuRegs.cycle; } // TEMP diagnostic (LRPS2_RAMCRC)
 
+// Diagnostic hooks cost two calls per interpreted op even when disabled (they
+// showed up in GT3 attract profiles); execI gates them on this one bool,
+// resolved once at load (plain load, no magic-static guard in the hot path).
+static const bool s_eeDiagHooks = getenv("LRPS2_TRACE") || getenv("LRPS2_EXCLOG");
+
 // TEMP diagnostic (LRPS2_EXCLOG=<path>): log COP0 Cause/EPC/Status/Count +
 // cpuRegs.cycle + frame at every entry to the EE interrupt vector 0x80000200,
 // so a full-JIT run and a NO_EE_MEM run can be diffed to see whether interrupts
@@ -179,8 +184,11 @@ static void execI(void)
 	// not yet usable with the interpreter
 	u32 pc = cpuRegs.pc;
 #ifdef ARCH_ARM64
-	eeTraceHook(pc);
-	eeLogExc(pc);
+	if (s_eeDiagHooks)
+	{
+		eeTraceHook(pc);
+		eeLogExc(pc);
+	}
 #endif
 	// We need to increase the pc before executing the memRead32. An exception could appears
 	// and it expects the PC counter to be pre-incremented

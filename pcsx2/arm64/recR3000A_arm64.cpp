@@ -45,7 +45,11 @@ namespace
 	size_t s_code_pos = 0;
 	bool   s_ok       = false;
 
-	std::unordered_map<u32, BlockFn>          s_blocks;
+	// end = Norm(one past the last byte covered by NATIVE code). The interpreter
+	// tail of a partial block reads live memory, so only [Norm(pc), end) needs
+	// SMC invalidation; end == Norm(pc) for blocks with no native lead.
+	struct BlockRec { BlockFn fn; u32 end; };
+	std::unordered_map<u32, BlockRec>         s_blocks;
 	std::unordered_map<u32, std::vector<u32>> s_page;
 
 	inline u32 Norm(u32 a) { return a & 0x1fffffff; }
@@ -58,6 +62,17 @@ namespace
 	BlockFn*      s_lut      = nullptr;
 	inline bool InRam(u32 np) { return np < kRamBytes; }
 	inline void LutClearAll() { if (s_lut) madvise(s_lut, (size_t)kRamWords * sizeof(BlockFn), MADV_DONTNEED); }
+
+	// Word-granular "native code covers this RAM word" bitmap (64KB). Every IOP
+	// RAM store lands in recClearIOP, so the common case (word with no compiled
+	// code on it) must be a single bit test, not a hash lookup. Bits can go
+	// stale after a block is erased; the slow path self-cleans them.
+	u8 s_covered[kRamWords >> 3];
+	inline void CoverRange(u32 ns, u32 ne)
+	{
+		for (u32 w = ns >> 2; w < ((ne + 3) >> 2); w++)
+			s_covered[w >> 3] |= 1u << (w & 7);
+	}
 
 	bool VixlEmitSelfTest()
 	{
@@ -307,6 +322,7 @@ namespace
 			s_blocks.clear();
 			s_page.clear();
 			LutClearAll();
+			memset(s_covered, 0, sizeof(s_covered));
 			s_code_pos = 0;
 		}
 
@@ -349,11 +365,18 @@ namespace
 		s_code_pos += (sz + 15) & ~size_t(15);
 
 		BlockFn fn = reinterpret_cast<BlockFn>(start);
-		s_blocks.emplace(pc, fn);
-		const u32 ns = Norm(pc), ne = Norm(p > pc ? p : pc + 4);
+		// Native code covers the leading run; a translated branch also bakes the
+		// branch + delay slot (p still points at the branch instruction there).
+		const u32 ns = Norm(pc), ne = Norm(done ? p + 8 : p);
+		s_blocks.emplace(pc, BlockRec{fn, ne});
 		if (InRam(ns)) s_lut[ns >> 2] = fn;
-		for (u32 pg = ns >> kPageShift; pg <= (ne - 1) >> kPageShift; pg++)
-			s_page[pg].push_back(pc);
+		if (ne > ns)
+		{
+			for (u32 pg = ns >> kPageShift; pg <= (ne - 1) >> kPageShift; pg++)
+				s_page[pg].push_back(pc);
+			if (InRam(ne - 1))
+				CoverRange(ns, ne);
+		}
 		return fn;
 	}
 
@@ -366,7 +389,7 @@ namespace
 			return f ? f : CompileBlock(pc);
 		}
 		auto it = s_blocks.find(pc);
-		return it != s_blocks.end() ? it->second : CompileBlock(pc);
+		return it != s_blocks.end() ? it->second.fn : CompileBlock(pc);
 	}
 }
 
@@ -394,28 +417,70 @@ static void recResetIOP(void)
 	s_blocks.clear();
 	s_page.clear();
 	LutClearAll();
+	memset(s_covered, 0, sizeof(s_covered));
 	s_code_pos = 0;
 }
 
-static void recClearIOP(u32 addr, u32 size)
+// Erase only the blocks whose NATIVE range [Norm(pc), end) intersects the
+// (inclusive) byte range [a0, a1]. Page lists keep the survivors; entries for
+// blocks already erased via a neighbouring page are dropped lazily.
+static void EraseBlocksInRange(u32 a0, u32 a1)
 {
-	if (s_blocks.empty())
-		return;
-	const u32 a0 = Norm(addr);
-	const u32 a1 = Norm(addr + (size ? size : 1) * 4 - 1);
 	for (u32 pg = a0 >> kPageShift; pg <= a1 >> kPageShift; pg++)
 	{
 		auto it = s_page.find(pg);
 		if (it == s_page.end())
 			continue;
-		for (u32 spc : it->second)
+		auto& vec = it->second;
+		size_t out = 0;
+		for (size_t i = 0; i < vec.size(); i++)
 		{
-			s_blocks.erase(spc);
-			const u32 np = Norm(spc);
-			if (InRam(np)) s_lut[np >> 2] = nullptr;
+			const u32 spc = vec[i];
+			auto bit = s_blocks.find(spc);
+			if (bit == s_blocks.end())
+				continue; // stale (erased through another page it spanned)
+			const u32 ns = Norm(spc), ne = bit->second.end;
+			if (ns <= a1 && ne > a0)
+			{
+				s_blocks.erase(bit);
+				if (InRam(ns)) s_lut[ns >> 2] = nullptr;
+				continue;
+			}
+			vec[out++] = spc;
 		}
-		s_page.erase(it);
+		if (out == 0)
+			s_page.erase(it);
+		else
+			vec.resize(out);
 	}
+}
+
+static void recClearIOP(u32 addr, u32 size)
+{
+	const u32 a0 = Norm(addr);
+	const u32 a1 = Norm(addr + (size ? size : 1) * 4 - 1);
+	if (a0 <= a1 && a1 < kRamBytes)
+	{
+		// RAM fast path (every IOP store lands here, typically 1 word with no
+		// code on it). Ranges are whole words: callers pass addr&~3 + word
+		// counts, and block bounds are 4-aligned, so word-level tests match
+		// the byte-level intersection exactly.
+		bool covered = false;
+		for (u32 w = a0 >> 2; w <= (a1 >> 2) && !covered; w++)
+			covered = (s_covered[w >> 3] >> (w & 7)) & 1;
+		if (!covered)
+			return;
+		EraseBlocksInRange(a0, a1);
+		// Nothing overlaps [a0, a1] anymore -- clear the bits so the next
+		// store to these words takes the fast path again (self-cleans bits
+		// left stale by blocks erased through other words).
+		for (u32 w = a0 >> 2; w <= (a1 >> 2); w++)
+			s_covered[w >> 3] &= ~(1u << (w & 7));
+		return;
+	}
+	if (s_blocks.empty())
+		return;
+	EraseBlocksInRange(a0, a1);
 }
 
 static s32 recExecuteBlock(s32 eeCycles)
@@ -437,6 +502,7 @@ static void recShutdown(void)
 {
 	s_blocks.clear();
 	s_page.clear();
+	memset(s_covered, 0, sizeof(s_covered));
 	if (s_code) { munmap(s_code, kCodeCacheSize); s_code = nullptr; }
 	s_code_pos = 0;
 }

@@ -825,7 +825,8 @@ namespace
 
 		// TEMP diagnostic (LRPS2_JIT_STATS): confirm the likely-branch path is
 		// actually exercised (compiled), not just harmless.
-		if (likely && getenv("LRPS2_JIT_STATS"))
+		static const bool jit_stats = getenv("LRPS2_JIT_STATS") != nullptr;
+		if (likely && jit_stats)
 		{
 			static u64 n = 0;
 			n++;
