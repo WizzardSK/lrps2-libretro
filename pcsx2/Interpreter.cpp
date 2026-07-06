@@ -20,6 +20,9 @@
 #include "../common/FastJmp.h"
 
 #include <float.h>
+#include <unordered_map>
+#include <vector>
+#include <algorithm>
 
 static int branch2 = 0;
 #ifdef ARCH_ARM64
@@ -686,12 +689,46 @@ static void intExecute(void)
 // arm64 EE recompiler entry points (provider recCpu, assembled below). They live
 // here so they can use the static execute loop, branch2, execI and intJmpBuf.
 
+// TEMP diagnostic (LRPS2_HANDOFF_STATS=1): dynamic histogram of the opcodes the
+// JIT hands off to the interpreter, keyed by (op, funct, subop) so MMI/REGIMM/
+// COPx sub-ops separate. Dumps the top of the table every 100M interpreted ops;
+// this is what decides which ops are worth translating next.
+static const bool s_handoffStats = getenv("LRPS2_HANDOFF_STATS") != nullptr;
+static void eeHandoffCount(u32 insn)
+{
+	static std::unordered_map<u32, u64> h; static u64 n = 0;
+	const u32 op = insn >> 26;
+	u32 key = op << 16;
+	if      (op == 0x00) key |= (insn & 0x3f) << 8;                            // SPECIAL: funct
+	else if (op == 0x01) key |= ((insn >> 16) & 0x1f) << 8;                    // REGIMM: rt
+	else if (op == 0x1c) key |= ((insn & 0x3f) << 8) | ((insn >> 6) & 0x1f);   // MMI: funct+subop
+	else if (op == 0x10 || op == 0x11 || op == 0x12)
+		key |= ((insn >> 21) & 0x1f) << 8;                                     // COPx: rs field
+	h[key]++;
+	if (++n % 100000000 != 0)
+		return;
+	std::vector<std::pair<u32, u64>> v(h.begin(), h.end());
+	const size_t k = v.size() < 24 ? v.size() : 24;
+	std::partial_sort(v.begin(), v.begin() + k, v.end(), [](auto& x, auto& y) { return x.second > y.second; });
+	fprintf(stderr, "=== EE handoff histogram (%lluM interp ops, uniq=%zu) ===\n",
+		(unsigned long long)(n / 1000000), v.size());
+	for (size_t i = 0; i < k; i++)
+		fprintf(stderr, "  op=%02x funct=%02x sub=%02x  %llu\n",
+			v[i].first >> 16, (v[i].first >> 8) & 0xff, v[i].first & 0xff,
+			(unsigned long long)v[i].second);
+}
+
 // Run a single EE basic block through the interpreter (instructions until the
 // next taken branch). The arm64 JIT's per-PC blocks call this for now (Phase
 // C.3-1); later phases translate the instructions natively.
 extern "C" void eeRunBasicBlock_arm64(void)
 {
 	branch2 = 0;
+	if (s_handoffStats)
+	{
+		do { eeHandoffCount(memRead32(cpuRegs.pc)); execI(); } while (!branch2);
+		return;
+	}
 	do { execI(); } while (!branch2);
 }
 
@@ -795,6 +832,93 @@ extern "C" void eeWrite16_arm64(u32 a, u32 v) { eeDiagLogWrite(a, v, 2); memWrit
 extern "C" void eeWrite32_arm64(u32 a, u32 v) { eeDiagLogWrite(a, v, 4); memWrite32(a, v); }
 extern "C" void eeWrite64_arm64(u32 a, u64 v) { eeDiagLogWrite(a, v, 8); memWrite64(a, v); }
 extern "C" void eeCancelInstruction_arm64(void) { Cpu->CancelInstruction(); }
+// Unaligned load/store family (LWL/LWR/LDL/LDR, SWL/SWR/SDL/SDR), called from
+// the arm64 EE JIT (C.16) with the decoded rt index. Line-for-line mirrors of
+// the interpreter ops (R5900OpcodeImpl.cpp) -- they merge with the existing
+// register/memory contents at the aligned address and never take a misalign
+// exception, so translating them is a plain helper call.
+extern "C" void eeLWL_arm64(u32 addr, u32 rt)
+{
+	static const u32 MASK[4]  = { 0xffffff, 0x0000ffff, 0x000000ff, 0x00000000 };
+	static const u8  SHIFT[4] = { 24, 16, 8, 0 };
+	const u32 shift = addr & 3;
+	const u32 mem   = memRead32(addr & ~3);
+	if (!rt) return;
+	cpuRegs.GPR.r[rt].SD[0] = (s32)((cpuRegs.GPR.r[rt].UL[0] & MASK[shift]) | (mem << SHIFT[shift]));
+}
+extern "C" void eeLWR_arm64(u32 addr, u32 rt)
+{
+	static const u32 MASK[4]  = { 0x000000, 0xff000000, 0xffff0000, 0xffffff00 };
+	static const u8  SHIFT[4] = { 0, 8, 16, 24 };
+	const u32 shift = addr & 3;
+	u32 mem         = memRead32(addr & ~3);
+	if (!rt) return;
+	mem = (cpuRegs.GPR.r[rt].UL[0] & MASK[shift]) | (mem >> SHIFT[shift]);
+	if (shift == 0) cpuRegs.GPR.r[rt].SD[0] = (s32)mem; // sign-extends into 64
+	else            cpuRegs.GPR.r[rt].UL[0] = mem;      // upper 32 preserved
+}
+static const u64 s_LDL_MASK[8] =
+{	0x00ffffffffffffffULL, 0x0000ffffffffffffULL, 0x000000ffffffffffULL, 0x00000000ffffffffULL,
+	0x0000000000ffffffULL, 0x000000000000ffffULL, 0x00000000000000ffULL, 0x0000000000000000ULL
+};
+static const u64 s_LDR_MASK[8] =
+{	0x0000000000000000ULL, 0xff00000000000000ULL, 0xffff000000000000ULL, 0xffffff0000000000ULL,
+	0xffffffff00000000ULL, 0xffffffffff000000ULL, 0xffffffffffff0000ULL, 0xffffffffffffff00ULL
+};
+extern "C" void eeLDL_arm64(u32 addr, u32 rt)
+{
+	static const u8 SHIFT[8] = { 56, 48, 40, 32, 24, 16, 8, 0 };
+	const u32 shift = addr & 7;
+	const u64 mem   = memRead64(addr & ~7);
+	if (!rt) return;
+	cpuRegs.GPR.r[rt].UD[0] = (cpuRegs.GPR.r[rt].UD[0] & s_LDL_MASK[shift]) | (mem << SHIFT[shift]);
+}
+extern "C" void eeLDR_arm64(u32 addr, u32 rt)
+{
+	static const u8 SHIFT[8] = { 0, 8, 16, 24, 32, 40, 48, 56 };
+	const u32 shift = addr & 7;
+	const u64 mem   = memRead64(addr & ~7);
+	if (!rt) return;
+	cpuRegs.GPR.r[rt].UD[0] = (cpuRegs.GPR.r[rt].UD[0] & s_LDR_MASK[shift]) | (mem >> SHIFT[shift]);
+}
+extern "C" void eeSWL_arm64(u32 addr, u32 rt)
+{
+	static const u32 MASK[4]  = { 0xffffff00, 0xffff0000, 0xff000000, 0x00000000 };
+	static const u8  SHIFT[4] = { 24, 16, 8, 0 };
+	const u32 shift = addr & 3;
+	const u32 mem   = memRead32(addr & ~3);
+	memWrite32(addr & ~3, (cpuRegs.GPR.r[rt].UL[0] >> SHIFT[shift]) | (mem & MASK[shift]));
+}
+extern "C" void eeSWR_arm64(u32 addr, u32 rt)
+{
+	static const u32 MASK[4]  = { 0x00000000, 0x000000ff, 0x0000ffff, 0x00ffffff };
+	static const u8  SHIFT[4] = { 0, 8, 16, 24 };
+	const u32 shift = addr & 3;
+	const u32 mem   = memRead32(addr & ~3);
+	memWrite32(addr & ~3, (cpuRegs.GPR.r[rt].UL[0] << SHIFT[shift]) | (mem & MASK[shift]));
+}
+extern "C" void eeSDL_arm64(u32 addr, u32 rt)
+{
+	static const u64 MASK[8] =
+	{	0xffffffffffffff00ULL, 0xffffffffffff0000ULL, 0xffffffffff000000ULL, 0xffffffff00000000ULL,
+		0xffffff0000000000ULL, 0xffff000000000000ULL, 0xff00000000000000ULL, 0x0000000000000000ULL
+	};
+	static const u8 SHIFT[8] = { 56, 48, 40, 32, 24, 16, 8, 0 };
+	const u32 shift = addr & 7;
+	const u64 mem   = memRead64(addr & ~7);
+	memWrite64(addr & ~7, (cpuRegs.GPR.r[rt].UD[0] >> SHIFT[shift]) | (mem & MASK[shift]));
+}
+extern "C" void eeSDR_arm64(u32 addr, u32 rt)
+{
+	static const u64 MASK[8] =
+	{	0x0000000000000000ULL, 0x00000000000000ffULL, 0x000000000000ffffULL, 0x0000000000ffffffULL,
+		0x00000000ffffffffULL, 0x000000ffffffffffULL, 0x0000ffffffffffffULL, 0x00ffffffffffffffULL
+	};
+	static const u8 SHIFT[8] = { 0, 8, 16, 24, 32, 40, 48, 56 };
+	const u32 shift = addr & 7;
+	const u64 mem   = memRead64(addr & ~7);
+	memWrite64(addr & ~7, (cpuRegs.GPR.r[rt].UD[0] << SHIFT[shift]) | (mem & MASK[shift]));
+}
 // EE event test, called by the JIT after BEQ/BNE not-taken and (with the cycle
 // update) after every taken/unconditional branch -- matching doBranch() and the
 // interpreter branch handlers. intUpdateCPUCycles() flushes cpuBlockCycles into

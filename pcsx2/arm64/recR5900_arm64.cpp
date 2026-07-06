@@ -41,6 +41,11 @@ extern "C" u64  eeRead64_arm64(u32);
 extern "C" void eeWrite8_arm64(u32, u32),  eeWrite16_arm64(u32, u32);
 extern "C" void eeWrite32_arm64(u32, u32), eeWrite64_arm64(u32, u64);
 extern "C" void eeRead128_arm64(u32, u128*), eeWrite128_arm64(u32, const u128*);
+// Unaligned load/store family helpers (C.16): merge semantics, no misalign trap.
+extern "C" void eeLWL_arm64(u32, u32), eeLWR_arm64(u32, u32);
+extern "C" void eeLDL_arm64(u32, u32), eeLDR_arm64(u32, u32);
+extern "C" void eeSWL_arm64(u32, u32), eeSWR_arm64(u32, u32);
+extern "C" void eeSDL_arm64(u32, u32), eeSDR_arm64(u32, u32);
 extern "C" void eeCancelInstruction_arm64(void);
 extern "C" void eeEventTest_arm64(void);
 extern "C" void eeUpdateCycles_arm64(void);
@@ -180,11 +185,15 @@ namespace
 	// The EE GPRs are 128 bits; MMI does packed byte/half/word arithmetic over the
 	// whole register, which maps 1:1 onto AArch64 NEON Q-registers. We translate
 	// only the bit-exact, side-effect-free ops (parallel add/sub incl. saturating,
-	// logical, signed compares, signed max/min, and the EXTL/EXTU interleaves).
-	// PMFHL/PMTHL, the HI/LO multiply-divide ops, pack, variable shifts, PMADD,
-	// PCPY*, etc. stay with the interpreter.
+	// logical, signed compares, signed max/min, the EXTL/EXTU interleaves, the
+	// immediate shifts, the PPAC* even-element packs and PCPYLD/PCPYUD). PMFHL/
+	// PMTHL, the HI/LO multiply-divide ops, variable shifts, PMADD, the remaining
+	// shuffles (PINTH/PEXEH/PREVH/PCPYH...), etc. stay with the interpreter.
 	enum { M_ADD, M_SUB, M_SQADD, M_UQADD, M_SQSUB, M_UQSUB, M_AND, M_ORR, M_EOR,
-	       M_NOR, M_CMGT, M_CMEQ, M_SMAX, M_SMIN, M_ZIP1, M_ZIP2 };
+	       M_NOR, M_CMGT, M_CMEQ, M_SMAX, M_SMIN, M_ZIP1, M_ZIP2,
+	       M_SLLI, M_SRLI, M_SRAI, // immediate shifts (fmt 1=.8H sa&0xf, 2=.4S sa)
+	       M_PACK,                 // PPACB/H/W: even elements, rt -> low, rs -> high
+	       M_CPYLD, M_CPYUD };     // PCPYLD/PCPYUD (64-bit lane zips)
 
 	// Decode an MMI instruction to (action, lane fmt: 0=16B,1=8H,2=4S). Returns the
 	// action or -1 if not natively supported. funct selects the sub-class
@@ -195,6 +204,13 @@ namespace
 		const u32 sub   = (insn >> 6) & 0x1f;
 		switch (funct)
 		{
+			// top-level MMI functs: immediate shifts (sub = shift amount)
+			case 0x34: *fmt = 1; return M_SLLI; // PSLLH
+			case 0x36: *fmt = 1; return M_SRLI; // PSRLH
+			case 0x37: *fmt = 1; return M_SRAI; // PSRAH
+			case 0x3c: *fmt = 2; return M_SLLI; // PSLLW
+			case 0x3e: *fmt = 2; return M_SRLI; // PSRLW
+			case 0x3f: *fmt = 2; return M_SRAI; // PSRAW
 			case 0x08: // MMI0
 				switch (sub)
 				{
@@ -212,12 +228,15 @@ namespace
 					case 0x10: *fmt = 2; return M_SQADD; // PADDSW
 					case 0x11: *fmt = 2; return M_SQSUB; // PSUBSW
 					case 0x12: *fmt = 2; return M_ZIP1;  // PEXTLW
+					case 0x13: *fmt = 2; return M_PACK;  // PPACW
 					case 0x14: *fmt = 1; return M_SQADD; // PADDSH
 					case 0x15: *fmt = 1; return M_SQSUB; // PSUBSH
 					case 0x16: *fmt = 1; return M_ZIP1;  // PEXTLH
+					case 0x17: *fmt = 1; return M_PACK;  // PPACH
 					case 0x18: *fmt = 0; return M_SQADD; // PADDSB
 					case 0x19: *fmt = 0; return M_SQSUB; // PSUBSB
 					case 0x1a: *fmt = 0; return M_ZIP1;  // PEXTLB
+					case 0x1b: *fmt = 0; return M_PACK;  // PPACB
 				}
 				return -1;
 			case 0x28: // MMI1
@@ -240,12 +259,14 @@ namespace
 				}
 				return -1;
 			case 0x09: // MMI2
-				if (sub == 0x12) { *fmt = 0; return M_AND; } // PAND
-				if (sub == 0x13) { *fmt = 0; return M_EOR; } // PXOR
+				if (sub == 0x0e) { *fmt = 3; return M_CPYLD; } // PCPYLD
+				if (sub == 0x12) { *fmt = 0; return M_AND; }   // PAND
+				if (sub == 0x13) { *fmt = 0; return M_EOR; }   // PXOR
 				return -1;
 			case 0x29: // MMI3
-				if (sub == 0x12) { *fmt = 0; return M_ORR; } // POR
-				if (sub == 0x13) { *fmt = 0; return M_NOR; } // PNOR
+				if (sub == 0x0e) { *fmt = 3; return M_CPYUD; } // PCPYUD
+				if (sub == 0x12) { *fmt = 0; return M_ORR; }   // POR
+				if (sub == 0x13) { *fmt = 0; return M_NOR; }   // PNOR
 				return -1;
 		}
 		return -1;
@@ -274,8 +295,11 @@ namespace
 		{
 			case 0:  d = v0.V16B(); n = v1.V16B(); o = v2.V16B(); break;
 			case 1:  d = v0.V8H();  n = v1.V8H();  o = v2.V8H();  break;
-			default: d = v0.V4S();  n = v1.V4S();  o = v2.V4S();  break;
+			case 2:  d = v0.V4S();  n = v1.V4S();  o = v2.V4S();  break;
+			default: d = v0.V2D();  n = v1.V2D();  o = v2.V2D();  break;
 		}
+		// Immediate shift amount: PS*H uses sa & 0xf, PS*W the full 5-bit sa.
+		const int shamt = (int)((insn >> 6) & (fmt == 1 ? 0xf : 0x1f));
 		switch (act)
 		{
 			case M_ADD:   m.Add(d, n, o);   break;
@@ -294,6 +318,13 @@ namespace
 			case M_SMIN:  m.Smin(d, n, o);  break;
 			case M_ZIP1:  m.Zip1(d, o, n);  break; // PEXTL: interleave rt then rs
 			case M_ZIP2:  m.Zip2(d, o, n);  break; // PEXTU
+			// NEON USHR/SSHR immediates encode 1..lanebits only; shift 0 is a copy.
+			case M_SLLI:  m.Shl(d, o, shamt); break;                                      // PSLLH/PSLLW
+			case M_SRLI:  if (shamt) m.Ushr(d, o, shamt); else m.Mov(v0.V16B(), v2.V16B()); break; // PSRLH/PSRLW
+			case M_SRAI:  if (shamt) m.Sshr(d, o, shamt); else m.Mov(v0.V16B(), v2.V16B()); break; // PSRAH/PSRAW
+			case M_PACK:  m.Uzp1(d, o, n);  break; // PPAC*: rt evens -> low, rs evens -> high
+			case M_CPYLD: m.Zip1(d, o, n);  break; // PCPYLD: rd = {rt.UD[0], rs.UD[0]}
+			case M_CPYUD: m.Zip2(d, n, o);  break; // PCPYUD: rd = {rs.UD[1], rt.UD[1]}
 		}
 		m.Str(q0, MemOperand(gpr, rd * 16));
 	}
@@ -501,6 +532,9 @@ namespace
 					case 0x18: case 0x19: case 0x1a: case 0x1b: // MULT/MULTU/DIV/DIVU
 						if (no_muldiv) return false;
 						EmitMulDiv(m, gpr, funct, rs, rt, rd); return true;
+					// SYNC is architecturally a barrier; the interpreter's SYNC()
+					// body is empty, so it translates to pure cycle bookkeeping.
+					case 0x0f: return true;
 					default: return false;
 				}
 			case 0x09: if (rt) { LoadGpr(m, x0, gpr, rs); m.Mov(w1, (u32)simm); m.Add(w0, w0, w1); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rt); } return true; // ADDIU
@@ -558,6 +592,37 @@ namespace
 					}
 					StoreGpr(m, x0, gpr, rt);
 				}
+				return true;
+			}
+			// Unaligned load family (LWL/LWR/LDL/LDR): merge with the existing rt
+			// contents at the aligned address, no misalign exception -- a plain
+			// helper call that mirrors the interpreter op exactly (C.16). These
+			// were the top handoff cause in GT3's attract (LDL+LDR alone ~865M
+			// interpreted ops / 10500 frames).
+			case 0x22: case 0x26: case 0x1a: case 0x1b:
+			{
+				if (no_load) return false;
+				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				m.Mov(w1, rt);
+				const uint64_t fn = (op == 0x22) ? reinterpret_cast<uint64_t>(&eeLWL_arm64)
+				                  : (op == 0x26) ? reinterpret_cast<uint64_t>(&eeLWR_arm64)
+				                  : (op == 0x1a) ? reinterpret_cast<uint64_t>(&eeLDL_arm64)
+				                  :                reinterpret_cast<uint64_t>(&eeLDR_arm64);
+				m.Mov(x16, fn); m.Blr(x16);
+				return true;
+			}
+			// Unaligned store family (SWL/SWR/SDL/SDR): read-modify-write of the
+			// aligned word/dword, same helper-call pattern.
+			case 0x2a: case 0x2e: case 0x2c: case 0x2d:
+			{
+				if (no_store) return false;
+				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				m.Mov(w1, rt);
+				const uint64_t fn = (op == 0x2a) ? reinterpret_cast<uint64_t>(&eeSWL_arm64)
+				                  : (op == 0x2e) ? reinterpret_cast<uint64_t>(&eeSWR_arm64)
+				                  : (op == 0x2c) ? reinterpret_cast<uint64_t>(&eeSDL_arm64)
+				                  :                reinterpret_cast<uint64_t>(&eeSDR_arm64);
+				m.Mov(x16, fn); m.Blr(x16);
 				return true;
 			}
 			// Stores (SB/SH/SW/SD).
@@ -731,6 +796,7 @@ namespace
 				case 0x10: case 0x11: case 0x12: case 0x13: // MFHI/MTHI/MFLO/MTLO
 				case 0x18: case 0x19: case 0x1a: case 0x1b: // MULT/MULTU/DIV/DIVU
 					return !eeDiag().no_muldiv;
+				case 0x0f: return true;                     // SYNC (empty body)
 				default: return false;
 			}
 		}
@@ -741,7 +807,10 @@ namespace
 			case 0x09: case 0x19: case 0x0a: case 0x0b: case 0x0c: case 0x0d: case 0x0e: case 0x0f:
 				return true;
 			case 0x20: case 0x21: case 0x23: case 0x24: case 0x25: case 0x27:
+			case 0x22: case 0x26: case 0x1a: case 0x1b: // LWL/LWR/LDL/LDR
 				return !eeDiag().no_load;
+			case 0x2a: case 0x2e: case 0x2c: case 0x2d: // SWL/SWR/SDL/SDR
+				return !eeDiag().no_store;
 			case 0x1e: return !eeDiag().no_load && ((insn >> 16) & 31) != 0; // LQ (rt==0 -> interp)
 			case 0x37: return !eeDiag().no_load && !eeDiag().no_ld64; // LD
 			case 0x28: case 0x29: case 0x2b:
