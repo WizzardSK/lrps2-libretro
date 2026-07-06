@@ -27,6 +27,7 @@
 
 struct GS_Packet;
 extern void Gif_FinishIRQ();
+extern void Gif_MTVU_KickSema(); // MTVU.cpp: vu1Thread.semaXGkick.Post()
 extern bool Gif_HandlerAD(u8* pMem);
 extern void Gif_HandlerAD_MTVU(u8* pMem);
 extern void Gif_AddBlankGSPacket(u32 size, GIF_PATH path);
@@ -316,6 +317,15 @@ struct Gif_Path
 				break; // MTGS is reading in back of curOffset
 			if ((s32)buffLimit + readPos > (s32)curSize + (s32)size)
 				break;      // Enough free front space
+			if (isMTVU() && !GetPendingGSPackets() && gsPack.size)
+			{
+				// Nothing for MTGS to pop and the current (unfinished) packet
+				// holds the space: hand it over as a PARTIAL packet so MTGS
+				// can drain the buffer (see FinishGSPacketMTVU).
+				FinishGSPacketMTVU(false);
+				Gif_MTVU_KickSema();
+				continue;
+			}
 			MTGS::WaitGS(isMTVU()); // Let MTGS run to free up buffer space
 		}
 		memcpy(&buffer[curSize], pMem, size);
@@ -472,9 +482,18 @@ struct Gif_Path
 		gifTag.isValid = false;
 	}
 
-	// MTVU: Gets called after VU1 execution on MTVU thread
-	void FinishGSPacketMTVU()
+	// MTVU: Gets called after VU1 execution on MTVU thread (final=true), and
+	// from CopyGSPacketData's would-block path (final=false) to hand a PARTIAL
+	// packet to MTGS. Without partial flushes a continuous VU1 microprogram
+	// (endless loop streaming XGKICK, no E-bit -- GT3's arcade attract) is a
+	// deadlock: this thread waits for MTGS to drain the path1 buffer while
+	// MTGS waits in semaXGkick for a program end that never comes. The MTVU
+	// queue reuses GS_Packet.cycles (never set on this path) as the "more
+	// packets follow for this program" flag; MTGS's MTVU_GSPACKET handler
+	// consumes packets until it sees a final one (cycles == 0).
+	void FinishGSPacketMTVU(bool final = true)
 	{
+		gsPack.cycles = final ? 0 : 1;
 		// Performance note: fetch_add atomic operation might create some stall for atomic
 		// operation in gsPack.push
 		readAmount.fetch_add(gsPack.size + gsPack.readAmount, std::memory_order_acq_rel);

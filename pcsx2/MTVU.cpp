@@ -464,6 +464,13 @@ void VU_Thread::KickStart()
 	semaEvent.NotifyOfWork();
 }
 
+// Called from Gif_Path::CopyGSPacketData (MTVU thread) after handing MTGS a
+// partial packet, so MTGS's semaXGkick wait wakes up and drains it.
+void Gif_MTVU_KickSema()
+{
+	vu1Thread.semaXGkick.Post();
+}
+
 void VU_Thread::WaitVU()
 {
 	semaEvent.WaitForEmpty();

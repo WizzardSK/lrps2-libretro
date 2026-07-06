@@ -238,32 +238,45 @@ void MTGS::MainLoop(bool flush_all)
 				{
 					// MTVU_GSPACKET only enqueued in MTVU mode, so
 					// mtvu_lock is held here (mtvu_mode == true).
-					if (!vu1Thread.semaXGkick.TryWait())
-					{
-						mtvu_lock.unlock();
-						// Wait for MTVU to complete vu1 program
-						vu1Thread.semaXGkick.Wait();
-						mtvu_lock.lock();
-					}
+					// One ring item = one VU1 program, but the program may
+					// deliver MULTIPLE queue packets: PARTIAL flushes
+					// (gsPack.cycles != 0, emitted when the worker's path1
+					// buffer would fill mid-program -- continuous VU1
+					// microprograms) followed by the final packet
+					// (cycles == 0). Consume until the final one; each
+					// semaXGkick post pairs with exactly one queue push.
 					Gif_Path& path = gifUnit.gifPath[GIF_PATH_1];
-					GS_Packet gsPack = path.GetGSPacketMTVU(); // Get vu1 program's xgkick packet(s)
-					// TEMP diagnostic (LRPS2_MTVU_LOG): count consumed MTVU path1
-					// packets/bytes on the GS side, incl. empty ones.
+					for (;;)
 					{
-						static int log_on = -1; static u64 n = 0, bytes = 0, empty = 0;
-						if (log_on < 0) log_on = getenv("LRPS2_MTVU_LOG") ? 1 : 0;
-						if (log_on)
+						if (!vu1Thread.semaXGkick.TryWait())
 						{
-							n++; bytes += gsPack.size; if (!gsPack.size) empty++;
-							if (n <= 4 || (n & 0xf) == 0)
-								fprintf(stderr, "[mtvu-gs] pkts=%llu bytes=%llu empty=%llu\n",
-									(unsigned long long)n, (unsigned long long)bytes, (unsigned long long)empty);
+							mtvu_lock.unlock();
+							// Wait for MTVU to push a path1 packet
+							vu1Thread.semaXGkick.Wait();
+							mtvu_lock.lock();
 						}
+						GS_Packet gsPack = path.GetGSPacketMTVU(); // Get vu1 program's xgkick packet(s)
+						// TEMP diagnostic (LRPS2_MTVU_LOG): count consumed MTVU path1
+						// packets/bytes on the GS side, incl. empty ones.
+						{
+							static int log_on = -1; static u64 n = 0, bytes = 0, empty = 0;
+							if (log_on < 0) log_on = getenv("LRPS2_MTVU_LOG") ? 1 : 0;
+							if (log_on)
+							{
+								n++; bytes += gsPack.size; if (!gsPack.size) empty++;
+								if (n <= 4 || (n & 0xf) == 0)
+									fprintf(stderr, "[mtvu-gs] pkts=%llu bytes=%llu empty=%llu\n",
+										(unsigned long long)n, (unsigned long long)bytes, (unsigned long long)empty);
+							}
+						}
+						if (gsPack.size)
+							GSgifTransfer((u8*)&path.buffer[gsPack.offset], gsPack.size / 16);
+						path.readAmount.fetch_sub(gsPack.size + gsPack.readAmount, std::memory_order_acq_rel);
+						const bool final_packet = gsPack.cycles == 0;
+						path.PopGSPacketMTVU(); // Should be done last, for proper WaitGS(isMTVU)
+						if (final_packet)
+							break;
 					}
-					if (gsPack.size)
-						GSgifTransfer((u8*)&path.buffer[gsPack.offset], gsPack.size / 16);
-					path.readAmount.fetch_sub(gsPack.size + gsPack.readAmount, std::memory_order_acq_rel);
-					path.PopGSPacketMTVU(); // Should be done last, for proper Gif_MTGS_Wait()
 				}
 					break;
 				case GS_RINGTYPE_VSYNC:
