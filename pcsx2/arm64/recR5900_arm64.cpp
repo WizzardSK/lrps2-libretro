@@ -52,6 +52,16 @@ extern "C" void eeUpdateCycles_arm64(void);
 extern "C" void eeTraceHook(u32 pc); // Interpreter.cpp (TEMP diagnostic, LRPS2_TRACE)
 extern "C" void eeLogExc(u32 pc);    // Interpreter.cpp (TEMP diagnostic, LRPS2_EXCLOG)
 
+// Interpreter op implementations invoked directly from JIT blocks (C.18): ops
+// with contained side effects (no control flow, no exception, no pc /
+// cpuBlockCycles reads) execute via a plain call with cpuRegs.code staged,
+// so the block continues natively instead of handing off its whole tail.
+namespace R5900 { namespace Interpreter { namespace OpcodeImpl {
+	void CACHE();
+	namespace COP0 { void MFC0(); void MTC0(); }
+	namespace MMI  { void QFSRV(); }
+} } }
+
 namespace
 {
 	typedef void (*BlockFn)(void);
@@ -440,6 +450,7 @@ namespace
 			case 0x04: case 0x05: case 0x06: case 0x07:         // BEQ/BNE/BLEZ/BGTZ
 			case 0x14: case 0x15: case 0x16: case 0x17:         // BEQL/BNEL/BLEZL/BGTZL
 				return 11;                                      // Branch
+			case 0x10:                                          // COP0 (MFC0/MTC0)
 			case 0x11:                                          // COP1 (MFC1/MTC1/MOV/NEG/ABS.S)
 				return 7;                                       // CopDefault
 			case 0x1c:                                          // MMI (packed integer)
@@ -470,7 +481,7 @@ namespace
 	// the interpreter, to bisect which native EE JIT feature breaks MMX7's
 	// post-logo progression. Read once. Mirrored in IsTranslatable so the block
 	// builder and delay-slot handling stay consistent with EmitSimple.
-	struct EeDiagFlags { int no_mmi, no_muldiv, no_cop1, no_mem, no_load, no_store, no_branch, no_ld64; };
+	struct EeDiagFlags { int no_mmi, no_muldiv, no_cop1, no_mem, no_load, no_store, no_branch, no_ld64, no_interpcall; };
 	const EeDiagFlags& eeDiag()
 	{
 		static EeDiagFlags f = {
@@ -482,6 +493,41 @@ namespace
 			(getenv("LRPS2_NO_EE_MEM") || getenv("LRPS2_NO_EE_STORE")) ? 1 : 0,
 			getenv("LRPS2_NO_EE_BRANCH") ? 1 : 0,
 			getenv("LRPS2_NO_EE_LD64")   ? 1 : 0,
+			getenv("LRPS2_NO_EE_INTERPCALL") ? 1 : 0, // C.18 inline interp-op calls
+		};
+		return f;
+	}
+
+	// C.18: execute an interpreter op implementation from inside the block.
+	// Only for ops with contained side effects: no control flow, no exception,
+	// and no reads of cpuRegs.pc or cpuBlockCycles (MFC0's Count uses
+	// cpuRegs.cycle, which advances at branch boundaries identically in both
+	// execution modes, so mid-block reads match the interpreter handoff).
+	void EmitInterpOpCall(MacroAssembler& m, u32 insn, void (*fn)())
+	{
+		m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.code));
+		m.Mov(w0, insn);
+		m.Str(w0, MemOperand(x10));
+		m.Mov(x16, reinterpret_cast<uint64_t>(fn));
+		m.Blr(x16);
+	}
+
+	// QFSRV is MMI1 (funct 0x28) sub 0x1b -- NOT MMI3 (0x29), whose sub 0x1b is
+	// PCPYH. The first C.18 cut called QFSRV() on PCPYH instructions (the
+	// GT3-attract breaker at funct=29/sub=1b) and broke MMX7's post-logo
+	// progression -- same shifted-table bug class as the C.10 DADDU miscompile.
+	inline bool IsQfsrv(u32 insn) { return (insn & 0x3f) == 0x28 && ((insn >> 6) & 0x1f) == 0x1b; }
+	inline bool IsPcpyh(u32 insn) { return (insn & 0x3f) == 0x29 && ((insn >> 6) & 0x1f) == 0x1b; }
+
+	// TEMP bisect toggles for the C.18 inline-call op groups (finer than
+	// LRPS2_NO_EE_INTERPCALL, which disables all of them).
+	struct IcFlags { int no_cop0, no_cache, no_qfsrv; };
+	const IcFlags& icDiag()
+	{
+		static IcFlags f = {
+			getenv("LRPS2_NO_EE_IC_COP0")  ? 1 : 0,
+			getenv("LRPS2_NO_EE_IC_CACHE") ? 1 : 0,
+			getenv("LRPS2_NO_EE_IC_QFSRV") ? 1 : 0,
 		};
 		return f;
 	}
@@ -553,6 +599,20 @@ namespace
 					// SYNC is architecturally a barrier; the interpreter's SYNC()
 					// body is empty, so it translates to pure cycle bookkeeping.
 					case 0x0f: return true;
+					// MOVZ/MOVN: rd = rs when rt ==/!= 0 (full 64-bit compare),
+					// rd unchanged otherwise.
+					case 0x0a:
+					case 0x0b:
+						if (rd)
+						{
+							LoadGpr(m, x0, gpr, rs);
+							LoadGpr(m, x1, gpr, rt);
+							m.Ldr(x2, MemOperand(gpr, rd * 16));
+							m.Cmp(x1, 0);
+							m.Csel(x2, x0, x2, funct == 0x0a ? eq : ne);
+							StoreGpr(m, x2, gpr, rd);
+						}
+						return true;
 					default: return false;
 				}
 			case 0x09: if (rt) { LoadGpr(m, x0, gpr, rs); m.Mov(w1, (u32)simm); m.Add(w0, w0, w1); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rt); } return true; // ADDIU
@@ -735,9 +795,50 @@ namespace
 
 			// MMI (128-bit parallel integer) -> NEON, for the bit-exact subset.
 			case 0x1c:
-				if (no_mmi || !MmiSupported(insn)) return false;
-				EmitMmi(m, gpr, insn);
+				if (no_mmi) return false;
+				if (MmiSupported(insn)) { EmitMmi(m, gpr, insn); return true; }
+				// PCPYH: broadcast halfword 0 of each 64-bit half of rt across
+				// that half. Scalar: (u16)half * 0x0001000100010001.
+				if (IsPcpyh(insn))
+				{
+					if (rd)
+					{
+						m.Ldrh(w0, MemOperand(gpr, rt * 16));     // rt.US[0] (r0 memory kept zero)
+						m.Ldrh(w1, MemOperand(gpr, rt * 16 + 8)); // rt.US[4]
+						m.Mov(x2, 0x0001000100010001ull);
+						m.Mul(x0, x0, x2);
+						m.Mul(x1, x1, x2);
+						m.Str(x0, MemOperand(gpr, rd * 16));
+						m.Str(x1, MemOperand(gpr, rd * 16 + 8));
+					}
+					return true;
+				}
+				// QFSRV (quadword funnel shift by the SA register): interpreter
+				// implementation called inline (C.18).
+				if (IsQfsrv(insn) && !eeDiag().no_interpcall && !icDiag().no_qfsrv)
+				{
+					EmitInterpOpCall(m, insn, &R5900::Interpreter::OpcodeImpl::MMI::QFSRV);
+					return true;
+				}
+				return false;
+
+			// CACHE (0x2f): emulated D$ maintenance, contained side effects ->
+			// interpreter implementation called inline (C.18). Top GT3 attract
+			// block-breaker (19.4M handoffs / 10500 frames).
+			case 0x2f:
+				if (eeDiag().no_interpcall || icDiag().no_cache) return false;
+				EmitInterpOpCall(m, insn, &R5900::Interpreter::OpcodeImpl::CACHE);
 				return true;
+
+			// COP0 (0x10): MFC0/MTC0 via inline interpreter call (C.18) -- MFC0
+			// Count reads cpuRegs.cycle which only advances at branch boundaries,
+			// identical in both execution modes; MTC0 Status/Config side effects
+			// live inside the op. BC0x (branches) and CO/TLB/ERET stay handoffs.
+			case 0x10:
+				if (eeDiag().no_interpcall || icDiag().no_cop0) return false;
+				if (rs == 0x00) { EmitInterpOpCall(m, insn, &R5900::Interpreter::OpcodeImpl::COP0::MFC0); return true; }
+				if (rs == 0x04) { EmitInterpOpCall(m, insn, &R5900::Interpreter::OpcodeImpl::COP0::MTC0); return true; }
+				return false;
 
 			// LWC1 ft, off(base): fpr[ft].UL = read32(addr). Unlike integer LW, a
 			// misaligned address is *silently skipped* (no exception/cancel) -- match
@@ -819,11 +920,20 @@ namespace
 				case 0x18: case 0x19: case 0x1a: case 0x1b: // MULT/MULTU/DIV/DIVU
 					return !eeDiag().no_muldiv;
 				case 0x0f: return true;                     // SYNC (empty body)
+				case 0x0a: case 0x0b: return true;          // MOVZ/MOVN
 				default: return false;
 			}
 		}
 		if (op == 0x11) return !eeDiag().no_cop1 && Cop1RegSupported(insn);
-		if (op == 0x1c) return !eeDiag().no_mmi && MmiSupported(insn);
+		if (op == 0x1c) return !eeDiag().no_mmi &&
+			(MmiSupported(insn) || IsPcpyh(insn) ||
+			 (IsQfsrv(insn) && !eeDiag().no_interpcall && !icDiag().no_qfsrv));
+		if (op == 0x2f) return !eeDiag().no_interpcall && !icDiag().no_cache; // CACHE
+		if (op == 0x10) // COP0: MFC0/MTC0 only
+		{
+			const u32 crs = (insn >> 21) & 31;
+			return !eeDiag().no_interpcall && !icDiag().no_cop0 && (crs == 0x00 || crs == 0x04);
+		}
 		switch (op)
 		{
 			case 0x09: case 0x19: case 0x0a: case 0x0b: case 0x0c: case 0x0d: case 0x0e: case 0x0f:
