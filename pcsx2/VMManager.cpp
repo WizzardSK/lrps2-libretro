@@ -844,13 +844,14 @@ void VMManager::InitializeCPUProviders()
 	// forever (boot hang / black screen). The worker runs VU1 through
 	// CpuVU1->Execute(), so it works with the VU interpreter provider too.
 	vu1Thread.Open();
+	// arm64 VIF unpack dynarec (C.19, NEON port transplanted from ARMSX2).
+	dVifReserve(0);
+	dVifReserve(1);
 #endif
 
 	GSCodeReserve::GetInstance().Assign(GetVmMemory().CodeMemory());
 
-#ifndef ARCH_ARM64
-	VifUnpackSSE_Init();
-#endif
+	VifUnpackSSE_Init(); // on arm64 this generates the NEON nVifUpk kernels (C.19)
 }
 
 void VMManager::ShutdownCPUProviders()
@@ -870,6 +871,9 @@ void VMManager::ShutdownCPUProviders()
 	recCpu.Shutdown();
 #else
 	vu1Thread.Close();
+	dVifRelease(1);
+	dVifRelease(0);
+	VifUnpackSSE_Destroy();
 	CpuRecVU1_arm64.Shutdown();
 	psxRec.Shutdown();
 	recCpu.Shutdown();
