@@ -470,7 +470,10 @@ namespace
 				if (funct == 0x18 || funct == 0x19) return 16;  // MULT/MULTU
 				if (funct == 0x1a || funct == 0x1b) return 112; // DIV/DIVU
 				return 9;                                       // ALU/shift/JR/JALR/MFHI...
-			case 0x01:                                          // REGIMM branches
+			case 0x01:                                          // REGIMM
+				// MTSAB/MTSAH are Default; the rest (BLTZ/BGEZ/B*ZAL/likely) Branch.
+				if (((insn >> 16) & 31) == 0x18 || ((insn >> 16) & 31) == 0x19) return 9;
+				return 11;                                      // Branch
 			case 0x04: case 0x05: case 0x06: case 0x07:         // BEQ/BNE/BLEZ/BGTZ
 			case 0x14: case 0x15: case 0x16: case 0x17:         // BEQL/BNEL/BLEZL/BGTZL
 				return 11;                                      // Branch
@@ -653,6 +656,30 @@ namespace
 			case 0x0d: if (rt) { LoadGpr(m, x0, gpr, rs); m.Mov(x1, (uint64_t)zimm); m.Orr(x0, x0, x1); StoreGpr(m, x0, gpr, rt); } return true; // ORI
 			case 0x0e: if (rt) { LoadGpr(m, x0, gpr, rs); m.Mov(x1, (uint64_t)zimm); m.Eor(x0, x0, x1); StoreGpr(m, x0, gpr, rt); } return true; // XORI
 			case 0x0f: if (rt) { m.Mov(w0, zimm << 16); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rt); } return true; // LUI
+
+			// REGIMM (0x01): only MTSAB/MTSAH here -- the branches (BLTZ/BGEZ/
+			// B*ZAL/likely) are handled by EmitBranch. MTSAB/MTSAH write the
+			// shift-amount register cpuRegs.sa (read by QFSRV). rt selects the op.
+			case 0x01:
+			{
+				const u32 rtf = (insn >> 16) & 31;
+				if (rtf == 0x18) // MTSAB: sa = (rs.UL[0] & 0xF) ^ (imm & 0xF)
+				{
+					LoadGpr(m, x0, gpr, rs); m.And(w0, w0, 0xF);
+					m.Eor(w0, w0, (u32)(zimm & 0xF));
+					m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.sa)); m.Str(w0, MemOperand(x10));
+					return true;
+				}
+				if (rtf == 0x19) // MTSAH: sa = ((rs.UL[0] & 0x7) ^ (imm & 0x7)) << 1
+				{
+					LoadGpr(m, x0, gpr, rs); m.And(w0, w0, 0x7);
+					m.Eor(w0, w0, (u32)(zimm & 0x7));
+					m.Lsl(w0, w0, 1);
+					m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.sa)); m.Str(w0, MemOperand(x10));
+					return true;
+				}
+				return false; // branches -> EmitBranch
+			}
 
 			// Loads (LB/LBU/LH/LHU/LW/LWU/LD). Address = rs.UL[0] + simm (32-bit).
 			// The interpreter cancels (fastjmp) on a misaligned LH/LW/LD, so do the
@@ -984,6 +1011,11 @@ namespace
 			return !eeDiag().no_mmi &&
 				(MmiSupported(insn) || IsPcpyh(insn) ||
 				 (IsQfsrv(insn) && !eeDiag().no_interpcall && !icDiag().no_qfsrv));
+		}
+		if (op == 0x01) // REGIMM: MTSAB/MTSAH only (branches handled elsewhere)
+		{
+			const u32 rtf = (insn >> 16) & 31;
+			return rtf == 0x18 || rtf == 0x19;
 		}
 		if (op == 0x2f) return !eeDiag().no_interpcall && !icDiag().no_cache; // CACHE
 		if (op == 0x10) // COP0: MFC0/MTC0 only
