@@ -64,7 +64,25 @@ namespace
 	size_t s_code_pos = 0;
 	bool   s_ok       = false;
 
-	std::unordered_map<u32, BlockFn>          s_blocks;
+	// Block record with a snapshot of the NATIVE-range source words. The EE's
+	// fault-based SMC protection must drop every block on a written page (after
+	// the fault unprotects it, further writes to the page don't fault, so any
+	// surviving block would go stale silently). That page-granular clear made
+	// code/data-sharing pages recompile their blocks on every data write
+	// (~8-12% of GT3 attract time inside vixl emission). Instead of erasing,
+	// Clear marks blocks dead; the next dispatch revalidates the snapshot
+	// against live memory and, when the code bytes are unchanged (the common
+	// case -- the write hit data), reinstalls the existing native code and
+	// re-protects the page. Bit-identical: a block is only revived if its
+	// baked-in source is byte-identical.
+	struct BlockRec
+	{
+		BlockFn fn;
+		u32 end;  // Norm(one past the native-covered range); == Norm(pc) if none
+		bool live;
+		std::vector<u32> src; // words [Norm(pc), end) at compile time
+	};
+	std::unordered_map<u32, BlockRec>         s_blocks;
 	std::unordered_map<u32, std::vector<u32>> s_page;
 
 	// Direct-mapped block cache for the 32 MB EE RAM (the hot region): O(1) array
@@ -988,6 +1006,29 @@ namespace
 		return true;
 	}
 
+	// Register a block on its source pages (dedup: revive cycles re-push after
+	// eeJitClear erased only the WRITTEN page's list -- a spanning block's entry
+	// on the other page survives) and write-protect them so ANY host write
+	// (interpreter store, JIT wrapper store, SIF/IPU DMA memcpy, overlay load)
+	// faults -> vtlb PageFaultHandler -> mmap_ClearCpuBlock -> Cpu->Clear ->
+	// eeJitClear_arm64 drops the page's blocks. Without this nothing ever
+	// invalidates EE blocks on self-modifying code / game overlay loads
+	// (MMX7 loads an overlay ~frame 111 and later runs STALE translated
+	// code at 0x105138 -> its FMV loader wedges -> post-logo black stall).
+	void RegisterPages(u32 pc, u32 ns, u32 ne)
+	{
+		if (ne <= ns)
+			return; // no native-covered bytes -> content-independent block
+		for (u32 pg = ns >> kPageShift; pg <= (ne - 1) >> kPageShift; pg++)
+		{
+			auto& vec = s_page[pg];
+			if (std::find(vec.begin(), vec.end(), pc) == vec.end())
+				vec.push_back(pc);
+			if (InRam(pg << kPageShift))
+				mmap_MarkCountedRamPage(pg << kPageShift);
+		}
+	}
+
 	BlockFn CompileBlock(u32 pc)
 	{
 		if (s_code_pos + 8192 > kCodeCacheSize)
@@ -1056,6 +1097,7 @@ namespace
 		int n = 0;
 		int cyc = 0; // raw sum of the leading translated ops' cycle costs
 		bool done = false;
+		bool branch_end = false; // ended via EmitBranch: branch + delay slot baked
 		// TEMP diagnostic (LRPS2_TRACE_STEP): per-instruction trace-hook calls so
 		// the JIT pc stream is 1:1 comparable with a pure-interpreter run.
 		static int trcstep = -1; static u32 slo = 0, shi = 0;
@@ -1094,7 +1136,7 @@ namespace
 				}
 				continue;
 			}
-			if (EmitBranch(masm, gpr, p, insn, cyc)) { done = true; break; } // emits bookkeeping + pc + eventtest + chain epilogue
+			if (EmitBranch(masm, gpr, p, insn, cyc)) { done = true; branch_end = true; break; } // emits bookkeeping + pc + eventtest + chain epilogue
 			break; // unsupported -> interpreter finishes the basic block
 		}
 
@@ -1118,23 +1160,44 @@ namespace
 		s_code_pos += (sz + 15) & ~size_t(15);
 
 		BlockFn fn = reinterpret_cast<BlockFn>(start);
-		s_blocks.emplace(pc, fn);
-		const u32 ns = Norm(pc), ne = Norm(p > pc ? p : pc + 4);
-		if (InRam(ns)) s_lut[ns >> 2] = fn;
-		for (u32 pg = ns >> kPageShift; pg <= (ne - 1) >> kPageShift; pg++)
+		// Native code covers the leading translated run; a translated branch also
+		// bakes the branch + delay slot (p still points at the branch there).
+		const u32 ns = Norm(pc), ne = Norm(branch_end ? p + 8 : p);
+		BlockRec rec{fn, ne, true, {}};
+		if (ne > ns)
 		{
-			s_page[pg].push_back(pc);
-			// Write-protect the source page so ANY host write to it (interpreter
-			// store, JIT wrapper store, SIF/IPU DMA memcpy, overlay load) faults ->
-			// vtlb PageFaultHandler -> mmap_ClearCpuBlock -> Cpu->Clear ->
-			// eeJitClear_arm64 drops the stale blocks. Without this nothing ever
-			// invalidates EE blocks on self-modifying code / game overlay loads
-			// (MMX7 loads an overlay ~frame 111 and later runs STALE translated
-			// code at 0x105138 -> its FMV loader wedges -> post-logo black stall).
-			if (InRam(pg << kPageShift))
-				mmap_MarkCountedRamPage(pg << kPageShift);
+			rec.src.resize((ne - ns) >> 2);
+			for (u32 q = 0; q < (u32)rec.src.size(); q++)
+				rec.src[q] = memRead32(pc + q * 4);
 		}
+		s_blocks[pc] = std::move(rec); // overwrites a dead record after SMC
+		if (InRam(ns)) s_lut[ns >> 2] = fn;
+		RegisterPages(pc, ns, ne);
 		return fn;
+	}
+
+	// Revive a dead block if its baked-in source words are unchanged in live
+	// memory (the page-clearing write hit data, not this code). Reinstalls the
+	// existing native code and re-protects the page; returns nullptr when the
+	// source really changed (caller erases + recompiles).
+	BlockFn Revive(u32 pc, BlockRec& r)
+	{
+		for (u32 q = 0; q < (u32)r.src.size(); q++)
+			if (memRead32(pc + q * 4) != r.src[q])
+				return nullptr;
+		r.live = true;
+		const u32 ns = Norm(pc);
+		if (InRam(ns)) s_lut[ns >> 2] = r.fn;
+		RegisterPages(pc, ns, r.end);
+		// TEMP diagnostic (LRPS2_JIT_STATS): prove revives happen (vs recompiles).
+		static const bool stats = getenv("LRPS2_JIT_STATS") != nullptr;
+		if (stats)
+		{
+			static u64 nrev = 0;
+			if ((++nrev & 0xfff) == 0)
+				fprintf(stderr, "[eerec] %llu block revives\n", (unsigned long long)nrev);
+		}
+		return r.fn;
 	}
 
 	inline BlockFn BlockForPC(u32 pc)
@@ -1143,10 +1206,19 @@ namespace
 		if (InRam(np))
 		{
 			BlockFn f = s_lut[np >> 2];
-			return f ? f : CompileBlock(pc);
+			if (f)
+				return f;
+			auto it = s_blocks.find(pc);
+			if (it != s_blocks.end())
+			{
+				if (BlockFn g = Revive(pc, it->second))
+					return g;
+				s_blocks.erase(it); // source changed -> compile fresh
+			}
+			return CompileBlock(pc);
 		}
 		auto it = s_blocks.find(pc);
-		return it != s_blocks.end() ? it->second : CompileBlock(pc);
+		return (it != s_blocks.end() && it->second.live) ? it->second.fn : CompileBlock(pc);
 	}
 }
 
@@ -1179,6 +1251,11 @@ void eeJitReset_arm64(void)
 
 void eeJitClear_arm64(u32 addr, u32 size)
 {
+	// The clear MUST cover every block on the touched pages: the fault handler
+	// unprotects the whole page, so later writes to it don't fault and any
+	// surviving block would go stale silently. Blocks are marked dead (records
+	// and native code kept); the next dispatch revalidates the source snapshot
+	// and revives the block without recompiling when the code bytes survived.
 	if (s_blocks.empty())
 		return;
 	const u32 a0 = Norm(addr);
@@ -1190,7 +1267,9 @@ void eeJitClear_arm64(u32 addr, u32 size)
 			continue;
 		for (u32 spc : it->second)
 		{
-			s_blocks.erase(spc);
+			auto bit = s_blocks.find(spc);
+			if (bit != s_blocks.end())
+				bit->second.live = false;
 			const u32 np = Norm(spc);
 			if (InRam(np)) s_lut[np >> 2] = nullptr;
 		}
