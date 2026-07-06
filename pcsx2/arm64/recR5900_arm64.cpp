@@ -661,6 +661,10 @@ namespace
 				else { m.Mov(x16, fn); m.Blr(x16); }
 				return true;
 			}
+			// PREF (0x33): the interpreter's PREF() body is empty (like SYNC),
+			// so it translates to pure cycle bookkeeping (Default=9).
+			case 0x33: return true;
+
 			// LQ/SQ (128-bit; the hardware silently aligns -- addr & ~0xf, no
 			// misalign exception). Previously untranslated: every LQ/SQ ended
 			// the block with an interpreter handoff, and they are everywhere in
@@ -805,6 +809,7 @@ namespace
 		switch (op)
 		{
 			case 0x09: case 0x19: case 0x0a: case 0x0b: case 0x0c: case 0x0d: case 0x0e: case 0x0f:
+			case 0x33: // PREF (empty body)
 				return true;
 			case 0x20: case 0x21: case 0x23: case 0x24: case 0x25: case 0x27:
 			case 0x22: case 0x26: case 0x1a: case 0x1b: // LWL/LWR/LDL/LDR
