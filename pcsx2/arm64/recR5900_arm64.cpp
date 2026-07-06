@@ -431,6 +431,26 @@ namespace
 		}
 	}
 
+	// MADD/MADDU (+ pipeline-1 MADD1/MADDU1, off=8): multiply-accumulate into
+	// the 64-bit {HI.low32, LO.low32} accumulator, split back sign-extended.
+	// Mirrors MMI.cpp MADD: temp = (u64)LO.UL[0] | ((u64)HI.UL[0]<<32) + rs*rt;
+	// LO.SD = sext(temp[31:0]); HI.SD = sext(temp[63:32]); rd = LO.SD[0].
+	void EmitMadd(MacroAssembler& m, const Register& gpr, bool is_unsigned, u32 rs, u32 rt, u32 rd, u32 off = 0)
+	{
+		const u32 kHIo = kHI + off, kLOo = kLO + off;
+		m.Ldr(w0, MemOperand(gpr, kLOo));            // acc[31:0]  = LO.UL[0] (zero-ext)
+		m.Ldr(w1, MemOperand(gpr, kHIo));            // acc[63:32] = HI.UL[0]
+		m.Orr(x0, x0, Operand(x1, LSL, 32));         // acc
+		LoadW(m, w2, gpr, rs); LoadW(m, w3, gpr, rt);
+		if (is_unsigned) m.Umull(x2, w2, w3); else m.Smull(x2, w2, w3);
+		m.Add(x0, x0, x2);                           // temp = acc + rs*rt
+		m.Sxtw(x1, w0);                              // LO = sext(temp[31:0])
+		m.Lsr(x2, x0, 32); m.Sxtw(x2, w2);           // HI = sext(temp[63:32])
+		m.Str(x1, MemOperand(gpr, kLOo));
+		m.Str(x2, MemOperand(gpr, kHIo));
+		if (rd) StoreGpr(m, x1, gpr, rd);            // rd = LO.SD[0]
+	}
+
 	// Per-opcode cycle cost, mirroring R5900OpcodeTables.cpp exactly (Cycles::*):
 	// Default=9, Branch=11, CopDefault=7, Mult=2*8=16, Div=14*8=112, Load=14,
 	// Store=14, MMI_Default=14. Used to accumulate cpuBlockCycles accurately
@@ -463,6 +483,7 @@ namespace
 				if (funct == 0x18 || funct == 0x19) return 16;  // MULT1/MULTU1 (Mult)
 				if (funct == 0x1a || funct == 0x1b) return 112; // DIV1/DIVU1 (Div)
 				if (funct >= 0x10 && funct <= 0x13) return 9;   // MFHI1/MTHI1/MFLO1/MTLO1 (Default)
+				if (funct == 0x00 || funct == 0x01 || funct == 0x20 || funct == 0x21) return 16; // MADD/MADDU(1) (Mult)
 				return 14;                                      // MMI_Default
 			case 0x1a: case 0x1b:                               // LDL/LDR
 			case 0x1e:                                          // LQ
@@ -807,12 +828,22 @@ namespace
 				if (no_mmi) return false;
 				// Pipeline-1 mult/div + HI1/LO1 moves: the funct encodings match
 				// the SPECIAL forms exactly, only HI/LO shift up by 8 bytes.
+				// MADD/MADDU (funct 0x00/0x01) are pipeline 0; MADD1/MADDU1
+				// (0x20/0x21) pipeline 1.
 				switch (funct)
 				{
 					case 0x10: case 0x11: case 0x12: case 0x13: // MFHI1/MTHI1/MFLO1/MTLO1
 					case 0x18: case 0x19: case 0x1a: case 0x1b: // MULT1/MULTU1/DIV1/DIVU1
 						if (no_muldiv) return false;
 						EmitMulDiv(m, gpr, funct, rs, rt, rd, 8);
+						return true;
+					case 0x00: case 0x01: // MADD/MADDU
+						if (no_muldiv) return false;
+						EmitMadd(m, gpr, funct == 0x01, rs, rt, rd, 0);
+						return true;
+					case 0x20: case 0x21: // MADD1/MADDU1
+						if (no_muldiv) return false;
+						EmitMadd(m, gpr, funct == 0x21, rs, rt, rd, 8);
 						return true;
 				}
 				if (MmiSupported(insn)) { EmitMmi(m, gpr, insn); return true; }
@@ -947,7 +978,8 @@ namespace
 		if (op == 0x1c)
 		{
 			const u32 f = insn & 0x3f;
-			if ((f >= 0x10 && f <= 0x13) || (f >= 0x18 && f <= 0x1b)) // pipeline-1 muldiv
+			if ((f >= 0x10 && f <= 0x13) || (f >= 0x18 && f <= 0x1b) // pipeline-1 muldiv
+				|| f == 0x00 || f == 0x01 || f == 0x20 || f == 0x21) // MADD/MADDU(1)
 				return !eeDiag().no_mmi && !eeDiag().no_muldiv;
 			return !eeDiag().no_mmi &&
 				(MmiSupported(insn) || IsPcpyh(insn) ||
