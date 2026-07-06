@@ -19,7 +19,7 @@ RetroArch flatpak + musl test host).
 | VU0/VU1 | Interpreter (VU recompilers are future work). Instant-VU1 is disabled on arm64 — continuous VU1 microprograms would spin the 3M-cycle budget per kick; VU1 runs in interleaved slices (`LRPS2_VU1_INSTANT=1` restores instant mode). VU1-render-heavy scenes (e.g. GT3's attract demo) are still interpreter-bound and run far below full speed |
 | VIF unpack | Portable C path (x86 SSE dynarec tables are bypassed) |
 | SMC / overlays | Compiled pages are write-protected; faults invalidate stale blocks (vtlb `mmap_MarkCountedRamPage` flow) |
-| MTVU (VU1 thread) | **Opt-in** (`LRPS2_MTVU=1`, ≥3 cores). Works and is pixel-verified on VU-light titles; games driving a continuous VU1 microprogram (e.g. GT3's attract) deadlock the one-packet-per-program handoff with the VU1 interpreter — needs a partial-flush protocol |
+| MTVU (VU1 thread) | **Opt-in** (`LRPS2_MTVU=1`, ≥3 cores). Pixel-verified on both test titles; the continuous-VU1-microprogram livelock is fixed by a partial-packet flush protocol (worker hands MTGS partial XGKICK packets when its buffer would fill mid-program). Still opt-in because VU1-interpreter throughput limits VU-heavy scenes |
 | GS renderer | Standard **Vulkan** renderer (`pcsx2_renderer = "Vulkan"`). paraLLEl-GS requires GPU features (8/16-bit storage, small subgroups) that e.g. Adreno 618 lacks |
 | MTGS | Works (GS thread active) |
 
