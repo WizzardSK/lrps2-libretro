@@ -837,6 +837,7 @@ void VMManager::InitializeCPUProviders()
 	// recompiler (recCpu, Phase C.3) so their code caches/self-tests come up.
 	psxRec.Reserve();
 	recCpu.Reserve();
+	CpuRecVU1_arm64.Reserve();
 	// The MTVU worker thread is normally spawned by recMicroVU1::Reserve()
 	// (x86/microVU.cpp), which doesn't exist in this build -- with vuThread
 	// enabled the EE would push to vu1Thread's ring and wait on its WorkSema
@@ -869,6 +870,7 @@ void VMManager::ShutdownCPUProviders()
 	recCpu.Shutdown();
 #else
 	vu1Thread.Close();
+	CpuRecVU1_arm64.Shutdown();
 	psxRec.Shutdown();
 	recCpu.Shutdown();
 #endif
@@ -896,6 +898,11 @@ void VMManager::UpdateCPUImplementations()
 
 	if (EmuConfig.Cpu.Recompiler.EnableVU1)
 		CpuVU1 = &CpuMicroVU1;
+#else
+	// C.14: arm64 VU1 recompiler (skeleton for now -- interpreter-executed
+	// blocks, byte-identical). LRPS2_NO_VU1REC=1 falls back to InterpVU1.
+	if (EmuConfig.Cpu.Recompiler.EnableVU1 && !getenv("LRPS2_NO_VU1REC"))
+		CpuVU1 = &CpuRecVU1_arm64;
 #endif
 }
 

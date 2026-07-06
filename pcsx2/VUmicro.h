@@ -145,6 +145,29 @@ public:
 extern InterpVU0 CpuIntVU0;
 extern InterpVU1 CpuIntVU1;
 
+#ifdef ARCH_ARM64
+// --------------------------------------------------------------------------------------
+//  recVU1_arm64 (Phase C.14) -- arm64 VU1 recompiler (pcsx2/arm64/recVU1_arm64.cpp)
+// --------------------------------------------------------------------------------------
+class recVU1_arm64 final : public BaseVUmicroCPU
+{
+public:
+	recVU1_arm64();
+	~recVU1_arm64() override { Shutdown(); }
+
+	void Reserve();
+	void Shutdown() override;
+	void Reset() override;
+
+	void SetStartPC(u32 startPC) override;
+	void Execute(u32 cycles) override;
+	void Clear(u32 addr, u32 size) override;
+	void ResumeXGkick() override {}
+};
+
+extern recVU1_arm64 CpuRecVU1_arm64;
+#endif
+
 extern recMicroVU0 CpuMicroVU0;
 extern recMicroVU1 CpuMicroVU1;
 
