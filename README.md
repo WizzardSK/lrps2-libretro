@@ -16,7 +16,7 @@ RetroArch flatpak + musl test host).
 |---|---|
 | EE (R5900) JIT | Native ALU, loads/stores incl. LQ/SQ (inline vtlb fast path), branches + likely branches, block linking/chaining, MULT/DIV + HI/LO, COP1 data moves, bit-exact MMI subset → NEON, kernel idle-loop skip |
 | IOP (R3000A) JIT | Native ALU, aligned loads/stores, branches + delay slots, block linking; mult/div/COP0/unaligned via interpreter |
-| VU0/VU1 | Interpreter (VU recompilers are future work) |
+| VU0/VU1 | Interpreter (VU recompilers are future work). Instant-VU1 is disabled on arm64 — continuous VU1 microprograms would spin the 3M-cycle budget per kick; VU1 runs in interleaved slices (`LRPS2_VU1_INSTANT=1` restores instant mode). VU1-render-heavy scenes (e.g. GT3's attract demo) are still interpreter-bound and run far below full speed |
 | VIF unpack | Portable C path (x86 SSE dynarec tables are bypassed) |
 | SMC / overlays | Compiled pages are write-protected; faults invalidate stale blocks (vtlb `mmap_MarkCountedRamPage` flow) |
 | MTVU (VU1 thread) | **Opt-in** (`LRPS2_MTVU=1`, ≥3 cores). Works and is pixel-verified on VU-light titles; games driving a continuous VU1 microprogram (e.g. GT3's attract) deadlock the one-packet-per-program handoff with the VU1 interpreter — needs a partial-flush protocol |
@@ -58,6 +58,7 @@ Bisection switches:
 | `LRPS2_EE_SPLIT_MEM=1` | End the block after every native mem op |
 | `LRPS2_NO_INLINE_MEM=1` | Disable the inline vtlb fast path (wrapper calls only) |
 | `LRPS2_MTVU=1` | Opt in to the MTVU (VU1 worker thread) |
+| `LRPS2_VU1_INSTANT=1` | Restore instant VU1 (off on arm64; see VU0/VU1 row) |
 | `LRPS2_MTVU_LOG=1` | MTVU worker/GS packet + per-path GS byte counters |
 
 Tracing/logging:
