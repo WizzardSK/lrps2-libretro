@@ -58,7 +58,7 @@ extern "C" void eeLogExc(u32 pc);    // Interpreter.cpp (TEMP diagnostic, LRPS2_
 // so the block continues natively instead of handing off its whole tail.
 namespace R5900 { namespace Interpreter { namespace OpcodeImpl {
 	void CACHE();
-	namespace COP0 { void MFC0(); void MTC0(); }
+	namespace COP0 { void MFC0(); void MTC0(); int CPCOND0(); }
 	namespace MMI  { void QFSRV(); }
 } } }
 
@@ -372,14 +372,18 @@ namespace
 		else          m.Ldr(wd, MemOperand(gpr, idx * 16));
 	}
 
-	void EmitMulDiv(MacroAssembler& m, const Register& gpr, u32 funct, u32 rs, u32 rt, u32 rd)
+	// off = 0 for the SPECIAL (pipeline 0) forms, 8 for the MMI pipeline-1
+	// forms (MULT1/DIV1/MFHI1/...): HI1/LO1 are the upper 64 bits of HI/LO,
+	// and the funct encodings line up exactly between the two op spaces.
+	void EmitMulDiv(MacroAssembler& m, const Register& gpr, u32 funct, u32 rs, u32 rt, u32 rd, u32 off = 0)
 	{
+		const u32 kHIo = kHI + off, kLOo = kLO + off;
 		switch (funct)
 		{
-			case 0x10: if (rd) { m.Ldr(x0, MemOperand(gpr, kHI)); StoreGpr(m, x0, gpr, rd); } return; // MFHI
-			case 0x12: if (rd) { m.Ldr(x0, MemOperand(gpr, kLO)); StoreGpr(m, x0, gpr, rd); } return; // MFLO
-			case 0x11: LoadGpr(m, x0, gpr, rs); m.Str(x0, MemOperand(gpr, kHI)); return;              // MTHI
-			case 0x13: LoadGpr(m, x0, gpr, rs); m.Str(x0, MemOperand(gpr, kLO)); return;              // MTLO
+			case 0x10: if (rd) { m.Ldr(x0, MemOperand(gpr, kHIo)); StoreGpr(m, x0, gpr, rd); } return; // MFHI
+			case 0x12: if (rd) { m.Ldr(x0, MemOperand(gpr, kLOo)); StoreGpr(m, x0, gpr, rd); } return; // MFLO
+			case 0x11: LoadGpr(m, x0, gpr, rs); m.Str(x0, MemOperand(gpr, kHIo)); return;              // MTHI
+			case 0x13: LoadGpr(m, x0, gpr, rs); m.Str(x0, MemOperand(gpr, kLOo)); return;              // MTLO
 
 			case 0x18: // MULT (signed)
 			case 0x19: // MULTU (unsigned)
@@ -388,8 +392,8 @@ namespace
 				if (funct == 0x18) m.Smull(x0, w0, w1); else m.Umull(x0, w0, w1);
 				m.Sxtw(x2, w0);                // LO = (s32)(res & 0xffffffff)
 				m.Lsr(x3, x0, 32); m.Sxtw(x3, w3); // HI = (s32)(res >> 32)
-				m.Str(x2, MemOperand(gpr, kLO));
-				m.Str(x3, MemOperand(gpr, kHI));
+				m.Str(x2, MemOperand(gpr, kLOo));
+				m.Str(x3, MemOperand(gpr, kHIo));
 				if (rd) StoreGpr(m, x2, gpr, rd); // rd = LO.UD[0]
 				return;
 			}
@@ -408,7 +412,7 @@ namespace
 				m.Mov(w6, 1); m.Mov(w7, -1); m.Cmp(w0, 0); m.Csel(w2, w6, w7, lt); // LO=(rs<0)?1:-1
 				m.Sxtw(x2, w2); m.Sxtw(x3, w0);                        // HI=sext(rs)
 				m.Bind(&store);
-				m.Str(x2, MemOperand(gpr, kLO)); m.Str(x3, MemOperand(gpr, kHI));
+				m.Str(x2, MemOperand(gpr, kLOo)); m.Str(x3, MemOperand(gpr, kHIo));
 				return;
 			}
 			case 0x1b: // DIVU (unsigned)
@@ -421,7 +425,7 @@ namespace
 				m.Bind(&zero);
 				m.Mov(x2, (uint64_t)-1); m.Sxtw(x3, w0);              // LO=-1, HI=sext(rs)
 				m.Bind(&store);
-				m.Str(x2, MemOperand(gpr, kLO)); m.Str(x3, MemOperand(gpr, kHI));
+				m.Str(x2, MemOperand(gpr, kLOo)); m.Str(x3, MemOperand(gpr, kHIo));
 				return;
 			}
 		}
@@ -450,10 +454,15 @@ namespace
 			case 0x04: case 0x05: case 0x06: case 0x07:         // BEQ/BNE/BLEZ/BGTZ
 			case 0x14: case 0x15: case 0x16: case 0x17:         // BEQL/BNEL/BLEZL/BGTZL
 				return 11;                                      // Branch
-			case 0x10:                                          // COP0 (MFC0/MTC0)
+			case 0x10:                                          // COP0
+				if (((insn >> 21) & 31) == 0x08) return 11;     // BC0x (Branch)
+				return 7;                                       // MFC0/MTC0 (CopDefault)
 			case 0x11:                                          // COP1 (MFC1/MTC1/MOV/NEG/ABS.S)
 				return 7;                                       // CopDefault
-			case 0x1c:                                          // MMI (packed integer)
+			case 0x1c:                                          // MMI
+				if (funct == 0x18 || funct == 0x19) return 16;  // MULT1/MULTU1 (Mult)
+				if (funct == 0x1a || funct == 0x1b) return 112; // DIV1/DIVU1 (Div)
+				if (funct >= 0x10 && funct <= 0x13) return 9;   // MFHI1/MTHI1/MFLO1/MTLO1 (Default)
 				return 14;                                      // MMI_Default
 			case 0x1a: case 0x1b:                               // LDL/LDR
 			case 0x1e:                                          // LQ
@@ -796,6 +805,16 @@ namespace
 			// MMI (128-bit parallel integer) -> NEON, for the bit-exact subset.
 			case 0x1c:
 				if (no_mmi) return false;
+				// Pipeline-1 mult/div + HI1/LO1 moves: the funct encodings match
+				// the SPECIAL forms exactly, only HI/LO shift up by 8 bytes.
+				switch (funct)
+				{
+					case 0x10: case 0x11: case 0x12: case 0x13: // MFHI1/MTHI1/MFLO1/MTLO1
+					case 0x18: case 0x19: case 0x1a: case 0x1b: // MULT1/MULTU1/DIV1/DIVU1
+						if (no_muldiv) return false;
+						EmitMulDiv(m, gpr, funct, rs, rt, rd, 8);
+						return true;
+				}
 				if (MmiSupported(insn)) { EmitMmi(m, gpr, insn); return true; }
 				// PCPYH: broadcast halfword 0 of each 64-bit half of rt across
 				// that half. Scalar: (u16)half * 0x0001000100010001.
@@ -925,9 +944,15 @@ namespace
 			}
 		}
 		if (op == 0x11) return !eeDiag().no_cop1 && Cop1RegSupported(insn);
-		if (op == 0x1c) return !eeDiag().no_mmi &&
-			(MmiSupported(insn) || IsPcpyh(insn) ||
-			 (IsQfsrv(insn) && !eeDiag().no_interpcall && !icDiag().no_qfsrv));
+		if (op == 0x1c)
+		{
+			const u32 f = insn & 0x3f;
+			if ((f >= 0x10 && f <= 0x13) || (f >= 0x18 && f <= 0x1b)) // pipeline-1 muldiv
+				return !eeDiag().no_mmi && !eeDiag().no_muldiv;
+			return !eeDiag().no_mmi &&
+				(MmiSupported(insn) || IsPcpyh(insn) ||
+				 (IsQfsrv(insn) && !eeDiag().no_interpcall && !icDiag().no_qfsrv));
+		}
 		if (op == 0x2f) return !eeDiag().no_interpcall && !icDiag().no_cache; // CACHE
 		if (op == 0x10) // COP0: MFC0/MTC0 only
 		{
@@ -987,6 +1012,7 @@ namespace
 		const int32_t simm = (int16_t)(insn & 0xffff);
 
 		bool uncond = false, is_jr = false, two = false, one = false, likely = false;
+		bool bc0 = false; // condition = CPCOND0() (DMAC all-clear test), via helper call
 		int  link = -1;
 		Condition cond = al;
 		u32  tconst = 0;
@@ -1017,6 +1043,19 @@ namespace
 			else if (rt == 0x03) { one = true; cond = ge; tconst = t; likely = true; } // BGEZL
 			else if (rt == 0x10) { one = true; cond = lt; tconst = t; link = 31; }
 			else if (rt == 0x11) { one = true; cond = ge; tconst = t; link = 31; }
+			else return false;
+		}
+		// BC0F/BC0T(+L): branch on CPCOND0 == 0/1 (COP0.cpp: DMAC CIS|~CPC
+		// all-clear). Taken/not-taken semantics match the BLEZ class (interp
+		// BC0F does nothing on not-taken; the likely forms skip the delay
+		// slot + event test like the other likely branches).
+		else if (op == 0x10 && rs == 0x08)
+		{
+			const u32 t = bpc + 4 + simm * 4;
+			if      (rt == 0x00) { bc0 = true; cond = eq; tconst = t; }                // BC0F
+			else if (rt == 0x01) { bc0 = true; cond = ne; tconst = t; }                // BC0T
+			else if (rt == 0x02) { bc0 = true; cond = eq; tconst = t; likely = true; } // BC0FL
+			else if (rt == 0x03) { bc0 = true; cond = ne; tconst = t; likely = true; } // BC0TL
 			else return false;
 		}
 		else return false;
@@ -1088,8 +1127,18 @@ namespace
 			return true;
 		}
 
-		LoadGpr(m, x0, gpr, rs);
-		if (two) { LoadGpr(m, x1, gpr, rt); m.Cmp(x0, x1); } else m.Cmp(x0, 0);
+		if (bc0)
+		{
+			// CPCOND0 is a plain int() reading dmacRegs; call it directly.
+			m.Mov(x16, reinterpret_cast<uint64_t>(&R5900::Interpreter::OpcodeImpl::COP0::CPCOND0));
+			m.Blr(x16);
+			m.Cmp(w0, 0); // eq -> CPCOND0()==0 (BC0F taken), ne -> ==1 (BC0T taken)
+		}
+		else
+		{
+			LoadGpr(m, x0, gpr, rs);
+			if (two) { LoadGpr(m, x1, gpr, rt); m.Cmp(x0, x1); } else m.Cmp(x0, 0);
+		}
 		Label not_taken;
 		m.B(&not_taken, InvertCondition(cond));
 		EmitSimple(m, gpr, ds);
@@ -1105,13 +1154,16 @@ namespace
 		StorePCImm(m, bpc + (likely ? 8 : 4));
 		// Mirror the interpreter EXACTLY: of the non-likely conditionals, only
 		// BEQ/BNE call intEventTest() on the not-taken path (BGEZ/BGTZ/BLEZ/BLTZ
-		// and the AL forms do nothing there -- see Interpreter.cpp); ALL likely
-		// branches do. Always WITHOUT intUpdateCPUCycles (no cpuBlockCycles
-		// flush). Deviating in either direction (extra/missing test points, or
-		// flushing first) shifts interrupt delivery (EPC) inside wait loops
-		// relative to the interpreter, which cascades into different kernel-
-		// scheduler decisions (MMX7 FMV loader wedge).
-		if (op == 0x04 || op == 0x05 || likely) { m.Mov(x16, evt); m.Blr(x16); }
+		// and the AL forms do nothing there -- see Interpreter.cpp); the likely
+		// branches BEQL/BNEL/BLEZL/BGTZL/BLTZL/BGEZL do. EXCEPTION: BC0FL/BC0TL
+		// are likely (skip the delay slot) but do NOT call intEventTest on
+		// not-taken -- COP0.cpp's BC0FL/BC0TL only do `cpuRegs.pc += 4`. Always
+		// WITHOUT intUpdateCPUCycles (no cpuBlockCycles flush). Deviating in
+		// either direction (extra/missing test points, or flushing first) shifts
+		// interrupt delivery (EPC) inside wait loops relative to the interpreter,
+		// which cascades into different kernel-scheduler decisions (MMX7 FMV
+		// loader wedge).
+		if (op == 0x04 || op == 0x05 || (likely && !bc0)) { m.Mov(x16, evt); m.Blr(x16); }
 		EmitChainEpilogue(m);
 		return true;
 	}
