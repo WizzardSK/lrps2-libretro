@@ -27,6 +27,8 @@
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
+#include <sys/syscall.h>
+#include <unistd.h>
 #include <sys/mman.h>
 
 // #define EE_PC_SAMPLE 1 // TEMP: EE PC histogram diagnostic (disables block-linking when on)
@@ -164,19 +166,13 @@ namespace
 	// natively: the pure bit moves (MFC1/MTC1/MOV.S/NEG.S/ABS.S) plus, as of
 	// C.23/C.24, the S-format arithmetic (native AArch64 FP ops with the EE's
 	// fpuDouble()-clamp / checkOverflow/checkUnderflow / checkDivideByZero
-	// semantics -- see EmitFpuBinaryS/EmitDivS/EmitSqrtS/EmitRsqrtS). CVT,
-	// C.cond, MADD/MSUB/*A_S, BC1 and CFC1/CTC1 stay with the interpreter (a
-	// later increment). MAX.S/MIN.S (funct 0x28/0x29) were ATTEMPTED in C.24
-	// (EmitMaxMinS, pure signed-int32 fp_max/fp_min) but DELIBERATELY DROPPED:
-	// enabling MAX.S alone (value-verified correct via a runtime C-recompute
-	// check that never fired a mismatch) reproducibly crashes GT3 at early
-	// boot in a totally unrelated inline-vtlb SQ fast-path several ops later
-	// in the same block -- almost certainly a block-shape/length side effect
-	// exposing a latent bug elsewhere, not a MAX.S logic bug. Needs a fresh
-	// investigation pass before retrying; see lrps2-arm64-port memory C.24.
+	// semantics -- see EmitFpuBinaryS/EmitDivS/EmitSqrtS/EmitRsqrtS/
+	// EmitMaxMinS). CVT, C.cond, MADD/MSUB/*A_S, BC1 and CFC1/CTC1 stay with
+	// the interpreter (a later increment).
 	//   rs=0x00 MFC1, rs=0x04 MTC1,
 	//   rs=0x10 + funct {0x00 ADD.S,0x01 SUB.S,0x02 MUL.S,0x03 DIV.S,0x04 SQRT.S,
-	//                     0x05 ABS.S,0x06 MOV.S,0x07 NEG.S,0x16 RSQRT.S}
+	//                     0x05 ABS.S,0x06 MOV.S,0x07 NEG.S,0x16 RSQRT.S,
+	//                     0x28 MAX.S,0x29 MIN.S}
 	bool Cop1RegSupported(u32 insn)
 	{
 		const u32 rs = (insn >> 21) & 31;
@@ -186,13 +182,13 @@ namespace
 			const u32 funct = insn & 0x3f;
 			return funct == 0x00 || funct == 0x01 || funct == 0x02 || funct == 0x03 ||
 			       funct == 0x04 || funct == 0x05 || funct == 0x06 || funct == 0x07 ||
-			       funct == 0x16;
+			       funct == 0x16 || funct == 0x28 || funct == 0x29;
 		}
 		return false;
 	}
 
 	// Is this a Cop1RegSupported() instruction specifically one of the S-format
-	// arithmetic ops (ADD/SUB/MUL/DIV/SQRT/RSQRT.S), for the
+	// arithmetic ops (ADD/SUB/MUL/DIV/SQRT/RSQRT/MAX/MIN.S), for the
 	// LRPS2_NO_EE_FPU_ARITH bisect toggle (finer-grained than the blanket
 	// LRPS2_NO_EE_COP1, which also covers the plain bit-move ops).
 	bool Cop1ArithSupported(u32 insn)
@@ -200,7 +196,7 @@ namespace
 		if (((insn >> 21) & 31) != 0x10) return false;
 		const u32 funct = insn & 0x3f;
 		return funct == 0x00 || funct == 0x01 || funct == 0x02 || funct == 0x03 ||
-		       funct == 0x04 || funct == 0x16;
+		       funct == 0x04 || funct == 0x16 || funct == 0x28 || funct == 0x29;
 	}
 
 	// ---- C.23: native S-format ADD/SUB/MUL (bit-exact port of pcsx2/FPU.cpp) ----
@@ -497,6 +493,31 @@ namespace
 		m.Bind(&done);
 	}
 
+	// funct 0x28 MAX.S / 0x29 MIN.S: pure signed-int32 comparison on the raw
+	// bits (pcsx2/FPU.cpp fp_max/fp_min) -- NOT a float compare: no fpuDouble
+	// clamp, no overflow/underflow. Two negative operands invert the natural
+	// signed-int order vs float magnitude, hence the bothNeg swap. Clears O|U
+	// (same bits ABS_S/NEG_S clear). NOTE: xfbase is x1, so w1 must NOT be
+	// used as a value register here -- the C.24 crash was exactly that
+	// (`Ldr(w1, [x1, ...])` zeroed the base, sending the result store to
+	// ~NULL); values live in w0/w2..w5 instead.
+	void EmitMaxMinS(MacroAssembler& m, const Register& xfbase, u32 fd, u32 fs, u32 ft, bool isMax)
+	{
+		m.Ldr(w0, MemOperand(xfbase, fs * 4));
+		m.Ldr(w2, MemOperand(xfbase, ft * 4));
+		m.Cmp(w0, w2);           // signed s32 compare
+		m.Csel(w3, w0, w2, gt);  // w3 = max(fs,ft)
+		m.Csel(w4, w0, w2, lt);  // w4 = min(fs,ft)
+		m.And(w5, w0, w2);
+		m.Tst(w5, 0x80000000);   // both negative?
+		if (isMax) m.Csel(w0, w4, w3, ne); // bothNeg -> min, else -> max
+		else       m.Csel(w0, w3, w4, ne); // bothNeg -> max, else -> min
+		m.Str(w0, MemOperand(xfbase, fd * 4));
+		m.Ldr(w2, MemOperand(xfbase, 252));
+		m.Bic(w2, w2, 0xC000); // clear O|U
+		m.Str(w2, MemOperand(xfbase, 252));
+	}
+
 	// fpuRegisters layout: FPRreg fpr[32] (4 bytes each) at offset 0; u32 fprc[32]
 	// at offset 128 -> FCR31 (the status/cause reg) at offset 128 + 31*4 = 252.
 	void EmitCop1Reg(MacroAssembler& m, const Register& gpr, u32 insn)
@@ -529,6 +550,8 @@ namespace
 		if (funct == 0x03) { EmitDivS(m, x1, fd, fs, ft); return; }   // DIV.S
 		if (funct == 0x04) { EmitSqrtS(m, x1, fd, ft); return; }     // SQRT.S (source is Ft, not Fs)
 		if (funct == 0x16) { EmitRsqrtS(m, x1, fd, fs, ft); return; } // RSQRT.S
+		if (funct == 0x28) { EmitMaxMinS(m, x1, fd, fs, ft, true); return; }  // MAX.S
+		if (funct == 0x29) { EmitMaxMinS(m, x1, fd, fs, ft, false); return; } // MIN.S
 		m.Ldr(w0, MemOperand(x1, fs * 4));
 		if (funct == 0x06) { m.Str(w0, MemOperand(x1, fd * 4)); return; } // MOV.S
 		if (funct == 0x05) m.And(w0, w0, 0x7fffffff);                     // ABS.S
@@ -814,7 +837,7 @@ namespace
 			case 0x11:                                          // COP1
 				// Per R5900OpcodeTables.cpp: MUL.S = FPU_Mult(4*8=32), DIV.S/
 				// SQRT.S = 6*8=48, RSQRT.S = 8*8=64; everything else we translate
-				// (MFC1/MTC1/MOV/NEG/ABS/ADD/SUB.S) is CopDefault(7).
+				// (MFC1/MTC1/MOV/NEG/ABS/ADD/SUB/MAX/MIN.S) is CopDefault(7).
 				if (((insn >> 21) & 31) == 0x10)
 				{
 					switch (insn & 0x3f)
@@ -1603,10 +1626,15 @@ namespace
 		}
 	}
 
+	int s_cache_wraps = 0; // TEMP DEBUG (C.24 crash hunt)
+
 	BlockFn CompileBlock(u32 pc)
 	{
 		if (s_code_pos + 8192 > kCodeCacheSize)
 		{
+			s_cache_wraps++;
+			if (getenv("LRPS2_FAULT_LOG"))
+				fprintf(stderr, "[ee-cache-WRAP #%d]\n", s_cache_wraps);
 			s_blocks.clear();
 			s_page.clear();
 			LutClearAll();
@@ -1860,8 +1888,57 @@ void eeJitShutdown_arm64(void)
 	s_code_pos = 0;
 }
 
+// TEMP DEBUG (C.24 crash hunt, LRPS2_FAULT_LOG): given a host fault pc, say
+// whether it lies in the EE JIT cache, which block contains it, and hexdump
+// the emitted code around it (offline-disassemblable). Not signal-safe --
+// debug only.
+extern "C" void eeJitDebugLocate_arm64(uintptr_t pc)
+{
+	if (!s_code || pc < (uintptr_t)s_code || pc >= (uintptr_t)s_code + kCodeCacheSize)
+	{
+		fprintf(stderr, "[locate] pc=%p NOT in EE cache (%p..%p)\n",
+			(void*)pc, (void*)s_code, (void*)(s_code + kCodeCacheSize));
+		return;
+	}
+	u32 best_pc = 0; uintptr_t best_fn = 0; bool best_live = false;
+	for (const auto& kv : s_blocks)
+	{
+		const uintptr_t fn = (uintptr_t)kv.second.fn;
+		if (fn <= pc && fn > best_fn) { best_fn = fn; best_pc = kv.first; best_live = kv.second.live; }
+	}
+	fprintf(stderr, "[locate] pc=%p in EE cache; block guest=%08x host=%p off=+%#lx live=%d\n",
+		(void*)pc, best_pc, (void*)best_fn, (unsigned long)(pc - best_fn), (int)best_live);
+	fprintf(stderr, "[locate] cache=%p pos=%#zx pc-off=%#lx wraps=%d tid=%ld\n",
+		(void*)s_code, s_code_pos, (unsigned long)(pc - (uintptr_t)s_code), s_cache_wraps,
+		(long)syscall(SYS_gettid));
+	// Dump the whole emitted block from its start through a bit past the fault.
+	{
+		const u32* w = (const u32*)best_fn;
+		const int nwords = (int)((pc - best_fn) / 4) + 24;
+		for (int i = 0; i < nwords; i++)
+			fprintf(stderr, "[code+%04x] %08x%s\n", i * 4, w[i],
+				((uintptr_t)(w + i) == pc) ? "  <-- FAULT" : "");
+	}
+	// And the block's guest source snapshot (MIPS words) for cross-reference.
+	auto it = s_blocks.find(best_pc);
+	if (it != s_blocks.end())
+	{
+		const u32 ns = Norm(best_pc);
+		fprintf(stderr, "[guest] block %08x native-end %08x src words %zu\n",
+			best_pc, it->second.end, it->second.src.size());
+		for (size_t i = 0; i < it->second.src.size(); i++)
+			fprintf(stderr, "[mips %08x] %08x\n", ns + (u32)i * 4, it->second.src[i]);
+	}
+}
+
 extern "C" void eeJitRunBlock_arm64(void)
 {
+	// TEMP DEBUG (C.24 crash hunt): identify the EE-dispatch thread once.
+	if (getenv("LRPS2_FAULT_LOG"))
+	{
+		static bool once = false;
+		if (!once) { once = true; fprintf(stderr, "[ee-thread] tid=%ld\n", (long)syscall(SYS_gettid)); }
+	}
 #ifdef EE_PC_SAMPLE
 	// TEMP diagnostic: sample EE PC 1/256 dispatches, dump the hottest 14 PCs
 	// every ~3M samples to find the loop the game spins on while stalled.

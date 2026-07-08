@@ -1422,6 +1422,12 @@ static __fi void mmap_ClearCpuBlock(uint offset)
 	Cpu->Clear(m_PageProtectInfo[rampage].ReverseRamMap, __pagesize);
 }
 
+#if defined(__aarch64__)
+// TEMP diagnostic (LRPS2_FAULT_LOG, C.24 crash hunt): JIT-block locators.
+extern "C" void eeJitDebugLocate_arm64(uintptr_t);
+extern "C" void iopJitDebugLocate_arm64(uintptr_t);
+#endif
+
 bool vtlb_private::PageFaultHandler(const PageFaultInfo& info)
 {
 	// TEMP diagnostic (LRPS2_FAULT_LOG; stderr is not async-signal-safe, debug only)
@@ -1445,7 +1451,19 @@ bool vtlb_private::PageFaultHandler(const PageFaultInfo& info)
 		// get bad virtual address
 		uptr offset = info.addr - (uptr)eeMem->Main;
 		if (offset >= Ps2MemSize::MainRam)
+		{
+#if defined(__aarch64__)
+			// TEMP diagnostic (LRPS2_FAULT_LOG): about to hand the fault to the
+			// default handler (-> abort). Say which JIT block the pc belongs to.
+			if (getenv("LRPS2_FAULT_LOG"))
+			{
+				fprintf(stderr, "[fault-UNHANDLED] pc=%p addr=%p\n", (void*)info.pc, (void*)info.addr);
+				eeJitDebugLocate_arm64(info.pc);
+				iopJitDebugLocate_arm64(info.pc);
+			}
+#endif
 			return false;
+		}
 
 		mmap_ClearCpuBlock(offset);
 		return true;
