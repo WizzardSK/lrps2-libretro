@@ -14,7 +14,7 @@ RetroArch flatpak + musl test host).
 
 | Component | State |
 |---|---|
-| EE (R5900) JIT | Native ALU, loads/stores incl. LQ/SQ (inline vtlb fast path), branches + likely branches, block linking/chaining, MULT/DIV + HI/LO, COP1 data moves, bit-exact MMI subset → NEON, kernel idle-loop skip |
+| EE (R5900) JIT | Native ALU, loads/stores incl. LQ/SQ (inline vtlb fast path) + unaligned family, branches + likely branches + BC0x, block linking/chaining, MULT/DIV/MADD + HI/LO (both pipelines), full COP1 (FPU) data moves **and S-format arithmetic** (ADD/SUB/MUL/DIV/SQRT/RSQRT/MAX/MIN + ADDA/SUBA/MULA/MADD/MSUB/MADDA/MSUBA, interpreter-exact clamp/flag semantics; CVT and C.cond still interpreted), bit-exact MMI subset → NEON, MTSAB/MTSAH, kernel idle-loop skip, block revalidation cache |
 | IOP (R3000A) JIT | Native ALU, aligned loads/stores, branches + delay slots, block linking; mult/div/COP0/unaligned via interpreter |
 | VU0/VU1 | Interpreter (VU recompilers are future work). Instant-VU1 is disabled on arm64 — continuous VU1 microprograms would spin the 3M-cycle budget per kick; VU1 runs in interleaved slices (`LRPS2_VU1_INSTANT=1` restores instant mode). VU1-render-heavy scenes (e.g. GT3's attract demo) are still interpreter-bound and run far below full speed |
 | VIF unpack | Portable C path (x86 SSE dynarec tables are bypassed) |
@@ -55,6 +55,8 @@ Bisection switches:
 | `LRPS2_NO_EEREC=1` | EE runs on the pure interpreter |
 | `LRPS2_NO_IOPREC=1` | IOP runs on the pure interpreter |
 | `LRPS2_NO_EE_MEM/LOAD/STORE/BRANCH/MMI/MULDIV/COP1/LD64=1` | Route the given EE op class to the interpreter |
+| `LRPS2_NO_EE_FPU_ARITH=1` | Route COP1 S-format arithmetic to the interpreter (data moves stay native) |
+| `LRPS2_NO_EE_DIVS/SQRTS/RSQRTS=1` | Route just DIV.S / SQRT.S / RSQRT.S to the interpreter |
 | `LRPS2_EE_SPLIT_MEM=1` | End the block after every native mem op |
 | `LRPS2_NO_INLINE_MEM=1` | Disable the inline vtlb fast path (wrapper calls only) |
 | `LRPS2_MTVU=1` | Opt in to the MTVU (VU1 worker thread) |
@@ -72,7 +74,8 @@ Tracing/logging:
 | `LRPS2_EVTLOG=<path>` + `LRPS2_EVT_LO/HI=<frame>` | Log every EE event test |
 | `LRPS2_WLOG=1` + `LRPS2_WLO/WHI=<hex>` + `LRPS2_WFRAME=<n>` | Watch EE memory accesses in a physical range |
 | `LRPS2_IPU_LOG_FRAME=<n>` | Log IPU FDEC results + IPU1 DMA feed from frame n |
-| `LRPS2_FAULT_LOG=1` | Log vtlb page-fault handler activity |
+| `LRPS2_FAULT_LOG=1` | Log vtlb page-fault handler activity; on an unhandled fault, locate the faulting pc's JIT block (guest pc, emitted-code hexdump, guest MIPS source) |
+| `LRPS2_HANDOFF_STATS=1` | Histogram of ops handed to the interpreter + first-op breaker table |
 | `LRPS2_JIT_STATS=1` | JIT compile statistics (e.g. likely-branch counts) |
 
 ## Project Details
