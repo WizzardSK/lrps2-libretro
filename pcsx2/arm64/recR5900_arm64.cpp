@@ -158,11 +158,14 @@ namespace
 		m.Str(xs, MemOperand(gpr, idx * 16));
 	}
 
-	// COP1 (FPU) register sub-ops that are *pure bit moves* -- no PS2 FPU
-	// arithmetic, so they are bit-exact and safe to translate natively. The
-	// quirky non-IEEE arithmetic (ADD.S/MUL.S/DIV.S, CVT, C.cond, MADD, ...),
+	// COP1 (FPU) register sub-ops that are bit-exact and safe to translate
+	// natively: the pure bit moves (MFC1/MTC1/MOV.S/NEG.S/ABS.S) plus, as of
+	// C.23, the S-format ADD/SUB/MUL arithmetic (native single-precision ops
+	// with the EE's fpuDouble()-clamp semantics -- see EmitFpuBinaryS). The
+	// remaining quirky non-IEEE arithmetic (DIV.S, CVT, C.cond, MADD, ...),
 	// BC1 and CFC1/CTC1 stay with the interpreter.
-	//   rs=0x00 MFC1, rs=0x04 MTC1, rs=0x10 + funct {0x05 ABS.S,0x06 MOV.S,0x07 NEG.S}
+	//   rs=0x00 MFC1, rs=0x04 MTC1,
+	//   rs=0x10 + funct {0x00 ADD.S,0x01 SUB.S,0x02 MUL.S,0x05 ABS.S,0x06 MOV.S,0x07 NEG.S}
 	bool Cop1RegSupported(u32 insn)
 	{
 		const u32 rs = (insn >> 21) & 31;
@@ -170,9 +173,125 @@ namespace
 		if (rs == 0x10)
 		{
 			const u32 funct = insn & 0x3f;
-			return funct == 0x05 || funct == 0x06 || funct == 0x07;
+			return funct == 0x00 || funct == 0x01 || funct == 0x02 ||
+			       funct == 0x05 || funct == 0x06 || funct == 0x07;
 		}
 		return false;
+	}
+
+	// Is this a Cop1RegSupported() instruction specifically one of the new
+	// S-format arithmetic ops (ADD.S/SUB.S/MUL.S), for the LRPS2_NO_EE_FPU_ARITH
+	// bisect toggle (finer-grained than the blanket LRPS2_NO_EE_COP1).
+	bool Cop1ArithSupported(u32 insn)
+	{
+		if (((insn >> 21) & 31) != 0x10) return false;
+		const u32 funct = insn & 0x3f;
+		return funct == 0x00 || funct == 0x01 || funct == 0x02;
+	}
+
+	// ---- C.23: native S-format ADD/SUB/MUL (bit-exact port of pcsx2/FPU.cpp) ----
+	// The interpreter's ADD_S/SUB_S/MUL_S are, e.g.:
+	//   _FdValf_ = fpuDouble(Fs) + fpuDouble(Ft);
+	//   if (checkOverflow(_FdValUl_, O|SO)) return;
+	//   checkUnderflow(_FdValUl_, U|SU);
+	// where fpuDouble() clamps a raw single INPUT (denormal/zero -> signed zero;
+	// inf/nan -> signed posFmax 0x7f7fffff; else passthrough) and the "+"/"-"/"*"
+	// is a real IEEE single-precision op (fpuDouble returns a `float`, despite the
+	// name). This is NOT the x86 recompiler's double-promotion "full" mode (see
+	// armsx2-pcsx2's aR5900FPU.cpp emitToPS2FPUFullCore) -- that targets a
+	// different ground truth (the x86 JIT) with extra magnitude-preserving range.
+	// Our target is the plain interpreter, so the natural translation is: clamp
+	// each operand's raw bits, do the arithmetic natively in AArch64 single
+	// precision (Sn regs -- exactly matches host `float op float`, no guard-bit
+	// masking trickery needed since we never promote to double), then clamp the
+	// raw result bits the same way checkOverflow/checkUnderflow do. Verified safe
+	// against host FPCR: EE blocks always run with FPCR left at its process
+	// default (bitmask 0, no flush-to-zero) -- only VU1 briefly swaps FPCR
+	// (recVU1_arm64.cpp, RAII-restored), so denormal results here are never
+	// silently flushed by the host before we can inspect them.
+
+	// Clamp a raw single bit pattern per fpuDouble(). wtmp is scratch.
+	inline void EmitFpuClampBits(MacroAssembler& m, const Register& wd, const Register& wtmp)
+	{
+		Label notZero, done;
+		m.And(wtmp, wd, 0x7f800000);      // exponent field
+		m.Cbnz(wtmp, &notZero);
+		m.And(wd, wd, 0x80000000);        // exp==0 (zero/denormal) -> signed zero
+		m.B(&done);
+		m.Bind(&notZero);
+		m.Cmp(wtmp, 0x7f800000);
+		m.B(&done, ne);                   // normal finite -> untouched
+		m.And(wtmp, wd, 0x80000000);
+		m.Orr(wd, wtmp, 0x7f7fffff);      // exp==0xff -> signed posFmax
+		m.Bind(&done);
+	}
+
+	// checkOverflow(wd, O|SO) then, only if no overflow, checkUnderflow(wd, U|SU) --
+	// exact mirror of pcsx2/FPU.cpp for the ADD_S/SUB_S/MUL_S family. wd holds the
+	// raw result bits (updated in place with the clamped value); xfbase must hold
+	// &fpuRegs. Scratch: w2, w3.
+	inline void EmitFpuOverflowUnderflow(MacroAssembler& m, const Register& wd, const Register& xfbase)
+	{
+		Label overflow, notDenormal, done;
+
+		m.And(w2, wd, 0x7fffffff);
+		m.Cmp(w2, 0x7f800000);
+		m.B(&overflow, eq);
+
+		// no overflow: checkOverflow's else-branch clears FPUflagO only.
+		m.Ldr(w3, MemOperand(xfbase, 252));
+		m.Bic(w3, w3, 0x8000);
+		m.Str(w3, MemOperand(xfbase, 252));
+
+		// checkUnderflow: exp==0 && mantissa!=0 (true denormal) -> flush + U|SU;
+		// else clear U only (exact zero is NOT underflow).
+		m.And(w2, wd, 0x7f800000);
+		m.Cbnz(w2, &notDenormal);
+		m.And(w2, wd, 0x7fffff);
+		m.Cbz(w2, &notDenormal);
+		m.And(wd, wd, 0x80000000);        // flush to signed zero
+		m.Ldr(w3, MemOperand(xfbase, 252));
+		m.Orr(w3, w3, 0x4000);
+		m.Orr(w3, w3, 0x8);
+		m.Str(w3, MemOperand(xfbase, 252));
+		m.B(&done);
+
+		m.Bind(&notDenormal);
+		m.Ldr(w3, MemOperand(xfbase, 252));
+		m.Bic(w3, w3, 0x4000);
+		m.Str(w3, MemOperand(xfbase, 252));
+		m.B(&done);
+
+		m.Bind(&overflow);
+		m.And(w3, wd, 0x80000000);
+		m.Orr(wd, w3, 0x7f7fffff);        // signed posFmax
+		m.Ldr(w2, MemOperand(xfbase, 252));
+		m.Orr(w2, w2, 0x8000);
+		m.Orr(w2, w2, 0x10);
+		m.Str(w2, MemOperand(xfbase, 252));
+
+		m.Bind(&done);
+	}
+
+	// funct: 0x00 ADD.S, 0x01 SUB.S, 0x02 MUL.S. x1 must hold &fpuRegs (caller
+	// already loaded it -- see EmitCop1Reg). Result -> fpr[fd].
+	void EmitFpuBinaryS(MacroAssembler& m, const Register& xfbase, u32 funct, u32 fd, u32 fs, u32 ft)
+	{
+		m.Ldr(w0, MemOperand(xfbase, fs * 4));
+		EmitFpuClampBits(m, w0, w4);
+		m.Fmov(s0, w0);
+		m.Ldr(w0, MemOperand(xfbase, ft * 4));
+		EmitFpuClampBits(m, w0, w4);
+		m.Fmov(s1, w0);
+		switch (funct)
+		{
+			case 0x00: m.Fadd(s0, s0, s1); break;
+			case 0x01: m.Fsub(s0, s0, s1); break;
+			default:   m.Fmul(s0, s0, s1); break; // 0x02 MUL.S
+		}
+		m.Fmov(w0, s0);
+		EmitFpuOverflowUnderflow(m, w0, xfbase);
+		m.Str(w0, MemOperand(xfbase, fd * 4));
 	}
 
 	// fpuRegisters layout: FPRreg fpr[32] (4 bytes each) at offset 0; u32 fprc[32]
@@ -196,8 +315,14 @@ namespace
 			m.Mov(x1, fbase); LoadGpr(m, x0, gpr, rt); m.Str(w0, MemOperand(x1, fs * 4));
 			return;
 		}
-		// rs == 0x10 single-precision bit ops
+		// rs == 0x10 single-precision ops
 		m.Mov(x1, fbase);
+		if (funct == 0x00 || funct == 0x01 || funct == 0x02) // ADD.S/SUB.S/MUL.S
+		{
+			const u32 ft = (insn >> 16) & 31;
+			EmitFpuBinaryS(m, x1, funct, fd, fs, ft);
+			return;
+		}
 		m.Ldr(w0, MemOperand(x1, fs * 4));
 		if (funct == 0x06) { m.Str(w0, MemOperand(x1, fd * 4)); return; } // MOV.S
 		if (funct == 0x05) m.And(w0, w0, 0x7fffffff);                     // ABS.S
@@ -480,7 +605,10 @@ namespace
 			case 0x10:                                          // COP0
 				if (((insn >> 21) & 31) == 0x08) return 11;     // BC0x (Branch)
 				return 7;                                       // MFC0/MTC0 (CopDefault)
-			case 0x11:                                          // COP1 (MFC1/MTC1/MOV/NEG/ABS.S)
+			case 0x11:                                          // COP1
+				// ADD.S/SUB.S = CopDefault(7); MUL.S = FPU_Mult(4*8=32); everything
+				// else we translate (MFC1/MTC1/MOV/NEG/ABS.S) is CopDefault too.
+				if (((insn >> 21) & 31) == 0x10 && (insn & 0x3f) == 0x02) return 32;
 				return 7;                                       // CopDefault
 			case 0x1c:                                          // MMI
 				if (funct == 0x18 || funct == 0x19) return 16;  // MULT1/MULTU1 (Mult)
@@ -514,7 +642,7 @@ namespace
 	// the interpreter, to bisect which native EE JIT feature breaks MMX7's
 	// post-logo progression. Read once. Mirrored in IsTranslatable so the block
 	// builder and delay-slot handling stay consistent with EmitSimple.
-	struct EeDiagFlags { int no_mmi, no_muldiv, no_cop1, no_mem, no_load, no_store, no_branch, no_ld64, no_interpcall; };
+	struct EeDiagFlags { int no_mmi, no_muldiv, no_cop1, no_mem, no_load, no_store, no_branch, no_ld64, no_interpcall, no_fpu_arith; };
 	const EeDiagFlags& eeDiag()
 	{
 		static EeDiagFlags f = {
@@ -527,6 +655,7 @@ namespace
 			getenv("LRPS2_NO_EE_BRANCH") ? 1 : 0,
 			getenv("LRPS2_NO_EE_LD64")   ? 1 : 0,
 			getenv("LRPS2_NO_EE_INTERPCALL") ? 1 : 0, // C.18 inline interp-op calls
+			getenv("LRPS2_NO_EE_FPU_ARITH")  ? 1 : 0, // C.23 native ADD.S/SUB.S/MUL.S
 		};
 		return f;
 	}
@@ -578,6 +707,7 @@ namespace
 		// to the interpreter to bisect which native EE JIT feature breaks MMX7.
 		const int no_mmi = eeDiag().no_mmi, no_muldiv = eeDiag().no_muldiv;
 		const int no_cop1 = eeDiag().no_cop1;
+		const int no_fpu_arith = eeDiag().no_fpu_arith;
 		const int no_load = eeDiag().no_load, no_store = eeDiag().no_store;
 		const int no_ld64 = eeDiag().no_ld64;
 
@@ -847,6 +977,7 @@ namespace
 			// BC1/CFC1/CTC1 hand off to the interpreter).
 			case 0x11:
 				if (no_cop1 || !Cop1RegSupported(insn)) return false;
+				if (no_fpu_arith && Cop1ArithSupported(insn)) return false;
 				EmitCop1Reg(m, gpr, insn);
 				return true;
 
@@ -1001,7 +1132,9 @@ namespace
 				default: return false;
 			}
 		}
-		if (op == 0x11) return !eeDiag().no_cop1 && Cop1RegSupported(insn);
+		if (op == 0x11)
+			return !eeDiag().no_cop1 && Cop1RegSupported(insn) &&
+			       !(eeDiag().no_fpu_arith && Cop1ArithSupported(insn));
 		if (op == 0x1c)
 		{
 			const u32 f = insn & 0x3f;
