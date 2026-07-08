@@ -179,28 +179,35 @@ namespace
 	{
 		const u32 rs = (insn >> 21) & 31;
 		if (rs == 0x00 || rs == 0x04) return true;
+		if (rs == 0x14) return (insn & 0x3f) == 0x20; // W format: CVT.S.W
 		if (rs == 0x10)
 		{
 			const u32 funct = insn & 0x3f;
 			return funct == 0x00 || funct == 0x01 || funct == 0x02 || funct == 0x03 ||
 			       funct == 0x04 || funct == 0x05 || funct == 0x06 || funct == 0x07 ||
 			       funct == 0x16 || (funct >= 0x18 && funct <= 0x1a) ||
-			       (funct >= 0x1c && funct <= 0x1f) || funct == 0x28 || funct == 0x29;
+			       (funct >= 0x1c && funct <= 0x1f) || funct == 0x24 ||
+			       funct == 0x28 || funct == 0x29 ||
+			       funct == 0x30 || funct == 0x32 || funct == 0x34 || funct == 0x36;
 		}
 		return false;
 	}
 
 	// Is this a Cop1RegSupported() instruction specifically one of the S-format
-	// arithmetic ops (everything above except the plain bit moves), for the
-	// LRPS2_NO_EE_FPU_ARITH bisect toggle (finer-grained than the blanket
-	// LRPS2_NO_EE_COP1, which also covers the plain bit-move ops).
+	// arithmetic/compare/convert ops (everything except the plain bit moves),
+	// for the LRPS2_NO_EE_FPU_ARITH bisect toggle (finer-grained than the
+	// blanket LRPS2_NO_EE_COP1, which also covers the plain bit-move ops).
 	bool Cop1ArithSupported(u32 insn)
 	{
-		if (((insn >> 21) & 31) != 0x10) return false;
+		const u32 rs = (insn >> 21) & 31;
+		if (rs == 0x14) return true; // CVT.S.W
+		if (rs != 0x10) return false;
 		const u32 funct = insn & 0x3f;
 		return funct == 0x00 || funct == 0x01 || funct == 0x02 || funct == 0x03 ||
 		       funct == 0x04 || funct == 0x16 || (funct >= 0x18 && funct <= 0x1a) ||
-		       (funct >= 0x1c && funct <= 0x1f) || funct == 0x28 || funct == 0x29;
+		       (funct >= 0x1c && funct <= 0x1f) || funct == 0x24 ||
+		       funct == 0x28 || funct == 0x29 ||
+		       funct == 0x30 || funct == 0x32 || funct == 0x34 || funct == 0x36;
 	}
 
 	// ---- C.23: native S-format ADD/SUB/MUL (bit-exact port of pcsx2/FPU.cpp) ----
@@ -556,6 +563,71 @@ namespace
 		m.Bind(&done);
 	}
 
+	// funct 0x24 CVT.W.S: if the exponent field of the RAW single (no fpuDouble
+	// clamp!) is <= 0x4E800000, fd = (s32)Fs.f (C cast = truncate toward zero,
+	// exactly Fcvtzs); else out-of-range: positive -> 0x7fffffff, negative ->
+	// 0x80000000. Denormals/zero have exp 0 -> in-range -> truncate to 0.
+	void EmitCvtW(MacroAssembler& m, const Register& xfbase, u32 fd, u32 fs)
+	{
+		Label outOfRange, done;
+		m.Ldr(w0, MemOperand(xfbase, fs * 4));
+		m.And(w2, w0, 0x7f800000);
+		m.Mov(w3, 0x4E800000);
+		m.Cmp(w2, w3);
+		m.B(&outOfRange, hi);
+		m.Fmov(s0, w0);
+		m.Fcvtzs(w2, s0);
+		m.Str(w2, MemOperand(xfbase, fd * 4));
+		m.B(&done);
+		m.Bind(&outOfRange);
+		m.Mov(w2, 0x7fffffff);
+		m.Mov(w3, 0x80000000);
+		m.Tst(w0, 0x80000000);
+		m.Csel(w2, w3, w2, ne);
+		m.Str(w2, MemOperand(xfbase, fd * 4));
+		m.Bind(&done);
+	}
+
+	// rs=0x14 (W format) funct 0x20 CVT.S.W: fd = (float)Fs.SL -- plain signed
+	// int32 -> single conversion (Scvtf, round-to-nearest = host default FPCR,
+	// which EE blocks always run under). No flags, no clamps.
+	void EmitCvtS(MacroAssembler& m, const Register& xfbase, u32 fd, u32 fs)
+	{
+		m.Ldr(w0, MemOperand(xfbase, fs * 4));
+		m.Scvtf(s0, w0);
+		m.Fmov(w0, s0);
+		m.Str(w0, MemOperand(xfbase, fd * 4));
+	}
+
+	// funct 0x30 C.F / 0x32 C.EQ / 0x34 C.LT / 0x36 C.LE: compare
+	// fpuDouble-clamped operands (comparePrecision is compiled out, so the
+	// interpreter compares the exact clamped floats) and set/clear the FCR31
+	// C flag (0x00800000). C.F unconditionally clears it. Post-clamp values
+	// are never NaN, so the ordered integer-style conditions (eq/lt/le) after
+	// Fcmp are exact.
+	void EmitFpuCmpS(MacroAssembler& m, const Register& xfbase, u32 funct, u32 fs, u32 ft)
+	{
+		if (funct == 0x30) // C.F: clear C only
+		{
+			m.Ldr(w2, MemOperand(xfbase, 252));
+			m.Bic(w2, w2, 0x00800000);
+			m.Str(w2, MemOperand(xfbase, 252));
+			return;
+		}
+		m.Ldr(w0, MemOperand(xfbase, fs * 4));
+		EmitFpuClampBits(m, w0, w4);
+		m.Fmov(s0, w0);
+		m.Ldr(w0, MemOperand(xfbase, ft * 4));
+		EmitFpuClampBits(m, w0, w4);
+		m.Fmov(s1, w0);
+		m.Fcmp(s0, s1);
+		m.Cset(w0, funct == 0x32 ? eq : (funct == 0x34 ? lt : le));
+		m.Ldr(w2, MemOperand(xfbase, 252));
+		m.Bic(w2, w2, 0x00800000);
+		m.Orr(w2, w2, Operand(w0, LSL, 23));
+		m.Str(w2, MemOperand(xfbase, 252));
+	}
+
 	// funct 0x28 MAX.S / 0x29 MIN.S: pure signed-int32 comparison on the raw
 	// bits (pcsx2/FPU.cpp fp_max/fp_min) -- NOT a float compare: no fpuDouble
 	// clamp, no overflow/underflow. Two negative operands invert the natural
@@ -602,6 +674,12 @@ namespace
 			m.Mov(x1, fbase); LoadGpr(m, x0, gpr, rt); m.Str(w0, MemOperand(x1, fs * 4));
 			return;
 		}
+		if (rs == 0x14) // W format: CVT.S.W only
+		{
+			m.Mov(x1, fbase);
+			EmitCvtS(m, x1, fd, fs);
+			return;
+		}
 		// rs == 0x10 single-precision ops
 		const u32 ft = (insn >> 16) & 31;
 		m.Mov(x1, fbase);
@@ -622,8 +700,14 @@ namespace
 		if (funct == 0x1d) { EmitFpuMaddS(m, x1, fd, fs, ft, true); return; }  // MSUB.S
 		if (funct == 0x1e) { EmitFpuMaddaS(m, x1, fs, ft, false); return; }    // MADDA.S
 		if (funct == 0x1f) { EmitFpuMaddaS(m, x1, fs, ft, true); return; }     // MSUBA.S
+		if (funct == 0x24) { EmitCvtW(m, x1, fd, fs); return; }               // CVT.W.S
 		if (funct == 0x28) { EmitMaxMinS(m, x1, fd, fs, ft, true); return; }  // MAX.S
 		if (funct == 0x29) { EmitMaxMinS(m, x1, fd, fs, ft, false); return; } // MIN.S
+		if (funct == 0x30 || funct == 0x32 || funct == 0x34 || funct == 0x36) // C.F/C.EQ/C.LT/C.LE
+		{
+			EmitFpuCmpS(m, x1, funct, fs, ft);
+			return;
+		}
 		m.Ldr(w0, MemOperand(x1, fs * 4));
 		if (funct == 0x06) { m.Str(w0, MemOperand(x1, fd * 4)); return; } // MOV.S
 		if (funct == 0x05) m.And(w0, w0, 0x7fffffff);                     // ABS.S
@@ -907,10 +991,12 @@ namespace
 				if (((insn >> 21) & 31) == 0x08) return 11;     // BC0x (Branch)
 				return 7;                                       // MFC0/MTC0 (CopDefault)
 			case 0x11:                                          // COP1
-				// Per R5900OpcodeTables.cpp: MUL/MULA/MADD/MSUB/MADDA/MSUBA.S =
-				// FPU_Mult(4*8=32), DIV.S/SQRT.S = 6*8=48, RSQRT.S = 8*8=64;
-				// everything else we translate (MFC1/MTC1/MOV/NEG/ABS/ADD/SUB/
-				// ADDA/SUBA/MAX/MIN.S) is CopDefault(7).
+				// Per R5900OpcodeTables.cpp: BC1F/T(L) = Branch(11); MUL/MULA/
+				// MADD/MSUB/MADDA/MSUBA.S = FPU_Mult(4*8=32), DIV.S/SQRT.S =
+				// 6*8=48, RSQRT.S = 8*8=64; everything else we translate (MFC1/
+				// MTC1/MOV/NEG/ABS/ADD/SUB/ADDA/SUBA/MAX/MIN/CVT/C.cond) is
+				// CopDefault(7).
+				if (((insn >> 21) & 31) == 0x08) return 11;     // BC1x (Branch)
 				if (((insn >> 21) & 31) == 0x10)
 				{
 					switch (insn & 0x3f)
@@ -1075,6 +1161,22 @@ namespace
 					// SYNC is architecturally a barrier; the interpreter's SYNC()
 					// body is empty, so it translates to pure cycle bookkeeping.
 					case 0x0f: return true;
+					// MFSA/MTSA: the shift-amount register (also written by
+					// MTSAB/MTSAH, read by QFSRV). MFSA zero-extends sa into
+					// rd (interp: GPR[rd].UD[0] = (u64)cpuRegs.sa).
+					case 0x28:
+						if (rd)
+						{
+							m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.sa));
+							m.Ldr(w0, MemOperand(x10)); // 32-bit load zero-extends
+							StoreGpr(m, x0, gpr, rd);
+						}
+						return true;
+					case 0x29:
+						LoadGpr(m, x0, gpr, rs);
+						m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.sa));
+						m.Str(w0, MemOperand(x10));
+						return true;
 					// MOVZ/MOVN: rd = rs when rt ==/!= 0 (full 64-bit compare),
 					// rd unchanged otherwise.
 					case 0x0a:
@@ -1442,6 +1544,7 @@ namespace
 					return !eeDiag().no_muldiv;
 				case 0x0f: return true;                     // SYNC (empty body)
 				case 0x0a: case 0x0b: return true;          // MOVZ/MOVN
+				case 0x28: case 0x29: return true;          // MFSA/MTSA
 				default: return false;
 			}
 		}
@@ -1523,6 +1626,7 @@ namespace
 
 		bool uncond = false, is_jr = false, two = false, one = false, likely = false;
 		bool bc0 = false; // condition = CPCOND0() (DMAC all-clear test), via helper call
+		bool bc1 = false; // condition = FCR31 C flag (0x00800000), tested inline
 		int  link = -1;
 		Condition cond = al;
 		u32  tconst = 0;
@@ -1566,6 +1670,19 @@ namespace
 			else if (rt == 0x01) { bc0 = true; cond = ne; tconst = t; }                // BC0T
 			else if (rt == 0x02) { bc0 = true; cond = eq; tconst = t; likely = true; } // BC0FL
 			else if (rt == 0x03) { bc0 = true; cond = ne; tconst = t; likely = true; } // BC0TL
+			else return false;
+		}
+		// BC1F/BC1T(+L): branch on the FCR31 C flag (0x00800000) clear/set.
+		// Same not-taken semantics as BC0x: nothing on the non-likely forms,
+		// and the likely forms skip the delay slot WITHOUT an event test
+		// (FPU.cpp's BC1L macro only does `cpuRegs.pc += 4`).
+		else if (op == 0x11 && rs == 0x08)
+		{
+			const u32 t = bpc + 4 + simm * 4;
+			if      (rt == 0x00) { bc1 = true; cond = eq; tconst = t; }                // BC1F
+			else if (rt == 0x01) { bc1 = true; cond = ne; tconst = t; }                // BC1T
+			else if (rt == 0x02) { bc1 = true; cond = eq; tconst = t; likely = true; } // BC1FL
+			else if (rt == 0x03) { bc1 = true; cond = ne; tconst = t; likely = true; } // BC1TL
 			else return false;
 		}
 		else return false;
@@ -1644,6 +1761,13 @@ namespace
 			m.Blr(x16);
 			m.Cmp(w0, 0); // eq -> CPCOND0()==0 (BC0F taken), ne -> ==1 (BC0T taken)
 		}
+		else if (bc1)
+		{
+			// FCR31 lives at fpuRegs.fprc[31] (byte offset 252).
+			m.Mov(x10, reinterpret_cast<uint64_t>(&fpuRegs));
+			m.Ldr(w0, MemOperand(x10, 252));
+			m.Tst(w0, 0x00800000); // eq -> C clear (BC1F taken), ne -> C set (BC1T taken)
+		}
 		else
 		{
 			LoadGpr(m, x0, gpr, rs);
@@ -1666,14 +1790,15 @@ namespace
 		// BEQ/BNE call intEventTest() on the not-taken path (BGEZ/BGTZ/BLEZ/BLTZ
 		// and the AL forms do nothing there -- see Interpreter.cpp); the likely
 		// branches BEQL/BNEL/BLEZL/BGTZL/BLTZL/BGEZL do. EXCEPTION: BC0FL/BC0TL
-		// are likely (skip the delay slot) but do NOT call intEventTest on
-		// not-taken -- COP0.cpp's BC0FL/BC0TL only do `cpuRegs.pc += 4`. Always
+		// and BC1FL/BC1TL are likely (skip the delay slot) but do NOT call
+		// intEventTest on not-taken -- COP0.cpp's BC0xL and FPU.cpp's BC1L
+		// macro only do `cpuRegs.pc += 4`. Always
 		// WITHOUT intUpdateCPUCycles (no cpuBlockCycles flush). Deviating in
 		// either direction (extra/missing test points, or flushing first) shifts
 		// interrupt delivery (EPC) inside wait loops relative to the interpreter,
 		// which cascades into different kernel-scheduler decisions (MMX7 FMV
 		// loader wedge).
-		if (op == 0x04 || op == 0x05 || (likely && !bc0)) { m.Mov(x16, evt); m.Blr(x16); }
+		if (op == 0x04 || op == 0x05 || (likely && !bc0 && !bc1)) { m.Mov(x16, evt); m.Blr(x16); }
 		EmitChainEpilogue(m);
 		return true;
 	}
