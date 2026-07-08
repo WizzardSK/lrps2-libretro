@@ -172,6 +172,8 @@ namespace
 	//   rs=0x00 MFC1, rs=0x04 MTC1,
 	//   rs=0x10 + funct {0x00 ADD.S,0x01 SUB.S,0x02 MUL.S,0x03 DIV.S,0x04 SQRT.S,
 	//                     0x05 ABS.S,0x06 MOV.S,0x07 NEG.S,0x16 RSQRT.S,
+	//                     0x18 ADDA.S,0x19 SUBA.S,0x1a MULA.S,
+	//                     0x1c MADD.S,0x1d MSUB.S,0x1e MADDA.S,0x1f MSUBA.S,
 	//                     0x28 MAX.S,0x29 MIN.S}
 	bool Cop1RegSupported(u32 insn)
 	{
@@ -182,13 +184,14 @@ namespace
 			const u32 funct = insn & 0x3f;
 			return funct == 0x00 || funct == 0x01 || funct == 0x02 || funct == 0x03 ||
 			       funct == 0x04 || funct == 0x05 || funct == 0x06 || funct == 0x07 ||
-			       funct == 0x16 || funct == 0x28 || funct == 0x29;
+			       funct == 0x16 || (funct >= 0x18 && funct <= 0x1a) ||
+			       (funct >= 0x1c && funct <= 0x1f) || funct == 0x28 || funct == 0x29;
 		}
 		return false;
 	}
 
 	// Is this a Cop1RegSupported() instruction specifically one of the S-format
-	// arithmetic ops (ADD/SUB/MUL/DIV/SQRT/RSQRT/MAX/MIN.S), for the
+	// arithmetic ops (everything above except the plain bit moves), for the
 	// LRPS2_NO_EE_FPU_ARITH bisect toggle (finer-grained than the blanket
 	// LRPS2_NO_EE_COP1, which also covers the plain bit-move ops).
 	bool Cop1ArithSupported(u32 insn)
@@ -196,7 +199,8 @@ namespace
 		if (((insn >> 21) & 31) != 0x10) return false;
 		const u32 funct = insn & 0x3f;
 		return funct == 0x00 || funct == 0x01 || funct == 0x02 || funct == 0x03 ||
-		       funct == 0x04 || funct == 0x16 || funct == 0x28 || funct == 0x29;
+		       funct == 0x04 || funct == 0x16 || (funct >= 0x18 && funct <= 0x1a) ||
+		       (funct >= 0x1c && funct <= 0x1f) || funct == 0x28 || funct == 0x29;
 	}
 
 	// ---- C.23: native S-format ADD/SUB/MUL (bit-exact port of pcsx2/FPU.cpp) ----
@@ -283,9 +287,17 @@ namespace
 		m.Bind(&done);
 	}
 
-	// funct: 0x00 ADD.S, 0x01 SUB.S, 0x02 MUL.S. x1 must hold &fpuRegs (caller
-	// already loaded it -- see EmitCop1Reg). Result -> fpr[fd].
-	void EmitFpuBinaryS(MacroAssembler& m, const Register& xfbase, u32 funct, u32 fd, u32 fs, u32 ft)
+	// The ACC accumulator lives right after fpr[32] (128 B) + fprc[32] (128 B).
+	constexpr u32 kFpuAcc = 256;
+
+	// op: 0 add, 1 sub, 2 mul (the low bits of both the ADD/SUB/MUL.S funct
+	// 0x00/0x01/0x02 and the ADDA/SUBA/MULA.S funct 0x18/0x19/0x1a). x1 must
+	// hold &fpuRegs (caller already loaded it -- see EmitCop1Reg). Result ->
+	// fpuRegs byte offset dst_off (fd*4, or kFpuAcc for the A forms; the
+	// interpreter's ADDA/SUBA/MULA are line-identical to ADD/SUB/MUL apart
+	// from the destination, and none of them touch ACCflag -- that field is
+	// x86-recompiler-internal).
+	void EmitFpuBinaryS(MacroAssembler& m, const Register& xfbase, u32 op, u32 dst_off, u32 fs, u32 ft)
 	{
 		m.Ldr(w0, MemOperand(xfbase, fs * 4));
 		EmitFpuClampBits(m, w0, w4);
@@ -293,15 +305,66 @@ namespace
 		m.Ldr(w0, MemOperand(xfbase, ft * 4));
 		EmitFpuClampBits(m, w0, w4);
 		m.Fmov(s1, w0);
-		switch (funct)
+		switch (op)
 		{
-			case 0x00: m.Fadd(s0, s0, s1); break;
-			case 0x01: m.Fsub(s0, s0, s1); break;
-			default:   m.Fmul(s0, s0, s1); break; // 0x02 MUL.S
+			case 0:  m.Fadd(s0, s0, s1); break;
+			case 1:  m.Fsub(s0, s0, s1); break;
+			default: m.Fmul(s0, s0, s1); break; // 2
 		}
 		m.Fmov(w0, s0);
 		EmitFpuOverflowUnderflow(m, w0, xfbase);
+		m.Str(w0, MemOperand(xfbase, dst_off));
+	}
+
+	// funct 0x1c MADD.S / 0x1d MSUB.S: temp = fpuDouble(Fs)*fpuDouble(Ft);
+	// fd = fpuDouble(ACC) +/- fpuDouble(temp.UL) -- BOTH the intermediate
+	// product and ACC are re-clamped through fpuDouble before the add/sub
+	// (pcsx2/FPU.cpp MADD_S/MSUB_S). Then the usual O|SO / U|SU result check.
+	// There is NO fused multiply-add on the EE -- the product is a rounded
+	// single, so native Fmul + Fadd (not Fmadd) is the exact translation.
+	void EmitFpuMaddS(MacroAssembler& m, const Register& xfbase, u32 fd, u32 fs, u32 ft, bool sub)
+	{
+		m.Ldr(w0, MemOperand(xfbase, fs * 4));
+		EmitFpuClampBits(m, w0, w4);
+		m.Fmov(s0, w0);
+		m.Ldr(w0, MemOperand(xfbase, ft * 4));
+		EmitFpuClampBits(m, w0, w4);
+		m.Fmov(s1, w0);
+		m.Fmul(s0, s0, s1);
+		m.Fmov(w0, s0);
+		EmitFpuClampBits(m, w0, w4);   // fpuDouble(temp.UL)
+		m.Fmov(s0, w0);
+		m.Ldr(w0, MemOperand(xfbase, kFpuAcc));
+		EmitFpuClampBits(m, w0, w4);   // fpuDouble(ACC.UL)
+		m.Fmov(s1, w0);
+		if (sub) m.Fsub(s0, s1, s0);   // fd = ACC - temp
+		else     m.Fadd(s0, s1, s0);   // fd = ACC + temp
+		m.Fmov(w0, s0);
+		EmitFpuOverflowUnderflow(m, w0, xfbase);
 		m.Str(w0, MemOperand(xfbase, fd * 4));
+	}
+
+	// funct 0x1e MADDA.S / 0x1f MSUBA.S: ACC.f +/-= fpuDouble(Fs)*fpuDouble(Ft).
+	// UNLIKE MADD/MSUB, neither the product nor ACC goes through fpuDouble here
+	// (the interpreter's `+=` reads the raw ACC float and adds the raw IEEE
+	// product) -- a real asymmetry in the ground truth; replicate, don't
+	// "harmonize". Then O|SO / U|SU on the accumulated result.
+	void EmitFpuMaddaS(MacroAssembler& m, const Register& xfbase, u32 fs, u32 ft, bool sub)
+	{
+		m.Ldr(w0, MemOperand(xfbase, fs * 4));
+		EmitFpuClampBits(m, w0, w4);
+		m.Fmov(s0, w0);
+		m.Ldr(w0, MemOperand(xfbase, ft * 4));
+		EmitFpuClampBits(m, w0, w4);
+		m.Fmov(s1, w0);
+		m.Fmul(s0, s0, s1);
+		m.Ldr(w0, MemOperand(xfbase, kFpuAcc)); // raw ACC, no clamp
+		m.Fmov(s1, w0);
+		if (sub) m.Fsub(s0, s1, s0);
+		else     m.Fadd(s0, s1, s0);
+		m.Fmov(w0, s0);
+		EmitFpuOverflowUnderflow(m, w0, xfbase);
+		m.Str(w0, MemOperand(xfbase, kFpuAcc));
 	}
 
 	// checkOverflow(wd,0) + checkUnderflow(wd,0): DIV.S/SQRT.S/RSQRT.S pass
@@ -544,12 +607,21 @@ namespace
 		m.Mov(x1, fbase);
 		if (funct == 0x00 || funct == 0x01 || funct == 0x02) // ADD.S/SUB.S/MUL.S
 		{
-			EmitFpuBinaryS(m, x1, funct, fd, fs, ft);
+			EmitFpuBinaryS(m, x1, funct, fd * 4, fs, ft);
+			return;
+		}
+		if (funct == 0x18 || funct == 0x19 || funct == 0x1a) // ADDA.S/SUBA.S/MULA.S
+		{
+			EmitFpuBinaryS(m, x1, funct & 3, kFpuAcc, fs, ft);
 			return;
 		}
 		if (funct == 0x03) { EmitDivS(m, x1, fd, fs, ft); return; }   // DIV.S
 		if (funct == 0x04) { EmitSqrtS(m, x1, fd, ft); return; }     // SQRT.S (source is Ft, not Fs)
 		if (funct == 0x16) { EmitRsqrtS(m, x1, fd, fs, ft); return; } // RSQRT.S
+		if (funct == 0x1c) { EmitFpuMaddS(m, x1, fd, fs, ft, false); return; } // MADD.S
+		if (funct == 0x1d) { EmitFpuMaddS(m, x1, fd, fs, ft, true); return; }  // MSUB.S
+		if (funct == 0x1e) { EmitFpuMaddaS(m, x1, fs, ft, false); return; }    // MADDA.S
+		if (funct == 0x1f) { EmitFpuMaddaS(m, x1, fs, ft, true); return; }     // MSUBA.S
 		if (funct == 0x28) { EmitMaxMinS(m, x1, fd, fs, ft, true); return; }  // MAX.S
 		if (funct == 0x29) { EmitMaxMinS(m, x1, fd, fs, ft, false); return; } // MIN.S
 		m.Ldr(w0, MemOperand(x1, fs * 4));
@@ -835,16 +907,19 @@ namespace
 				if (((insn >> 21) & 31) == 0x08) return 11;     // BC0x (Branch)
 				return 7;                                       // MFC0/MTC0 (CopDefault)
 			case 0x11:                                          // COP1
-				// Per R5900OpcodeTables.cpp: MUL.S = FPU_Mult(4*8=32), DIV.S/
-				// SQRT.S = 6*8=48, RSQRT.S = 8*8=64; everything else we translate
-				// (MFC1/MTC1/MOV/NEG/ABS/ADD/SUB/MAX/MIN.S) is CopDefault(7).
+				// Per R5900OpcodeTables.cpp: MUL/MULA/MADD/MSUB/MADDA/MSUBA.S =
+				// FPU_Mult(4*8=32), DIV.S/SQRT.S = 6*8=48, RSQRT.S = 8*8=64;
+				// everything else we translate (MFC1/MTC1/MOV/NEG/ABS/ADD/SUB/
+				// ADDA/SUBA/MAX/MIN.S) is CopDefault(7).
 				if (((insn >> 21) & 31) == 0x10)
 				{
 					switch (insn & 0x3f)
 					{
-						case 0x02: return 32; // MUL.S
+						case 0x02: case 0x1a:            // MUL.S/MULA.S
+						case 0x1c: case 0x1d:            // MADD.S/MSUB.S
+						case 0x1e: case 0x1f: return 32; // MADDA.S/MSUBA.S
 						case 0x03: case 0x04: return 48; // DIV.S/SQRT.S
-						case 0x16: return 64; // RSQRT.S
+						case 0x16: return 64;            // RSQRT.S
 					}
 				}
 				return 7;                                       // CopDefault
