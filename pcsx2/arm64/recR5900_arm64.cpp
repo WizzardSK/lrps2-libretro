@@ -22,6 +22,8 @@
 #include "common/Console.h"
 
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
@@ -160,12 +162,21 @@ namespace
 
 	// COP1 (FPU) register sub-ops that are bit-exact and safe to translate
 	// natively: the pure bit moves (MFC1/MTC1/MOV.S/NEG.S/ABS.S) plus, as of
-	// C.23, the S-format ADD/SUB/MUL arithmetic (native single-precision ops
-	// with the EE's fpuDouble()-clamp semantics -- see EmitFpuBinaryS). The
-	// remaining quirky non-IEEE arithmetic (DIV.S, CVT, C.cond, MADD, ...),
-	// BC1 and CFC1/CTC1 stay with the interpreter.
+	// C.23/C.24, the S-format arithmetic (native AArch64 FP ops with the EE's
+	// fpuDouble()-clamp / checkOverflow/checkUnderflow / checkDivideByZero
+	// semantics -- see EmitFpuBinaryS/EmitDivS/EmitSqrtS/EmitRsqrtS). CVT,
+	// C.cond, MADD/MSUB/*A_S, BC1 and CFC1/CTC1 stay with the interpreter (a
+	// later increment). MAX.S/MIN.S (funct 0x28/0x29) were ATTEMPTED in C.24
+	// (EmitMaxMinS, pure signed-int32 fp_max/fp_min) but DELIBERATELY DROPPED:
+	// enabling MAX.S alone (value-verified correct via a runtime C-recompute
+	// check that never fired a mismatch) reproducibly crashes GT3 at early
+	// boot in a totally unrelated inline-vtlb SQ fast-path several ops later
+	// in the same block -- almost certainly a block-shape/length side effect
+	// exposing a latent bug elsewhere, not a MAX.S logic bug. Needs a fresh
+	// investigation pass before retrying; see lrps2-arm64-port memory C.24.
 	//   rs=0x00 MFC1, rs=0x04 MTC1,
-	//   rs=0x10 + funct {0x00 ADD.S,0x01 SUB.S,0x02 MUL.S,0x05 ABS.S,0x06 MOV.S,0x07 NEG.S}
+	//   rs=0x10 + funct {0x00 ADD.S,0x01 SUB.S,0x02 MUL.S,0x03 DIV.S,0x04 SQRT.S,
+	//                     0x05 ABS.S,0x06 MOV.S,0x07 NEG.S,0x16 RSQRT.S}
 	bool Cop1RegSupported(u32 insn)
 	{
 		const u32 rs = (insn >> 21) & 31;
@@ -173,20 +184,23 @@ namespace
 		if (rs == 0x10)
 		{
 			const u32 funct = insn & 0x3f;
-			return funct == 0x00 || funct == 0x01 || funct == 0x02 ||
-			       funct == 0x05 || funct == 0x06 || funct == 0x07;
+			return funct == 0x00 || funct == 0x01 || funct == 0x02 || funct == 0x03 ||
+			       funct == 0x04 || funct == 0x05 || funct == 0x06 || funct == 0x07 ||
+			       funct == 0x16;
 		}
 		return false;
 	}
 
-	// Is this a Cop1RegSupported() instruction specifically one of the new
-	// S-format arithmetic ops (ADD.S/SUB.S/MUL.S), for the LRPS2_NO_EE_FPU_ARITH
-	// bisect toggle (finer-grained than the blanket LRPS2_NO_EE_COP1).
+	// Is this a Cop1RegSupported() instruction specifically one of the S-format
+	// arithmetic ops (ADD/SUB/MUL/DIV/SQRT/RSQRT.S), for the
+	// LRPS2_NO_EE_FPU_ARITH bisect toggle (finer-grained than the blanket
+	// LRPS2_NO_EE_COP1, which also covers the plain bit-move ops).
 	bool Cop1ArithSupported(u32 insn)
 	{
 		if (((insn >> 21) & 31) != 0x10) return false;
 		const u32 funct = insn & 0x3f;
-		return funct == 0x00 || funct == 0x01 || funct == 0x02;
+		return funct == 0x00 || funct == 0x01 || funct == 0x02 || funct == 0x03 ||
+		       funct == 0x04 || funct == 0x16;
 	}
 
 	// ---- C.23: native S-format ADD/SUB/MUL (bit-exact port of pcsx2/FPU.cpp) ----
@@ -294,6 +308,195 @@ namespace
 		m.Str(w0, MemOperand(xfbase, fd * 4));
 	}
 
+	// checkOverflow(wd,0) + checkUnderflow(wd,0): DIV.S/SQRT.S/RSQRT.S pass
+	// cFlagsToSet=0 to both checks (pcsx2/FPU.cpp), so the raw result bits get
+	// value-clamped exactly like EmitFpuOverflowUnderflow but FCR31 is NEVER
+	// touched (neither set nor cleared) -- a real ground-truth quirk, not an
+	// oversight, so no fbase param here.
+	inline void EmitFpuClampOutValueOnly(MacroAssembler& m, const Register& wd)
+	{
+		Label overflow, done;
+		m.And(w2, wd, 0x7fffffff);
+		m.Cmp(w2, 0x7f800000);
+		m.B(&overflow, eq);
+		m.And(w2, wd, 0x7f800000);
+		m.Cbnz(w2, &done);
+		m.And(w2, wd, 0x7fffff);
+		m.Cbz(w2, &done);
+		m.And(wd, wd, 0x80000000);
+		m.B(&done);
+		m.Bind(&overflow);
+		m.And(w3, wd, 0x80000000);
+		m.Orr(wd, w3, 0x7f7fffff);
+		m.Bind(&done);
+	}
+
+	// funct 0x03 DIV.S: checkDivideByZero(fd, Ft, Fs, D|SD, I|SI) first -- if Ft's
+	// raw exponent field is 0 (zero/denormal): set D|SD, or I|SI instead if Fs's
+	// exponent field is ALSO 0 (0/0); fd = sign(Ft^Fs) | posFmax; EARLY RETURN, no
+	// overflow/underflow check at all. Otherwise fd = fpuDouble(Fs)/fpuDouble(Ft),
+	// then checkOverflow(0)/checkUnderflow(0) (value-clamp only, no flags).
+	void EmitDivS(MacroAssembler& m, const Register& xfbase, u32 fd, u32 fs, u32 ft)
+	{
+		Label divByZero, done;
+
+		m.Ldr(w5, MemOperand(xfbase, ft * 4)); // raw Ft: divisor sign + zero-check
+		m.And(w2, w5, 0x7f800000);
+		m.Cbz(w2, &divByZero);
+
+		m.Ldr(w0, MemOperand(xfbase, fs * 4));
+		EmitFpuClampBits(m, w0, w4);
+		m.Fmov(s0, w0);
+		m.Mov(w0, w5);
+		EmitFpuClampBits(m, w0, w4);
+		m.Fmov(s1, w0);
+		m.Fdiv(s0, s0, s1);
+		m.Fmov(w0, s0);
+		EmitFpuClampOutValueOnly(m, w0);
+		m.Str(w0, MemOperand(xfbase, fd * 4));
+		m.B(&done);
+
+		m.Bind(&divByZero);
+		{
+			Label zeroFs, flagsDone;
+			m.Ldr(w6, MemOperand(xfbase, fs * 4)); // raw Fs: 0/0 check + result sign
+			m.Ldr(w3, MemOperand(xfbase, 252));
+			m.And(w2, w6, 0x7f800000);
+			m.Cbz(w2, &zeroFs);
+			m.Orr(w3, w3, 0x10000); // D
+			m.Orr(w3, w3, 0x20);    // SD
+			m.B(&flagsDone);
+			m.Bind(&zeroFs);
+			m.Orr(w3, w3, 0x20000); // I
+			m.Orr(w3, w3, 0x40);    // SI
+			m.Bind(&flagsDone);
+			m.Str(w3, MemOperand(xfbase, 252));
+			m.Eor(w0, w5, w6);
+			m.And(w0, w0, 0x80000000);
+			m.Orr(w0, w0, 0x7f7fffff);
+			m.Str(w0, MemOperand(xfbase, fd * 4));
+		}
+
+		m.Bind(&done);
+	}
+
+	// funct 0x04 SQRT.S: single operand in the Ft field (not Fs -- matches the
+	// x86 recompiler's XMMINFO_READT, a real EE quirk vs standard MIPS unary
+	// COP1 encoding). Unconditionally clears I|D, then: Ft exponent-field==0 ->
+	// fd = signed zero (Ft's sign, no extra flags); Ft negative -> sets I|SI,
+	// fd = +sqrt(|fpuDouble(Ft)|) (positive magnitude only -- sqrt of a negative
+	// does NOT reapply the sign); Ft positive -> fd = sqrt(fpuDouble(Ft)). No
+	// overflow/underflow clamp at all in any path (ground truth has none).
+	void EmitSqrtS(MacroAssembler& m, const Register& xfbase, u32 fd, u32 ft)
+	{
+		Label isZero, isNeg, done;
+
+		m.Ldr(w3, MemOperand(xfbase, 252));
+		m.Bic(w3, w3, 0x30000); // clear I|D unconditionally
+		m.Str(w3, MemOperand(xfbase, 252));
+
+		m.Ldr(w0, MemOperand(xfbase, ft * 4));
+		m.And(w2, w0, 0x7f800000);
+		m.Cbz(w2, &isZero);
+		m.Tst(w0, 0x80000000);
+		m.B(&isNeg, ne);
+
+		// positive, nonzero-exp
+		EmitFpuClampBits(m, w0, w4);
+		m.Fmov(s0, w0);
+		m.Fsqrt(s0, s0);
+		m.Fmov(w0, s0);
+		m.Str(w0, MemOperand(xfbase, fd * 4));
+		m.B(&done);
+
+		m.Bind(&isNeg);
+		m.Ldr(w3, MemOperand(xfbase, 252));
+		m.Orr(w3, w3, 0x20000); // I
+		m.Orr(w3, w3, 0x40);    // SI
+		m.Str(w3, MemOperand(xfbase, 252));
+		EmitFpuClampBits(m, w0, w4);
+		m.And(w0, w0, 0x7fffffff); // fabs
+		m.Fmov(s0, w0);
+		m.Fsqrt(s0, s0);
+		m.Fmov(w0, s0);
+		m.Str(w0, MemOperand(xfbase, fd * 4));
+		m.B(&done);
+
+		m.Bind(&isZero);
+		m.And(w0, w0, 0x80000000);
+		m.Str(w0, MemOperand(xfbase, fd * 4));
+
+		m.Bind(&done);
+	}
+
+	// funct 0x16 RSQRT.S: fd = Fs / rsqrt-source(Ft). Unconditionally clears D|I,
+	// then: Ft exponent-field==0 -> sets D|SD, fd = sign(Ft raw) | posFmax
+	// (NOT xor'd with Fs, unlike DIV.S's inline zero-check -- a genuine
+	// asymmetry in the ground truth), EARLY RETURN (no overflow/underflow).
+	// Ft negative -> sets I|SI, divisor = fpuDouble(sqrt(|fpuDouble(Ft)|)) (the
+	// sqrt RESULT is re-clamped through fpuDouble before dividing). Ft positive
+	// -> divisor = sqrt(fpuDouble(Ft)) (sqrt result NOT re-clamped -- another
+	// real asymmetry vs the negative path; replicate both exactly, do not
+	// "simplify" to match). Both non-early-return paths fall through to
+	// checkOverflow(0)/checkUnderflow(0) (value-clamp only, no flags).
+	void EmitRsqrtS(MacroAssembler& m, const Register& xfbase, u32 fd, u32 fs, u32 ft)
+	{
+		Label isZero, isNeg, compute, done;
+
+		m.Ldr(w3, MemOperand(xfbase, 252));
+		m.Bic(w3, w3, 0x30000); // clear D|I unconditionally
+		m.Str(w3, MemOperand(xfbase, 252));
+
+		m.Ldr(w5, MemOperand(xfbase, ft * 4)); // raw Ft
+		m.And(w2, w5, 0x7f800000);
+		m.Cbz(w2, &isZero);
+		m.Tst(w5, 0x80000000);
+		m.B(&isNeg, ne);
+
+		// positive, nonzero-exp: s1 = sqrt(fpuDouble(Ft)), NOT re-clamped
+		m.Mov(w0, w5);
+		EmitFpuClampBits(m, w0, w4);
+		m.Fmov(s1, w0);
+		m.Fsqrt(s1, s1);
+		m.B(&compute);
+
+		m.Bind(&isNeg);
+		m.Ldr(w3, MemOperand(xfbase, 252));
+		m.Orr(w3, w3, 0x20000); // I
+		m.Orr(w3, w3, 0x40);    // SI
+		m.Str(w3, MemOperand(xfbase, 252));
+		m.Mov(w0, w5);
+		EmitFpuClampBits(m, w0, w4);
+		m.And(w0, w0, 0x7fffffff); // fabs
+		m.Fmov(s1, w0);
+		m.Fsqrt(s1, s1);
+		m.Fmov(w0, s1);
+		EmitFpuClampBits(m, w0, w4); // re-clamp temp.UL before dividing
+		m.Fmov(s1, w0);
+		m.B(&compute);
+
+		m.Bind(&compute);
+		m.Ldr(w0, MemOperand(xfbase, fs * 4));
+		EmitFpuClampBits(m, w0, w4);
+		m.Fmov(s0, w0);
+		m.Fdiv(s0, s0, s1);
+		m.Fmov(w0, s0);
+		EmitFpuClampOutValueOnly(m, w0);
+		m.Str(w0, MemOperand(xfbase, fd * 4));
+		m.B(&done);
+
+		m.Bind(&isZero);
+		m.Ldr(w3, MemOperand(xfbase, 252));
+		m.Orr(w3, w3, 0x10000); // D
+		m.Orr(w3, w3, 0x20);    // SD
+		m.Str(w3, MemOperand(xfbase, 252));
+		m.And(w0, w5, 0x80000000);
+		m.Orr(w0, w0, 0x7f7fffff);
+		m.Str(w0, MemOperand(xfbase, fd * 4));
+
+		m.Bind(&done);
+	}
+
 	// fpuRegisters layout: FPRreg fpr[32] (4 bytes each) at offset 0; u32 fprc[32]
 	// at offset 128 -> FCR31 (the status/cause reg) at offset 128 + 31*4 = 252.
 	void EmitCop1Reg(MacroAssembler& m, const Register& gpr, u32 insn)
@@ -316,13 +519,16 @@ namespace
 			return;
 		}
 		// rs == 0x10 single-precision ops
+		const u32 ft = (insn >> 16) & 31;
 		m.Mov(x1, fbase);
 		if (funct == 0x00 || funct == 0x01 || funct == 0x02) // ADD.S/SUB.S/MUL.S
 		{
-			const u32 ft = (insn >> 16) & 31;
 			EmitFpuBinaryS(m, x1, funct, fd, fs, ft);
 			return;
 		}
+		if (funct == 0x03) { EmitDivS(m, x1, fd, fs, ft); return; }   // DIV.S
+		if (funct == 0x04) { EmitSqrtS(m, x1, fd, ft); return; }     // SQRT.S (source is Ft, not Fs)
+		if (funct == 0x16) { EmitRsqrtS(m, x1, fd, fs, ft); return; } // RSQRT.S
 		m.Ldr(w0, MemOperand(x1, fs * 4));
 		if (funct == 0x06) { m.Str(w0, MemOperand(x1, fd * 4)); return; } // MOV.S
 		if (funct == 0x05) m.And(w0, w0, 0x7fffffff);                     // ABS.S
@@ -606,9 +812,18 @@ namespace
 				if (((insn >> 21) & 31) == 0x08) return 11;     // BC0x (Branch)
 				return 7;                                       // MFC0/MTC0 (CopDefault)
 			case 0x11:                                          // COP1
-				// ADD.S/SUB.S = CopDefault(7); MUL.S = FPU_Mult(4*8=32); everything
-				// else we translate (MFC1/MTC1/MOV/NEG/ABS.S) is CopDefault too.
-				if (((insn >> 21) & 31) == 0x10 && (insn & 0x3f) == 0x02) return 32;
+				// Per R5900OpcodeTables.cpp: MUL.S = FPU_Mult(4*8=32), DIV.S/
+				// SQRT.S = 6*8=48, RSQRT.S = 8*8=64; everything else we translate
+				// (MFC1/MTC1/MOV/NEG/ABS/ADD/SUB.S) is CopDefault(7).
+				if (((insn >> 21) & 31) == 0x10)
+				{
+					switch (insn & 0x3f)
+					{
+						case 0x02: return 32; // MUL.S
+						case 0x03: case 0x04: return 48; // DIV.S/SQRT.S
+						case 0x16: return 64; // RSQRT.S
+					}
+				}
 				return 7;                                       // CopDefault
 			case 0x1c:                                          // MMI
 				if (funct == 0x18 || funct == 0x19) return 16;  // MULT1/MULTU1 (Mult)
