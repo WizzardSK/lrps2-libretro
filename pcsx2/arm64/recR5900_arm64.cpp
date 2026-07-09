@@ -165,40 +165,83 @@ namespace
 	// HI/LO live at byte offsets >= 512 and are never cached. Compilation is
 	// EE-thread-only, so the compile-time state can be a plain static.
 	constexpr int kCacheSlots = 7; // x21..x27
+	inline Register CacheX(int slot) { return XRegister(21 + slot); }
+	inline Register CacheW(int slot) { return WRegister(21 + slot); }
 	struct RegCache
 	{
 		int8_t host_of[32];           // guest reg -> slot (-1 = uncached)
 		int8_t guest_of[kCacheSlots]; // slot -> guest reg (-1 = free)
+		bool   dirty[kCacheSlots];    // slot holds a value memory doesn't have yet
 		u8 rr;                        // round-robin eviction cursor
 		void Reset()
 		{
 			for (int i = 0; i < 32; i++) host_of[i] = -1;
-			for (int i = 0; i < kCacheSlots; i++) guest_of[i] = -1;
+			for (int i = 0; i < kCacheSlots; i++) { guest_of[i] = -1; dirty[i] = false; }
 			rr = 0;
 		}
-		void Invalidate(u32 g)
+		void Invalidate(u32 g) // drop without write-back (memory was just overwritten)
 		{
-			if (g < 32 && host_of[g] >= 0) { guest_of[(int)host_of[g]] = -1; host_of[g] = -1; }
+			if (g < 32 && host_of[g] >= 0)
+			{
+				const int s = host_of[g];
+				guest_of[s] = -1; dirty[s] = false; host_of[g] = -1;
+			}
 		}
-		int Alloc(u32 g) // claim a slot for guest reg g (evicting round-robin)
+		// Claim a slot for guest reg g, write-back-evicting the round-robin victim.
+		int Alloc(MacroAssembler& m, const Register& gpr, u32 g)
 		{
 			int s = rr;
 			rr = (u8)((rr + 1) % kCacheSlots);
-			if (guest_of[s] >= 0) host_of[(int)guest_of[s]] = -1;
+			if (guest_of[s] >= 0)
+			{
+				if (dirty[s]) m.Str(CacheX(s), MemOperand(gpr, (u32)guest_of[s] * 16));
+				host_of[(int)guest_of[s]] = -1;
+				dirty[s] = false;
+			}
 			guest_of[s] = (int8_t)g;
 			host_of[g] = (int8_t)s;
 			return s;
+		}
+		// Write one guest reg back to memory if dirty (mapping stays, now clean).
+		void FlushReg(MacroAssembler& m, const Register& gpr, u32 g)
+		{
+			if (g >= 32 || host_of[g] < 0) return;
+			const int s = host_of[g];
+			if (!dirty[s]) return;
+			m.Str(CacheX(s), MemOperand(gpr, g * 16));
+			dirty[s] = false;
+		}
+		// Write all dirty regs back (mappings stay, now clean).
+		void FlushDirty(MacroAssembler& m, const Register& gpr)
+		{
+			for (int s = 0; s < kCacheSlots; s++)
+				if (guest_of[s] >= 0 && dirty[s])
+				{
+					m.Str(CacheX(s), MemOperand(gpr, (u32)guest_of[s] * 16));
+					dirty[s] = false;
+				}
+		}
+		// Emit write-backs WITHOUT touching compile-time state: for cold paths
+		// (misalign -> eeCancelInstruction fastjmp) that leave the block while
+		// the fall-through continuation keeps using the dirty state.
+		void FlushDirtyColdPath(MacroAssembler& m, const Register& gpr)
+		{
+			for (int s = 0; s < kCacheSlots; s++)
+				if (guest_of[s] >= 0 && dirty[s])
+					m.Str(CacheX(s), MemOperand(gpr, (u32)guest_of[s] * 16));
 		}
 	};
 	RegCache s_rc;
 	inline bool RegCacheOn()
 	{
+		// LRPS2_TRACE_STEP's per-op hook hashes GPR MEMORY mid-block; with a
+		// dirty write-back cache that state is deliberately stale, so the
+		// trace tooling forces the cache off (block-entry tracing is fine --
+		// every block exit flushes).
 		static int on = -1;
-		if (on < 0) on = getenv("LRPS2_NO_EE_REGCACHE") ? 0 : 1;
+		if (on < 0) on = (getenv("LRPS2_NO_EE_REGCACHE") || getenv("LRPS2_TRACE_STEP")) ? 0 : 1;
 		return on != 0;
 	}
-	inline Register CacheX(int slot) { return XRegister(21 + slot); }
-	inline Register CacheW(int slot) { return WRegister(21 + slot); }
 
 	// EE GPRs are 128-bit; integer ops use the low 64 bits at byte offset idx*16.
 	// A cached guest reg reads as a reg-reg Mov; a miss loads from memory and
@@ -210,17 +253,24 @@ namespace
 		int s = s_rc.host_of[idx];
 		if (s >= 0) { m.Mov(xd, CacheX(s)); return; }
 		m.Ldr(xd, MemOperand(gpr, idx * 16));
-		s = s_rc.Alloc(idx);
+		s = s_rc.Alloc(m, gpr, idx);
 		m.Mov(CacheX(s), xd);
 	}
 
+	// Dirty write-back (C.27-2): the store lands only in the cache slot; memory
+	// is written at the flush points (block exits, helper calls that observe
+	// GPR memory, dirty-slot eviction, and the cold misalign-cancel paths).
 	inline void StoreGpr(MacroAssembler& m, const Register& xs, const Register& gpr, u32 idx)
 	{
-		m.Str(xs, MemOperand(gpr, idx * 16));
-		if (!RegCacheOn() || idx == 0) return;
+		if (!RegCacheOn() || idx == 0)
+		{
+			m.Str(xs, MemOperand(gpr, idx * 16));
+			return;
+		}
 		int s = s_rc.host_of[idx];
-		if (s < 0) s = s_rc.Alloc(idx);
+		if (s < 0) s = s_rc.Alloc(m, gpr, idx);
 		m.Mov(CacheX(s), xs);
+		s_rc.dirty[s] = true;
 	}
 
 	// COP1 (FPU) register sub-ops that are bit-exact and safe to translate
@@ -887,6 +937,8 @@ namespace
 		const u32 rd = (insn >> 11) & 31, rs = (insn >> 21) & 31, rt = (insn >> 16) & 31;
 		if (!rd) return; // result discarded (r0 stays zero)
 
+		s_rc.FlushReg(m, gpr, rs); // 128-bit sources are read from memory
+		s_rc.FlushReg(m, gpr, rt);
 		LoadQ(m, q1, gpr, rs); // rs -> v1
 		LoadQ(m, q2, gpr, rt); // rt -> v2
 		VRegister d, n, o;     // n = rs(v1), o = rt(v2)
@@ -1133,15 +1185,18 @@ namespace
 	// and no reads of cpuRegs.pc or cpuBlockCycles (MFC0's Count uses
 	// cpuRegs.cycle, which advances at branch boundaries identically in both
 	// execution modes, so mid-block reads match the interpreter handoff).
-	void EmitInterpOpCall(MacroAssembler& m, u32 insn, void (*fn)())
+	void EmitInterpOpCall(MacroAssembler& m, const Register& gpr, u32 insn, void (*fn)())
 	{
+		// The interp op body reads guest GPRs from memory (MTC0 rt, QFSRV
+		// rs/rt) -- write the dirty cache back first...
+		s_rc.FlushDirty(m, gpr);
 		m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.code));
 		m.Mov(w0, insn);
 		m.Str(w0, MemOperand(x10));
 		m.Mov(x16, reinterpret_cast<uint64_t>(fn));
 		m.Blr(x16);
-		// The interp op body may write any guest GPR directly (MFC0 rt, QFSRV
-		// rd); memory is authoritative (write-through), just drop the cache.
+		// ...and it may also write any guest GPR directly (MFC0 rt, QFSRV rd):
+		// drop the whole cache afterwards.
 		s_rc.Reset();
 	}
 
@@ -1257,7 +1312,7 @@ namespace
 						{
 							LoadGpr(m, x0, gpr, rs);
 							LoadGpr(m, x1, gpr, rt);
-							m.Ldr(x2, MemOperand(gpr, rd * 16));
+							LoadGpr(m, x2, gpr, rd); // cache-aware: rd may be dirty
 							m.Cmp(x1, 0);
 							m.Csel(x2, x0, x2, funct == 0x0a ? eq : ne);
 							StoreGpr(m, x2, gpr, rd);
@@ -1307,7 +1362,17 @@ namespace
 				if (no_load || (no_ld64 && op == 0x37)) return false;
 				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
 				const u32 amask = (op == 0x37) ? 7 : (op == 0x23 || op == 0x27) ? 3 : (op == 0x21 || op == 0x25) ? 1 : 0;
-				if (amask) { Label ok; m.Tst(w0, amask); m.B(&ok, eq); m.Mov(x16, reinterpret_cast<uint64_t>(&eeCancelInstruction_arm64)); m.Blr(x16); m.Bind(&ok); }
+				if (amask)
+			{
+				// Cold path: the cancel fastjmp leaves the block and the
+				// interpreter resumes from GPR MEMORY -- write the dirty cache
+				// back on this (never-taken-in-practice) path only, leaving
+				// the fall-through compile-time state untouched.
+				Label ok; m.Tst(w0, amask); m.B(&ok, eq);
+				s_rc.FlushDirtyColdPath(m, gpr);
+				m.Mov(x16, reinterpret_cast<uint64_t>(&eeCancelInstruction_arm64)); m.Blr(x16);
+				m.Bind(&ok);
+			}
 				uint64_t fn = (op == 0x37) ? reinterpret_cast<uint64_t>(&eeRead64_arm64)
 				            : (op == 0x23 || op == 0x27) ? reinterpret_cast<uint64_t>(&eeRead32_arm64)
 				            : (op == 0x21 || op == 0x25) ? reinterpret_cast<uint64_t>(&eeRead16_arm64)
@@ -1356,12 +1421,13 @@ namespace
 				if (no_load) return false;
 				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
 				m.Mov(w1, rt);
+				s_rc.FlushReg(m, gpr, rt); // the helper READS GPR[rt] for the merge
 				const uint64_t fn = (op == 0x22) ? reinterpret_cast<uint64_t>(&eeLWL_arm64)
 				                  : (op == 0x26) ? reinterpret_cast<uint64_t>(&eeLWR_arm64)
 				                  : (op == 0x1a) ? reinterpret_cast<uint64_t>(&eeLDL_arm64)
 				                  :                reinterpret_cast<uint64_t>(&eeLDR_arm64);
 				m.Mov(x16, fn); m.Blr(x16);
-				s_rc.Invalidate(rt); // the helper writes GPR[rt] directly
+				s_rc.Invalidate(rt); // ...and then writes it directly
 				return true;
 			}
 			// Unaligned store family (SWL/SWR/SDL/SDR): read-modify-write of the
@@ -1371,6 +1437,7 @@ namespace
 				if (no_store) return false;
 				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
 				m.Mov(w1, rt);
+				s_rc.FlushReg(m, gpr, rt); // the helper reads GPR[rt] from memory
 				const uint64_t fn = (op == 0x2a) ? reinterpret_cast<uint64_t>(&eeSWL_arm64)
 				                  : (op == 0x2e) ? reinterpret_cast<uint64_t>(&eeSWR_arm64)
 				                  : (op == 0x2c) ? reinterpret_cast<uint64_t>(&eeSDL_arm64)
@@ -1384,7 +1451,17 @@ namespace
 				if (no_store || (no_ld64 && op == 0x3f)) return false;
 				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
 				const u32 amask = (op == 0x3f) ? 7 : (op == 0x2b) ? 3 : (op == 0x29) ? 1 : 0;
-				if (amask) { Label ok; m.Tst(w0, amask); m.B(&ok, eq); m.Mov(x16, reinterpret_cast<uint64_t>(&eeCancelInstruction_arm64)); m.Blr(x16); m.Bind(&ok); }
+				if (amask)
+			{
+				// Cold path: the cancel fastjmp leaves the block and the
+				// interpreter resumes from GPR MEMORY -- write the dirty cache
+				// back on this (never-taken-in-practice) path only, leaving
+				// the fall-through compile-time state untouched.
+				Label ok; m.Tst(w0, amask); m.B(&ok, eq);
+				s_rc.FlushDirtyColdPath(m, gpr);
+				m.Mov(x16, reinterpret_cast<uint64_t>(&eeCancelInstruction_arm64)); m.Blr(x16);
+				m.Bind(&ok);
+			}
 				LoadGpr(m, x1, gpr, rt); // value (low bits used by the wrapper)
 				uint64_t fn = (op == 0x3f) ? reinterpret_cast<uint64_t>(&eeWrite64_arm64)
 				            : (op == 0x2b) ? reinterpret_cast<uint64_t>(&eeWrite32_arm64)
@@ -1447,6 +1524,7 @@ namespace
 				if (no_store) return false;
 				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
 				m.And(w0, w0, 0xfffffff0);
+				s_rc.FlushReg(m, gpr, rt); // the 128-bit source is read from memory
 				Label slow, done;
 				if (InlineMemEnabled())
 				{
@@ -1500,6 +1578,7 @@ namespace
 				{
 					if (rd)
 					{
+						s_rc.FlushReg(m, gpr, rt); // low half is read from memory
 						m.Ldrh(w0, MemOperand(gpr, rt * 16));     // rt.US[0] (r0 memory kept zero)
 						m.Ldrh(w1, MemOperand(gpr, rt * 16 + 8)); // rt.US[4]
 						m.Mov(x2, 0x0001000100010001ull);
@@ -1515,7 +1594,7 @@ namespace
 				// implementation called inline (C.18).
 				if (IsQfsrv(insn) && !eeDiag().no_interpcall && !icDiag().no_qfsrv)
 				{
-					EmitInterpOpCall(m, insn, &R5900::Interpreter::OpcodeImpl::MMI::QFSRV);
+					EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::MMI::QFSRV);
 					return true;
 				}
 				return false;
@@ -1525,7 +1604,7 @@ namespace
 			// block-breaker (19.4M handoffs / 10500 frames).
 			case 0x2f:
 				if (eeDiag().no_interpcall || icDiag().no_cache) return false;
-				EmitInterpOpCall(m, insn, &R5900::Interpreter::OpcodeImpl::CACHE);
+				EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::CACHE);
 				return true;
 
 			// COP0 (0x10): MFC0/MTC0 via inline interpreter call (C.18) -- MFC0
@@ -1534,8 +1613,8 @@ namespace
 			// live inside the op. BC0x (branches) and CO/TLB/ERET stay handoffs.
 			case 0x10:
 				if (eeDiag().no_interpcall || icDiag().no_cop0) return false;
-				if (rs == 0x00) { EmitInterpOpCall(m, insn, &R5900::Interpreter::OpcodeImpl::COP0::MFC0); return true; }
-				if (rs == 0x04) { EmitInterpOpCall(m, insn, &R5900::Interpreter::OpcodeImpl::COP0::MTC0); return true; }
+				if (rs == 0x00) { EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::COP0::MFC0); return true; }
+				if (rs == 0x04) { EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::COP0::MTC0); return true; }
 				return false;
 
 			// LWC1 ft, off(base): fpr[ft].UL = read32(addr). Unlike integer LW, a
@@ -1825,6 +1904,7 @@ namespace
 			EmitSimple(m, gpr, ds);
 			EmitCycleBookkeeping(m, cyc_taken);
 			if (is_jr) StorePC(m, w20); else StorePCImm(m, tconst);
+			s_rc.FlushDirty(m, gpr); // block exit: the next block reads GPR memory
 			m.Mov(x16, upd); m.Blr(x16);
 			if (idle_skip) EmitIdleSkip();
 			m.Mov(x16, evt); m.Blr(x16);
@@ -1851,19 +1931,28 @@ namespace
 			LoadGpr(m, x0, gpr, rs);
 			if (two) { LoadGpr(m, x1, gpr, rt); m.Cmp(x0, x1); } else m.Cmp(x0, 0);
 		}
+		// The taken/not-taken paths fork the compile-time cache state: the
+		// delay slot is only EXECUTED on the taken path, so its cache fills,
+		// stores and evictions must not leak into the not-taken emission.
+		// Snapshot here, emit the taken path (mutating), then restore for the
+		// not-taken path. Both paths flush before their chain epilogue.
+		const RegCache fork_state = s_rc;
 		Label not_taken;
 		m.B(&not_taken, InvertCondition(cond));
 		EmitSimple(m, gpr, ds);
 		EmitCycleBookkeeping(m, cyc_taken);
 		StorePCImm(m, tconst);
+		s_rc.FlushDirty(m, gpr); // block exit (taken)
 		m.Mov(x16, upd); m.Blr(x16);
 		if (idle_skip) EmitIdleSkip();
 		m.Mov(x16, evt); m.Blr(x16);
 		EmitChainEpilogue(m);
+		s_rc = fork_state;
 		m.Bind(&not_taken);
 		EmitCycleBookkeeping(m, cyc_nt);
 		// Likely branches skip their delay slot when not taken.
 		StorePCImm(m, bpc + (likely ? 8 : 4));
+		s_rc.FlushDirty(m, gpr); // block exit (not taken)
 		// Mirror the interpreter EXACTLY: of the non-likely conditionals, only
 		// BEQ/BNE call intEventTest() on the not-taken path (BGEZ/BGTZ/BLEZ/BLTZ
 		// and the AL forms do nothing there -- see Interpreter.cpp); the likely
@@ -2018,6 +2107,7 @@ namespace
 				{
 					StorePCImm(masm, p);
 					EmitCycleBookkeeping(masm, cyc);
+					s_rc.FlushDirty(masm, gpr); // block exit: memory must be current
 					EmitChainEpilogue(masm);
 					done = true; break;
 				}
@@ -2035,8 +2125,13 @@ namespace
 				masm.Ldr(w0, MemOperand(x10)); masm.Add(w0, w0, 4 * n); masm.Str(w0, MemOperand(x10));
 				EmitCycleBookkeeping(masm, cyc);
 			}
+			// The interpreter tail reads AND writes guest GPR memory: flush the
+			// dirty cache before the call, and treat everything as unknown after
+			// (the block ends right away, but keep the invariant explicit).
+			s_rc.FlushDirty(masm, gpr);
 			masm.Mov(x16, reinterpret_cast<uint64_t>(&eeRunBasicBlock_arm64));
 			masm.Blr(x16);
+			s_rc.Reset();
 			EmitChainEpilogue(masm);
 		}
 
