@@ -19,6 +19,7 @@
 #include "R5900.h"
 #include "R5900OpcodeTables.h"
 #include "Memory.h"
+#include "VU.h"
 #include "common/Console.h"
 
 #include <cstdint>
@@ -62,6 +63,7 @@ extern "C" void eeLogExc(u32 pc);    // Interpreter.cpp (TEMP diagnostic, LRPS2_
 // so the block continues natively instead of handing off its whole tail.
 namespace R5900 { namespace Interpreter { namespace OpcodeImpl {
 	void CACHE();
+	void COP2(); // top-level COP2 dispatcher (Int_COP2PrintTable[rs])
 	namespace COP0 { void MFC0(); void MTC0(); int CPCOND0(); }
 	namespace MMI  { void QFSRV(); }
 } } }
@@ -1271,13 +1273,14 @@ namespace
 
 	// TEMP bisect toggles for the C.18 inline-call op groups (finer than
 	// LRPS2_NO_EE_INTERPCALL, which disables all of them).
-	struct IcFlags { int no_cop0, no_cache, no_qfsrv; };
+	struct IcFlags { int no_cop0, no_cache, no_qfsrv, no_cop2; };
 	const IcFlags& icDiag()
 	{
 		static IcFlags f = {
 			getenv("LRPS2_NO_EE_IC_COP0")  ? 1 : 0,
 			getenv("LRPS2_NO_EE_IC_CACHE") ? 1 : 0,
 			getenv("LRPS2_NO_EE_IC_QFSRV") ? 1 : 0,
+			getenv("LRPS2_NO_EE_IC_COP2")  ? 1 : 0,
 		};
 		return f;
 	}
@@ -1665,6 +1668,24 @@ namespace
 				return false;
 
 			// CACHE (0x2f): emulated D$ maintenance, contained side effects ->
+			// COP2 / VU0 macro mode (0x12), C.29-1: everything except the BC2
+			// branches (rs=0x08, control flow -> EmitBranch) executes via the
+			// interpreter's top-level COP2() dispatcher called inline, so VU0
+			// macro ALU ops / VCALLMS(R) / Q(M)FC2/CTC2/CFC2 no longer BREAK
+			// the block into an interpreter tail. All contained: no EE pc use,
+			// no exceptions; VU0 timing reads cpuRegs.cycle which only
+			// advances at branch boundaries -- identical in both execution
+			// modes (same argument as MFC0 Count, C.18). EmitInterpOpCall's
+			// FlushDirty-before covers QMTC2/CTC2 reading GPR memory and its
+			// cache Reset-after covers QMFC2/CFC2 writing it. The whole COP2
+			// opcode space is charged Default(9) by R5900OpcodeTables (the
+			// class table is disabled upstream), which OpCycles already does.
+			case 0x12:
+				if (rs == 0x08) return false; // BC2F/T(L) -> EmitBranch
+				if (eeDiag().no_interpcall || icDiag().no_cop2) return false;
+				EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::COP2);
+				return true;
+
 			// interpreter implementation called inline (C.18). Top GT3 attract
 			// block-breaker (19.4M handoffs / 10500 frames).
 			case 0x2f:
@@ -1788,7 +1809,9 @@ namespace
 			const u32 rtf = (insn >> 16) & 31;
 			return rtf == 0x18 || rtf == 0x19;
 		}
-		if (op == 0x2f) return !eeDiag().no_interpcall && !icDiag().no_cache; // CACHE
+		if (op == 0x12) // COP2: all but BC2 (branches -> EmitBranch)
+		return ((insn >> 21) & 31) != 0x08 && !eeDiag().no_interpcall && !icDiag().no_cop2;
+	if (op == 0x2f) return !eeDiag().no_interpcall && !icDiag().no_cache; // CACHE
 		if (op == 0x10) // COP0: MFC0/MTC0 only
 		{
 			const u32 crs = (insn >> 21) & 31;
@@ -1850,6 +1873,7 @@ namespace
 		bool uncond = false, is_jr = false, two = false, one = false, likely = false;
 		bool bc0 = false; // condition = CPCOND0() (DMAC all-clear test), via helper call
 		bool bc1 = false; // condition = FCR31 C flag (0x00800000), tested inline
+		bool bc2 = false; // condition = CP2COND (VPU_STAT VU0-busy bit 0x100), tested inline
 		int  link = -1;
 		Condition cond = al;
 		u32  tconst = 0;
@@ -1906,6 +1930,19 @@ namespace
 			else if (rt == 0x01) { bc1 = true; cond = ne; tconst = t; }                // BC1T
 			else if (rt == 0x02) { bc1 = true; cond = eq; tconst = t; likely = true; } // BC1FL
 			else if (rt == 0x03) { bc1 = true; cond = ne; tconst = t; likely = true; } // BC1TL
+			else return false;
+		}
+		// BC2F/BC2T(+L): branch on CP2COND = VPU_STAT's VU0-busy bit (0x100).
+		// Same not-taken semantics as BC0x/BC1x (COP2.cpp: BC2xL else pc+=4,
+		// no event test). NOTE the whole COP2 space is charged Default(9),
+		// not Branch(11) -- the upstream opcode table has no COP2 subclass.
+		else if (op == 0x12 && rs == 0x08)
+		{
+			const u32 t = bpc + 4 + simm * 4;
+			if      (rt == 0x00) { bc2 = true; cond = eq; tconst = t; }                // BC2F
+			else if (rt == 0x01) { bc2 = true; cond = ne; tconst = t; }                // BC2T
+			else if (rt == 0x02) { bc2 = true; cond = eq; tconst = t; likely = true; } // BC2FL
+			else if (rt == 0x03) { bc2 = true; cond = ne; tconst = t; likely = true; } // BC2TL
 			else return false;
 		}
 		else return false;
@@ -1992,6 +2029,12 @@ namespace
 			m.Ldr(w0, MemOperand(x10, 252));
 			m.Tst(w0, 0x00800000); // eq -> C clear (BC1F taken), ne -> C set (BC1T taken)
 		}
+		else if (bc2)
+		{
+			m.Mov(x10, reinterpret_cast<uint64_t>(&vuRegs[0].VI[REG_VPU_STAT].UL));
+			m.Ldr(w0, MemOperand(x10));
+			m.Tst(w0, 0x100); // eq -> VU0 idle (BC2F taken), ne -> busy (BC2T taken)
+		}
 		else
 		{
 			const Register a = SrcGpr(m, gpr, rs, x0);
@@ -2031,7 +2074,7 @@ namespace
 		// interrupt delivery (EPC) inside wait loops relative to the interpreter,
 		// which cascades into different kernel-scheduler decisions (MMX7 FMV
 		// loader wedge).
-		if (op == 0x04 || op == 0x05 || (likely && !bc0 && !bc1)) { m.Mov(x16, evt); m.Blr(x16); }
+		if (op == 0x04 || op == 0x05 || (likely && !bc0 && !bc1 && !bc2)) { m.Mov(x16, evt); m.Blr(x16); }
 		EmitChainEpilogue(m);
 		return true;
 	}
