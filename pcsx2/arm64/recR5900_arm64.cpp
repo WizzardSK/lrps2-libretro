@@ -124,13 +124,6 @@ namespace
 		return r == 42;
 	}
 
-	// EE GPRs are 128-bit; integer ops use the low 64 bits at byte offset idx*16.
-	inline void LoadGpr(MacroAssembler& m, const Register& xd, const Register& gpr, u32 idx)
-	{
-		if (idx == 0) m.Mov(xd, 0);
-		else          m.Ldr(xd, MemOperand(gpr, idx * 16));
-	}
-
 	// Inline vtlb fast path (Phase C.12): with the guest address in w0 (upper
 	// half of x0 zero, as left by 32-bit address arithmetic), emit the vmap
 	// lookup and leave the HOST pointer in x10, branching to 'slow' when the
@@ -157,9 +150,77 @@ namespace
 		m.Tbnz(x10, 63, slow);                       // sign bit = handler
 	}
 
+	// ---- C.27: block-local write-through GPR register cache ----
+	// The low 64 bits of guest GPRs are mirrored in the callee-saved host regs
+	// x21..x27 for the duration of a block: repeated reads become reg-reg Movs
+	// instead of Ldrs. WRITE-THROUGH: every StoreGpr still writes cpuRegs.GPR
+	// immediately, so memory stays authoritative at all times -- event tests,
+	// misalign cancels (fastjmp restores callee-saved regs), interpreter
+	// handoffs and the branch not-taken/taken fork need no flush logic at all.
+	// The only hazard is a STALE CACHE after something writes GPR memory
+	// without going through StoreGpr; those sites invalidate:
+	//   MMI/PCPYH 128-bit results (rd), LQ (rt), the eeLWL/LWR/LDL/LDR helper
+	//   calls (rt), and EmitInterpOpCall bodies (any reg -> invalidate all).
+	// Helper C calls preserve x21..x27 (AAPCS64), so the cache survives them.
+	// HI/LO live at byte offsets >= 512 and are never cached. Compilation is
+	// EE-thread-only, so the compile-time state can be a plain static.
+	constexpr int kCacheSlots = 7; // x21..x27
+	struct RegCache
+	{
+		int8_t host_of[32];           // guest reg -> slot (-1 = uncached)
+		int8_t guest_of[kCacheSlots]; // slot -> guest reg (-1 = free)
+		u8 rr;                        // round-robin eviction cursor
+		void Reset()
+		{
+			for (int i = 0; i < 32; i++) host_of[i] = -1;
+			for (int i = 0; i < kCacheSlots; i++) guest_of[i] = -1;
+			rr = 0;
+		}
+		void Invalidate(u32 g)
+		{
+			if (g < 32 && host_of[g] >= 0) { guest_of[(int)host_of[g]] = -1; host_of[g] = -1; }
+		}
+		int Alloc(u32 g) // claim a slot for guest reg g (evicting round-robin)
+		{
+			int s = rr;
+			rr = (u8)((rr + 1) % kCacheSlots);
+			if (guest_of[s] >= 0) host_of[(int)guest_of[s]] = -1;
+			guest_of[s] = (int8_t)g;
+			host_of[g] = (int8_t)s;
+			return s;
+		}
+	};
+	RegCache s_rc;
+	inline bool RegCacheOn()
+	{
+		static int on = -1;
+		if (on < 0) on = getenv("LRPS2_NO_EE_REGCACHE") ? 0 : 1;
+		return on != 0;
+	}
+	inline Register CacheX(int slot) { return XRegister(21 + slot); }
+	inline Register CacheW(int slot) { return WRegister(21 + slot); }
+
+	// EE GPRs are 128-bit; integer ops use the low 64 bits at byte offset idx*16.
+	// A cached guest reg reads as a reg-reg Mov; a miss loads from memory and
+	// fills a slot (the extra Mov is far cheaper than the next avoided load).
+	inline void LoadGpr(MacroAssembler& m, const Register& xd, const Register& gpr, u32 idx)
+	{
+		if (idx == 0) { m.Mov(xd, 0); return; }
+		if (!RegCacheOn()) { m.Ldr(xd, MemOperand(gpr, idx * 16)); return; }
+		int s = s_rc.host_of[idx];
+		if (s >= 0) { m.Mov(xd, CacheX(s)); return; }
+		m.Ldr(xd, MemOperand(gpr, idx * 16));
+		s = s_rc.Alloc(idx);
+		m.Mov(CacheX(s), xd);
+	}
+
 	inline void StoreGpr(MacroAssembler& m, const Register& xs, const Register& gpr, u32 idx)
 	{
 		m.Str(xs, MemOperand(gpr, idx * 16));
+		if (!RegCacheOn() || idx == 0) return;
+		int s = s_rc.host_of[idx];
+		if (s < 0) s = s_rc.Alloc(idx);
+		m.Mov(CacheX(s), xs);
 	}
 
 	// COP1 (FPU) register sub-ops that are bit-exact and safe to translate
@@ -865,6 +926,7 @@ namespace
 			case M_CPYUD: m.Zip2(d, n, o);  break; // PCPYUD: rd = {rs.UD[1], rt.UD[1]}
 		}
 		m.Str(q0, MemOperand(gpr, rd * 16));
+		s_rc.Invalidate(rd); // 128-bit write bypasses StoreGpr
 	}
 
 	// ---- Integer mult/div + HI/LO moves (opcode 0x00) ----
@@ -878,8 +940,15 @@ namespace
 	// Load the low 32 bits of a GPR into a w-register (r0 reads as zero).
 	inline void LoadW(MacroAssembler& m, const Register& wd, const Register& gpr, u32 idx)
 	{
-		if (idx == 0) m.Mov(wd, 0);
-		else          m.Ldr(wd, MemOperand(gpr, idx * 16));
+		if (idx == 0) { m.Mov(wd, 0); return; }
+		if (RegCacheOn())
+		{
+			// A cached 64-bit value's W view is exactly the guest low 32 bits;
+			// on a miss just load (no fill -- we only have half the value).
+			const int s = s_rc.host_of[idx];
+			if (s >= 0) { m.Mov(wd, CacheW(s)); return; }
+		}
+		m.Ldr(wd, MemOperand(gpr, idx * 16));
 	}
 
 	// off = 0 for the SPECIAL (pipeline 0) forms, 8 for the MMI pipeline-1
@@ -1071,6 +1140,9 @@ namespace
 		m.Str(w0, MemOperand(x10));
 		m.Mov(x16, reinterpret_cast<uint64_t>(fn));
 		m.Blr(x16);
+		// The interp op body may write any guest GPR directly (MFC0 rt, QFSRV
+		// rd); memory is authoritative (write-through), just drop the cache.
+		s_rc.Reset();
 	}
 
 	// QFSRV is MMI1 (funct 0x28) sub 0x1b -- NOT MMI3 (0x29), whose sub 0x1b is
@@ -1289,6 +1361,7 @@ namespace
 				                  : (op == 0x1a) ? reinterpret_cast<uint64_t>(&eeLDL_arm64)
 				                  :                reinterpret_cast<uint64_t>(&eeLDR_arm64);
 				m.Mov(x16, fn); m.Blr(x16);
+				s_rc.Invalidate(rt); // the helper writes GPR[rt] directly
 				return true;
 			}
 			// Unaligned store family (SWL/SWR/SDL/SDR): read-modify-write of the
@@ -1366,6 +1439,7 @@ namespace
 				m.Add(x1, gpr, rt * 16);
 				m.Mov(x16, reinterpret_cast<uint64_t>(&eeRead128_arm64)); m.Blr(x16);
 				m.Bind(&done);
+				s_rc.Invalidate(rt); // 128-bit write bypasses StoreGpr (both paths)
 				return true;
 			}
 			case 0x1f: // SQ
@@ -1433,6 +1507,7 @@ namespace
 						m.Mul(x1, x1, x2);
 						m.Str(x0, MemOperand(gpr, rd * 16));
 						m.Str(x1, MemOperand(gpr, rd * 16 + 8));
+						s_rc.Invalidate(rd); // direct write bypasses StoreGpr
 					}
 					return true;
 				}
@@ -1503,7 +1578,10 @@ namespace
 	{
 		m.Ldp(x19, x20, MemOperand(sp, 0));
 		m.Ldp(x21, x30, MemOperand(sp, 16));
-		m.Add(sp, sp, 32);
+		m.Ldp(x22, x23, MemOperand(sp, 32));
+		m.Ldp(x24, x25, MemOperand(sp, 48));
+		m.Ldp(x26, x27, MemOperand(sp, 64));
+		m.Add(sp, sp, 80);
 
 #ifdef EE_PC_SAMPLE
 		m.Ret(); // TEMP: disable block-linking so every block returns to the dispatcher (PC sampling)
@@ -1845,9 +1923,16 @@ namespace
 		MacroAssembler masm(start, kCodeCacheSize - s_code_pos, PositionDependentCode);
 
 		const Register gpr = x19;
-		masm.Sub(sp, sp, 32);
+		s_rc.Reset(); // fresh per-block register-cache state (C.27)
+		// Uniform 80-byte frame across ALL blocks (the chain epilogue of any
+		// block must match any successor's prologue): x19/x20 (gpr base, jr
+		// target), x21..x27 (GPR register cache), x30 (chain return).
+		masm.Sub(sp, sp, 80);
 		masm.Stp(x19, x20, MemOperand(sp, 0));
 		masm.Stp(x21, x30, MemOperand(sp, 16));
+		masm.Stp(x22, x23, MemOperand(sp, 32));
+		masm.Stp(x24, x25, MemOperand(sp, 48));
+		masm.Stp(x26, x27, MemOperand(sp, 64));
 		masm.Mov(gpr, reinterpret_cast<uint64_t>(&cpuRegs.GPR.r[0]));
 
 		// TEMP diagnostic (LRPS2_EXCLOG): only the EE exception vector blocks
