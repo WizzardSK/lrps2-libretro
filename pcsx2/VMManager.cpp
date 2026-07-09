@@ -838,10 +838,9 @@ void VMManager::InitializeCPUProviders()
 	psxRec.Reserve();
 	recCpu.Reserve();
 	CpuRecVU1_arm64.Reserve();
-	// C.28: the armsx2 microVU1 transplant, opt-in while under verification.
+	// C.28-4: the armsx2 microVU1 transplant is the default VU1 provider.
 	// Its Reserve() also opens vu1Thread (idempotent with the Open() below).
-	if (getenv("LRPS2_VU1REC_MVU"))
-		CpuMicroVU1.Reserve();
+	CpuMicroVU1.Reserve();
 	// The MTVU worker thread is normally spawned by recMicroVU1::Reserve()
 	// (x86/microVU.cpp), which doesn't exist in this build -- with vuThread
 	// enabled the EE would push to vu1Thread's ring and wait on its WorkSema
@@ -874,8 +873,7 @@ void VMManager::ShutdownCPUProviders()
 	psxRec.Shutdown();
 	recCpu.Shutdown();
 #else
-	if (getenv("LRPS2_VU1REC_MVU"))
-		CpuMicroVU1.Shutdown(); // waits on the MTVU worker, then mVUclose
+	CpuMicroVU1.Shutdown(); // waits on the MTVU worker, then mVUclose
 	vu1Thread.Close();
 	dVifRelease(1);
 	dVifRelease(0);
@@ -909,19 +907,19 @@ void VMManager::UpdateCPUImplementations()
 	if (EmuConfig.Cpu.Recompiler.EnableVU1)
 		CpuVU1 = &CpuMicroVU1;
 #else
-	// C.14: arm64 VU1 recompiler (interp-pair blocks, byte-identical).
-	// LRPS2_NO_VU1REC=1 falls back to InterpVU1. C.28: LRPS2_VU1REC_MVU=1
-	// selects the armsx2 microVU1 transplant instead (native VU code,
-	// NOT cycle-exact vs the interpreter -- under verification).
+	// C.28-4: microVU1 (the armsx2 transplant, native VU codegen) is the
+	// DEFAULT VU1 provider -- MVU_DIFF-verified register-exact against the
+	// interpreter on both test titles. LRPS2_VU1REC_PAIR=1 selects the C.14
+	// interp-pair rec; LRPS2_NO_VU1REC=1 falls back to plain InterpVU1.
 	if (EmuConfig.Cpu.Recompiler.EnableVU1 && !getenv("LRPS2_NO_VU1REC"))
 	{
-		if (getenv("LRPS2_VU1REC_MVU"))
+		if (getenv("LRPS2_VU1REC_PAIR"))
+			CpuVU1 = &CpuRecVU1_arm64;
+		else
 		{
 			CpuVU1 = &CpuMicroVU1;
-			Console.WriteLn("arm64 VU1 rec (C.28): microVU1 transplant ACTIVE (native VU codegen).");
+			Console.WriteLn("arm64 VU1 rec: microVU1 (native codegen) is the default provider.");
 		}
-		else
-			CpuVU1 = &CpuRecVU1_arm64;
 	}
 #endif
 }
@@ -1297,8 +1295,17 @@ static void SetMTVUAndAffinityControlDefault(SettingsInterface& si)
 	// never comes. Needs a partial-packet flush protocol (or a VU recompiler
 	// with upstream's XGKICK handling) -- until then MTVU is OPT-IN:
 	// LRPS2_MTVU=1 (helps VU-light titles; MMX7 verified pixel-identical).
-	const bool mtvu = getenv("LRPS2_MTVU") != nullptr && std::thread::hardware_concurrency() >= 3;
-	Console.WriteLn(mtvu ? "  Enabling MTVU (LRPS2_MTVU opt-in)." : "  MTVU disabled (opt-in via LRPS2_MTVU=1; continuous-kick VU1 programs can deadlock it).");
+	// C.28-4: with microVU1 as the default VU1 provider (native codegen,
+	// MVU_DIFF-verified against the interpreter), MTVU and instant VU1 are
+	// safe defaults again -- the C.13c livelock and the 3M-cycle-budget wall
+	// were interpreter-provider problems. When an interp-style provider is
+	// explicitly selected (LRPS2_NO_VU1REC / LRPS2_VU1REC_PAIR), fall back to
+	// the conservative C.13c behavior (both opt-in).
+	const bool vu1_mvu = !getenv("LRPS2_NO_VU1REC") && !getenv("LRPS2_VU1REC_PAIR");
+	const bool mtvu = std::thread::hardware_concurrency() >= 3 &&
+		(vu1_mvu ? !getenv("LRPS2_NO_MTVU") : getenv("LRPS2_MTVU") != nullptr);
+	Console.WriteLn(mtvu ? "  MTVU enabled (default with microVU1; LRPS2_NO_MTVU=1 disables)."
+	                     : "  MTVU disabled.");
 	si.SetBoolValue("EmuCore/Speedhacks", "vuThread", mtvu);
 	// Instant VU1 assumes the VU1 provider finishes a program quickly (x86
 	// microVU). With the VU1 INTERPRETER, a continuous microprogram (endless
@@ -1307,8 +1314,10 @@ static void SetMTVUAndAffinityControlDefault(SettingsInterface& si)
 	// frame inside InterpVU1::Execute and the frontend appears hung. Run VU1
 	// in small interleaved slices instead (upstream's non-instant scheduling).
 	// LRPS2_VU1_INSTANT=1 restores instant mode for A/B testing.
-	const bool vu1_instant = getenv("LRPS2_VU1_INSTANT") != nullptr;
-	Console.WriteLn(vu1_instant ? "  Instant VU1 ENABLED (LRPS2_VU1_INSTANT)." : "  Instant VU1 disabled (interpreter VU1 runs interleaved).");
+	const bool vu1_instant = vu1_mvu ? !getenv("LRPS2_NO_VU1_INSTANT")
+	                                 : getenv("LRPS2_VU1_INSTANT") != nullptr;
+	Console.WriteLn(vu1_instant ? "  Instant VU1 enabled (default with microVU1; LRPS2_NO_VU1_INSTANT=1 disables)."
+	                            : "  Instant VU1 disabled (interp-style VU1 runs interleaved).");
 	si.SetBoolValue("EmuCore/Speedhacks", "vu1Instant", vu1_instant);
 }
 

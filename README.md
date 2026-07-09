@@ -12,7 +12,7 @@ Verified booting to real in-game content (Mega Man X7 gameplay, Gran Turismo 3
 intro/FMV) on a Snapdragon-class device (Adreno 618, 4K-page Linux, glibc
 RetroArch flatpak + musl test host).
 
-Overall recompiler-suite progress: roughly **~58 %** (weighted by remaining
+Overall recompiler-suite progress: roughly **~65 %** (weighted by remaining
 work; dynamic instruction coverage on the tested titles is much higher — the
 vast majority of EE+IOP instructions already execute natively, and the
 remaining interpreter handoffs are mostly untranslatable exceptions).
@@ -21,11 +21,11 @@ remaining interpreter handoffs are mostly untranslatable exceptions).
 |---|---|---|
 | EE (R5900) JIT | 76 % | Native ALU, loads/stores incl. LQ/SQ (inline vtlb fast path) + unaligned family, branches + likely branches + BC0x/BC1x, block linking/chaining, MULT/DIV/MADD + HI/LO (both pipelines), **complete COP1 (FPU)** — data moves + all S-format arithmetic + CVT + C.cond, interpreter-exact clamp/flag semantics (only CFC1/CTC1 interpreted), bit-exact MMI subset → NEON, MFSA/MTSA(B/H), kernel idle-loop skip, block revalidation cache, write-back GPR register cache with direct-to-cache emission. Missing: COP2 macro mode, overflow-trap ADDI/DADDI, SYSCALL/ERET/TLB (interpreter forever) |
 | IOP (R3000A) JIT | 80 % | Native ALU, aligned loads/stores, branches + delay slots, block linking; mult/div/COP0/unaligned via interpreter |
-| VU1 recompiler | 15 % | Block-dispatch skeleton + pre-decoded pair execution (bit-identical to the interpreter). **microVU-style native recompiler port in progress** (transplanting the armsx2 aVU AArch64 microVU). Instant-VU1 is disabled on arm64 — continuous VU1 microprograms would spin the 3M-cycle budget per kick; VU1 runs in interleaved slices (`LRPS2_VU1_INSTANT=1` restores instant mode). VU1-render-heavy scenes (e.g. GT3's attract demo) are still interpreter-bound and run far below full speed |
-| VU0 / COP2 | 0 % | Interpreter |
+| VU1 recompiler | 60 % | **microVU1 (armsx2 aVU transplant) is the default provider**: native AArch64 VU codegen, MVU_DIFF-verified register-exact against the interpreter on both test titles, byte-identical framebuffers through 12000-frame runs. Instant-VU1 and MTVU are back to default-on with it. Fallbacks: `LRPS2_VU1REC_PAIR=1` (interp-pair rec), `LRPS2_NO_VU1REC=1` (interpreter; both restore conservative non-instant/opt-in-MTVU behavior) |
+| VU0 / COP2 | 10 % | Interpreter, but COP2 macro ops no longer break EE JIT blocks (inline interpreter calls; BC2 branches native). VU0 micro + native macro mode still to do |
 | VIF unpack dynarec | 100 % | NEON unpack kernels (armsx2 transplant); portable C fallback (`LRPS2_NO_VIF_DYNAREC=1`) |
 | SMC / overlays | Compiled pages are write-protected; faults invalidate stale blocks (vtlb `mmap_MarkCountedRamPage` flow) |
-| MTVU (VU1 thread) | **Opt-in** (`LRPS2_MTVU=1`, ≥3 cores). Pixel-verified on both test titles; the continuous-VU1-microprogram livelock is fixed by a partial-packet flush protocol (worker hands MTGS partial XGKICK packets when its buffer would fill mid-program). Still opt-in because VU1-interpreter throughput limits VU-heavy scenes |
+| MTVU (VU1 thread) | **Default-on** with microVU1 (≥3 cores; `LRPS2_NO_MTVU=1` disables). Partial-packet flush protocol prevents the continuous-microprogram livelock; with an interp-style VU1 provider MTVU stays opt-in (`LRPS2_MTVU=1`) |
 | GS renderer | Standard **Vulkan** renderer (`pcsx2_renderer = "Vulkan"`). paraLLEl-GS requires GPU features (8/16-bit storage, small subgroups) that e.g. Adreno 618 lacks |
 | MTGS | Works (GS thread active) |
 
