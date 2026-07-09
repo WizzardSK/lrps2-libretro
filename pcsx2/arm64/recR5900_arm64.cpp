@@ -36,6 +36,16 @@
 
 #include "aarch64/macro-assembler-aarch64.h"
 
+// C.30-2: native COP2 macro emission -- the vendored aVU_Macro entry points
+// (aVU.cpp TU) + the AsmHelpers thread-locals its emitters write through, and
+// the analysis-flag plumbing they gate on.
+#include "arm64/AsmHelpers.h"
+#include "arm64/aR5900Analysis.h"
+#include "VUmicro.h" // _vu0FinishMicro
+
+bool recVUMacroIsMode0(u32 op);   // aVU_Macro.inl (classify COP2 SPECIAL ALU)
+bool recVUMacroEmitMode0(u32 op); // aVU_Macro.inl (emit via microVU0 single-op emitters)
+
 using namespace vixl::aarch64;
 
 extern "C" void eeRunBasicBlock_arm64(void); // Interpreter.cpp
@@ -1264,6 +1274,76 @@ namespace
 		s_rc.Reset();
 	}
 
+	// C.30-2: native COP2 macro emission. The vendored aVU_Macro emitters gate
+	// flag maintenance on g_pCurInstInfo's M1 analysis bits; we run no analysis
+	// pass, so a static "everything live" record keeps every gate conservative
+	// (always denormalize/update/normalize the flags -- correct, just not
+	// minimal). The emitters write through the AsmHelpers thread-locals, so we
+	// hand them OUR in-flight assembler for the duration of the op: armAsmPtr
+	// must be the block buffer's start so armGetCurrentCodePointer() (used for
+	// ADRP/call displacement math) computes true host addresses.
+	EEINST s_cop2AllLive; // .info set on first use
+	bool EmitCop2Macro(MacroAssembler& m, const Register& gpr, u32 insn)
+	{
+		if (!recVUMacroIsMode0(insn))
+			return false; // CALLMS/CALLMSR/unknown -> C.29-1 interp call
+
+		// The macro emitters clobber gprF0 (w23 -- one of OUR cache slots) and
+		// run their own VI-GPR allocator (macro mode excludes x19-x26; x27 is
+		// untracked but our cache is dead after this anyway): retire the guest
+		// GPR cache exactly like an interp-call would.
+		s_rc.FlushDirty(m, gpr);
+		s_rc.Reset();
+
+		// Conservative VU0 sync (their aR5900 does this analysis-driven): a
+		// macro op reads/writes VU0 state, so any in-flight VU0 microprogram
+		// must finish first. The interpreter ops self-sync the same way.
+		{
+			Label vu0_idle;
+			m.Mov(x10, reinterpret_cast<uint64_t>(&vuRegs[0].VI[REG_VPU_STAT].UL));
+			m.Ldr(w0, MemOperand(x10));
+			m.Tbz(w0, 0, &vu0_idle); // VPU_STAT bit0 = VU0 running
+			m.Mov(x16, reinterpret_cast<uint64_t>(&_vu0FinishMicro));
+			m.Blr(x16);
+			m.Bind(&vu0_idle);
+		}
+
+		s_cop2AllLive.info = EEINST_COP2_DENORMALIZE_STATUS_FLAG | EEINST_COP2_NORMALIZE_STATUS_FLAG |
+		                     EEINST_COP2_STATUS_FLAG | EEINST_COP2_MAC_FLAG | EEINST_COP2_CLIP_FLAG |
+		                     EEINST_COP2_SYNC_VU0 | EEINST_COP2_FINISH_VU0 | EEINST_COP2_FLUSH_VU0_REGISTERS;
+		EEINST* saved_inst = g_pCurInstInfo;
+		g_pCurInstInfo = &s_cop2AllLive;
+		cpuRegs.code = insn; // emit-time input: the emitters' _Fs_/_Ft_/... macros read it
+
+		MacroAssembler* saved_asm = armAsm;
+		u8* saved_ptr = armAsmPtr;
+		size_t saved_cap = armAsmCapacity;
+		armAsm = &m;
+		armAsmPtr = m.GetBuffer()->GetStartAddress<u8*>();
+		armAsmCapacity = m.GetBuffer()->GetCapacity();
+
+		const bool ok = recVUMacroEmitMode0(insn);
+
+		// TEMP diagnostic (LRPS2_JIT_STATS): prove the native macro path compiles.
+		{
+			static const bool stats = getenv("LRPS2_JIT_STATS") != nullptr;
+			if (stats && ok)
+			{
+				static u64 n = 0;
+				n++;
+				if (n <= 5 || (n & 0xff) == 0)
+					fprintf(stderr, "[jit] COP2 macro op #%llu native (insn=%08x funct=%02x)\n",
+						(unsigned long long)n, insn, insn & 0x3f);
+			}
+		}
+
+		armAsm = saved_asm;
+		armAsmPtr = saved_ptr;
+		armAsmCapacity = saved_cap;
+		g_pCurInstInfo = saved_inst;
+		return ok;
+	}
+
 	// QFSRV is MMI1 (funct 0x28) sub 0x1b -- NOT MMI3 (0x29), whose sub 0x1b is
 	// PCPYH. The first C.18 cut called QFSRV() on PCPYH instructions (the
 	// GT3-attract breaker at funct=29/sub=1b) and broke MMX7's post-logo
@@ -1273,7 +1353,7 @@ namespace
 
 	// TEMP bisect toggles for the C.18 inline-call op groups (finer than
 	// LRPS2_NO_EE_INTERPCALL, which disables all of them).
-	struct IcFlags { int no_cop0, no_cache, no_qfsrv, no_cop2; };
+	struct IcFlags { int no_cop0, no_cache, no_qfsrv, no_cop2, no_cop2macro; };
 	const IcFlags& icDiag()
 	{
 		static IcFlags f = {
@@ -1281,6 +1361,7 @@ namespace
 			getenv("LRPS2_NO_EE_IC_CACHE") ? 1 : 0,
 			getenv("LRPS2_NO_EE_IC_QFSRV") ? 1 : 0,
 			getenv("LRPS2_NO_EE_IC_COP2")  ? 1 : 0,
+			getenv("LRPS2_NO_EE_COP2MACRO") ? 1 : 0,
 		};
 		return f;
 	}
@@ -1682,6 +1763,12 @@ namespace
 			// class table is disabled upstream), which OpCycles already does.
 			case 0x12:
 				if (rs == 0x08) return false; // BC2F/T(L) -> EmitBranch
+				// C.30-2: SPECIAL1/2 ALU ops emit natively via the microVU0
+				// single-op emitters; LRPS2_NO_EE_COP2MACRO=1 forces them back
+				// to the C.29-1 interp call. Everything else (transfers,
+				// CALLMS/CALLMSR) stays on the interp call.
+				if (rs >= 0x10 && !icDiag().no_cop2macro && EmitCop2Macro(m, gpr, insn))
+					return true;
 				if (eeDiag().no_interpcall || icDiag().no_cop2) return false;
 				EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::COP2);
 				return true;
@@ -2119,6 +2206,11 @@ namespace
 
 		u8* start = s_code + s_code_pos;
 		MacroAssembler masm(start, kCodeCacheSize - s_code_pos, PositionDependentCode);
+		// The aVU macro emitters (C.30-2) hold RSCRATCHADDR (x17) and q31 across
+		// vixl macro expansions -- keep the assembler from synthesizing into them
+		// (mirrors armStartBlock in AsmHelpers.cpp).
+		masm.GetScratchRegisterList()->Remove(17);
+		masm.GetScratchVRegisterList()->Remove(31);
 
 		const Register gpr = x19;
 		s_rc.Reset(); // fresh per-block register-cache state (C.27)
