@@ -841,6 +841,8 @@ void VMManager::InitializeCPUProviders()
 	// C.28-4: the armsx2 microVU1 transplant is the default VU1 provider.
 	// Its Reserve() also opens vu1Thread (idempotent with the Open() below).
 	CpuMicroVU1.Reserve();
+	// C.30-1: microVU0 for VU0 micro programs (VCALLMS/VCALLMSR).
+	CpuMicroVU0.Reserve();
 	// The MTVU worker thread is normally spawned by recMicroVU1::Reserve()
 	// (x86/microVU.cpp), which doesn't exist in this build -- with vuThread
 	// enabled the EE would push to vu1Thread's ring and wait on its WorkSema
@@ -873,6 +875,7 @@ void VMManager::ShutdownCPUProviders()
 	psxRec.Shutdown();
 	recCpu.Shutdown();
 #else
+	CpuMicroVU0.Shutdown();
 	CpuMicroVU1.Shutdown(); // waits on the MTVU worker, then mVUclose
 	vu1Thread.Close();
 	dVifRelease(1);
@@ -899,6 +902,14 @@ void VMManager::UpdateCPUImplementations()
 
 	CpuVU0 = &CpuIntVU0;
 	CpuVU1 = &CpuIntVU1;
+
+#ifdef ARCH_ARM64
+	// C.30-1: microVU0 runs VU0 micro programs natively (macro-mode COP2
+	// stays on the C.29-1 inline interpreter calls until C.30-2).
+	// LRPS2_NO_VU0REC=1 falls back to the VU0 interpreter.
+	if (EmuConfig.Cpu.Recompiler.EnableVU0 && !getenv("LRPS2_NO_VU0REC"))
+		CpuVU0 = &CpuMicroVU0;
+#endif
 
 #ifndef ARCH_ARM64
 	if (EmuConfig.Cpu.Recompiler.EnableVU0)
