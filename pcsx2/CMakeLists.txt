@@ -774,7 +774,7 @@ if(NOT _M_X86)
 	# recompilers (recR3000A/recR5900/recVU1) plus the NEON VIF unpack dynarec
 	# transplanted from ARMSX2 (C.19: AsmHelpers + Vif_UnpackNEON +
 	# Vif_Dynarec_arm64, replacing the former RecStubs.cpp reference routing).
-	set(pcsx2x86Sources x86/CpuState.cpp arm64/recR3000A_arm64.cpp arm64/recR5900_arm64.cpp arm64/recVU1_arm64.cpp
+	set(pcsx2x86Sources x86/CpuState.cpp arm64/recR3000A_arm64.cpp arm64/recR5900_arm64.cpp arm64/recVU1_arm64.cpp arm64/aVU.cpp
 		arm64/AsmHelpers.cpp arm64/Vif_UnpackNEON.cpp arm64/Vif_Dynarec_arm64.cpp)
 	set(pcsx2x86Headers)
 	# VIXL is the AArch64 code emitter, the foundation for the arm64 recompiler

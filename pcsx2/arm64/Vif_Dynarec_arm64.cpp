@@ -514,7 +514,7 @@ _vifT __fi nVifBlock* dVifCompile(nVifBlock& block, bool isFill)
 	}
 
 	// Compile the block now
-	armSetAsmPtr(v.recWritePtr, v.recEndPtr - v.recWritePtr);
+	armSetAsmPtr(v.recWritePtr, v.recEndPtr - v.recWritePtr, nullptr);
 
 	block.startPtr = (uptr)armStartBlock();
 	block.length = dVifComputeLength(block.cl, block.wl, block.num, isFill);

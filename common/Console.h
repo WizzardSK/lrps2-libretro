@@ -33,12 +33,48 @@
 //
 // All functions return false so logs can be disabled at compile time with the
 // "0 && Console.WriteLn(...)" trick.
+// Upstream PCSX2 colorizes console output; the libretro log has no color
+// support, so the color argument is accepted (for source compatibility with
+// transplanted upstream code) and ignored.
+enum ConsoleColors
+{
+	Color_Default = 0,
+	Color_Black,
+	Color_Green,
+	Color_Red,
+	Color_Blue,
+	Color_Magenta,
+	Color_Orange,
+	Color_Gray,
+	Color_Cyan,
+	Color_Yellow,
+	Color_White,
+	Color_StrongBlack,
+	Color_StrongRed,
+	Color_StrongGreen,
+	Color_StrongBlue,
+	Color_StrongMagenta,
+	Color_StrongOrange,
+	Color_StrongGray,
+	Color_StrongCyan,
+	Color_StrongYellow,
+	Color_StrongWhite,
+};
+
 struct IConsoleWriter
 {
 	bool WriteLn(const char* fmt, ...) const;
 	bool Error(const char* fmt, ...) const;
 	bool Warning(const char* fmt, ...) const;
 	bool Debug(const char* fmt, ...) const;
+
+	// Color-taking overloads: the color is ignored (see ConsoleColors).
+	template <typename... Args>
+	bool WriteLn(ConsoleColors, const char* fmt, Args... args) const { return WriteLn(fmt, args...); }
+	template <typename... Args>
+	bool Error(ConsoleColors, const char* fmt, Args... args) const { return Error(fmt, args...); }
+	template <typename... Args>
+	bool Warning(ConsoleColors, const char* fmt, Args... args) const { return Warning(fmt, args...); }
 };
 
 extern IConsoleWriter Console;

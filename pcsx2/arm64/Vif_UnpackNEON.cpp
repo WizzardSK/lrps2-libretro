@@ -440,7 +440,7 @@ void VifUnpackSSE_Init()
 
 	Console.WriteLn("Generating NEON-optimized unpacking functions for VIF interpreters...");
 
-	armSetAsmPtr(s_upkCode, kUpkCodeSize);
+	armSetAsmPtr(s_upkCode, kUpkCodeSize, nullptr);
 
 	for (int a = 0; a < 2; a++)
 		for (int b = 0; b < 2; b++)

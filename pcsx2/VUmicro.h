@@ -104,6 +104,7 @@ public:
 	void Reset() override;
 
 	void SetStartPC(u32 startPC) override;
+	void Step(); // single VU instruction (aVU MVU_DIFF shadow single-step)
 	void Execute(u32 cycles) override;
 	void Clear(u32 addr, u32 size) override {}
 	void ResumeXGkick() override {}
@@ -123,6 +124,7 @@ public:
 
 	void Reset() override;
 	void SetStartPC(u32 startPC) override;
+	void Step();
 	void Execute(u32 cycles) override;
 	void Clear(u32 addr, u32 size) override;
 };
@@ -137,6 +139,7 @@ public:
 	void Shutdown() override;
 	void Reset() override;
 	void SetStartPC(u32 startPC) override;
+	void Step();
 	void Execute(u32 cycles) override;
 	void Clear(u32 addr, u32 size) override;
 	void ResumeXGkick() override;
