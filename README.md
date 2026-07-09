@@ -12,7 +12,7 @@ Verified booting to real in-game content (Mega Man X7 gameplay, Gran Turismo 3
 intro/FMV) on a Snapdragon-class device (Adreno 618, 4K-page Linux, glibc
 RetroArch flatpak + musl test host).
 
-Overall recompiler-suite progress: roughly **~65 %** (weighted by remaining
+Overall recompiler-suite progress: roughly **~68 %** (weighted by remaining
 work; dynamic instruction coverage on the tested titles is much higher — the
 vast majority of EE+IOP instructions already execute natively, and the
 remaining interpreter handoffs are mostly untranslatable exceptions).
@@ -22,7 +22,7 @@ remaining interpreter handoffs are mostly untranslatable exceptions).
 | EE (R5900) JIT | 76 % | Native ALU, loads/stores incl. LQ/SQ (inline vtlb fast path) + unaligned family, branches + likely branches + BC0x/BC1x, block linking/chaining, MULT/DIV/MADD + HI/LO (both pipelines), **complete COP1 (FPU)** — data moves + all S-format arithmetic + CVT + C.cond, interpreter-exact clamp/flag semantics (only CFC1/CTC1 interpreted), bit-exact MMI subset → NEON, MFSA/MTSA(B/H), kernel idle-loop skip, block revalidation cache, write-back GPR register cache with direct-to-cache emission. Missing: COP2 macro mode, overflow-trap ADDI/DADDI, SYSCALL/ERET/TLB (interpreter forever) |
 | IOP (R3000A) JIT | 80 % | Native ALU, aligned loads/stores, branches + delay slots, block linking; mult/div/COP0/unaligned via interpreter |
 | VU1 recompiler | 60 % | **microVU1 (armsx2 aVU transplant) is the default provider**: native AArch64 VU codegen, MVU_DIFF-verified register-exact against the interpreter on both test titles, byte-identical framebuffers through 12000-frame runs. Instant-VU1 and MTVU are back to default-on with it. Fallbacks: `LRPS2_VU1REC_PAIR=1` (interp-pair rec), `LRPS2_NO_VU1REC=1` (interpreter; both restore conservative non-instant/opt-in-MTVU behavior) |
-| VU0 / COP2 | 10 % | Interpreter, but COP2 macro ops no longer break EE JIT blocks (inline interpreter calls; BC2 branches native). VU0 micro + native macro mode still to do |
+| VU0 / COP2 | 60 % | **microVU0 runs VU0 micro programs** (VCALLMS) natively; **COP2 macro ALU ops emit native NEON directly into EE JIT blocks** (aVU_Macro single-op emitters, conservative all-flags-live gating); BC2 branches native. CALLMS/transfer ops via inline interpreter calls (faithful to x86). `LRPS2_NO_VU0REC=1` / `LRPS2_NO_EE_COP2MACRO=1` fall back |
 | VIF unpack dynarec | 100 % | NEON unpack kernels (armsx2 transplant); portable C fallback (`LRPS2_NO_VIF_DYNAREC=1`) |
 | SMC / overlays | Compiled pages are write-protected; faults invalidate stale blocks (vtlb `mmap_MarkCountedRamPage` flow) |
 | MTVU (VU1 thread) | **Default-on** with microVU1 (≥3 cores; `LRPS2_NO_MTVU=1` disables). Partial-packet flush protocol prevents the continuous-microprogram livelock; with an interp-style VU1 provider MTVU stays opt-in (`LRPS2_MTVU=1`) |
