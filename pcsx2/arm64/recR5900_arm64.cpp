@@ -173,11 +173,13 @@ namespace
 		int8_t guest_of[kCacheSlots]; // slot -> guest reg (-1 = free)
 		bool   dirty[kCacheSlots];    // slot holds a value memory doesn't have yet
 		u8 rr;                        // round-robin eviction cursor
+		u8 pinned;                    // slots the CURRENT op holds Register handles to
 		void Reset()
 		{
 			for (int i = 0; i < 32; i++) host_of[i] = -1;
 			for (int i = 0; i < kCacheSlots; i++) { guest_of[i] = -1; dirty[i] = false; }
 			rr = 0;
+			pinned = 0;
 		}
 		void Invalidate(u32 g) // drop without write-back (memory was just overwritten)
 		{
@@ -187,11 +189,18 @@ namespace
 				guest_of[s] = -1; dirty[s] = false; host_of[g] = -1;
 			}
 		}
-		// Claim a slot for guest reg g, write-back-evicting the round-robin victim.
+		// Claim a slot for guest reg g, write-back-evicting the round-robin
+		// victim. Slots pinned by the current op (live Register handles from
+		// SrcGpr/DstGpr) are skipped -- an op pins at most 3 of the 7 slots,
+		// so the scan always terminates.
 		int Alloc(MacroAssembler& m, const Register& gpr, u32 g)
 		{
-			int s = rr;
-			rr = (u8)((rr + 1) % kCacheSlots);
+			int s;
+			do
+			{
+				s = rr;
+				rr = (u8)((rr + 1) % kCacheSlots);
+			} while (pinned & (1u << s));
 			if (guest_of[s] >= 0)
 			{
 				if (dirty[s]) m.Str(CacheX(s), MemOperand(gpr, (u32)guest_of[s] * 16));
@@ -271,6 +280,59 @@ namespace
 		if (s < 0) s = s_rc.Alloc(m, gpr, idx);
 		m.Mov(CacheX(s), xs);
 		s_rc.dirty[s] = true;
+	}
+
+	// ---- C.27-3: direct-to-cache emission API ----
+	// Converted emitters get Register handles straight into the cache slots,
+	// eliminating the load-into-x0 / store-from-x0 copy dance entirely:
+	//   const Register a = SrcGpr(m, gpr, rs, x0);
+	//   const Register d = DstGpr(m, gpr, rd, x0);
+	//   m.Add(d.W(), a.W(), ...); m.Sxtw(d, d.W());
+	//   FinishDst(m, gpr, rd, d);
+	// With the cache ON: Src returns the (loaded) slot register or xzr for r0,
+	// Dst returns the target slot marked dirty, FinishDst is a no-op; both pin
+	// their slot so a later Alloc in the same op can't evict a live handle
+	// (pins are cleared at every op boundary). With the cache OFF the same
+	// call sequence degenerates to exactly the pre-C.27 code: Src loads into
+	// the passed scratch, Dst returns the scratch, FinishDst stores it.
+	// RULES for converted emitters: acquire all Srcs before the Dst; the
+	// instruction that writes Dst must be the last reader of the Srcs (Dst
+	// may alias a Src when the cache is off, or when rd==rs/rt).
+	inline Register SrcGpr(MacroAssembler& m, const Register& gpr, u32 idx, const Register& scratch)
+	{
+		// r0 materializes as Mov scratch,0 -- NOT xzr: register 31 in the Rn
+		// position of immediate/extended ADD/SUB/CMP encodes SP, so handing
+		// out xzr would be a silent footgun for converted emitters.
+		if (idx == 0) { m.Mov(scratch, 0); return scratch; }
+		if (!RegCacheOn())
+		{
+			m.Ldr(scratch, MemOperand(gpr, idx * 16));
+			return scratch;
+		}
+		int s = s_rc.host_of[idx];
+		if (s < 0)
+		{
+			s = s_rc.Alloc(m, gpr, idx);
+			m.Ldr(CacheX(s), MemOperand(gpr, idx * 16));
+		}
+		s_rc.pinned |= (u8)(1u << s);
+		return CacheX(s);
+	}
+	// idx must be nonzero (callers guard r0 like they always have).
+	inline Register DstGpr(MacroAssembler& m, const Register& gpr, u32 idx, const Register& scratch)
+	{
+		if (!RegCacheOn())
+			return scratch;
+		int s = s_rc.host_of[idx];
+		if (s < 0) s = s_rc.Alloc(m, gpr, idx); // no load: fully overwritten
+		s_rc.dirty[s] = true;
+		s_rc.pinned |= (u8)(1u << s);
+		return CacheX(s);
+	}
+	inline void FinishDst(MacroAssembler& m, const Register& gpr, u32 idx, const Register& d)
+	{
+		if (!RegCacheOn())
+			m.Str(d, MemOperand(gpr, idx * 16));
 	}
 
 	// COP1 (FPU) register sub-ops that are bit-exact and safe to translate
@@ -1222,6 +1284,7 @@ namespace
 
 	bool EmitSimple(MacroAssembler& m, const Register& gpr, u32 insn)
 	{
+		s_rc.pinned = 0; // new op: previous op's Register handles are dead
 		const u32 op = insn >> 26;
 		const u32 rs = (insn >> 21) & 31, rt = (insn >> 16) & 31, rd = (insn >> 11) & 31, sa = (insn >> 6) & 31;
 		const u32 funct = insn & 0x3f;
@@ -1242,23 +1305,23 @@ namespace
 			case 0x00:
 				switch (funct)
 				{
-					// 32-bit shifts -> sign-extend to 64
-					case 0x00: if (rd) { LoadGpr(m, x0, gpr, rt); m.Lsl(w0, w0, sa); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rd); } return true; // SLL
-					case 0x02: if (rd) { LoadGpr(m, x0, gpr, rt); m.Lsr(w0, w0, sa); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rd); } return true; // SRL
-					case 0x03: if (rd) { LoadGpr(m, x0, gpr, rt); m.Asr(w0, w0, sa); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rd); } return true; // SRA
-					case 0x04: if (rd) { LoadGpr(m, x0, gpr, rt); LoadGpr(m, x1, gpr, rs); m.Lsl(w0, w0, w1); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rd); } return true; // SLLV
-					case 0x06: if (rd) { LoadGpr(m, x0, gpr, rt); LoadGpr(m, x1, gpr, rs); m.Lsr(w0, w0, w1); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rd); } return true; // SRLV
-					case 0x07: if (rd) { LoadGpr(m, x0, gpr, rt); LoadGpr(m, x1, gpr, rs); m.Asr(w0, w0, w1); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rd); } return true; // SRAV
+					// 32-bit shifts -> sign-extend to 64 (direct-to-cache, C.27-3)
+					case 0x00: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), d = DstGpr(m, gpr, rd, x0); m.Lsl(d.W(), a.W(), sa); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // SLL
+					case 0x02: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), d = DstGpr(m, gpr, rd, x0); m.Lsr(d.W(), a.W(), sa); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // SRL
+					case 0x03: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), d = DstGpr(m, gpr, rd, x0); m.Asr(d.W(), a.W(), sa); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // SRA
+					case 0x04: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), b = SrcGpr(m, gpr, rs, x1), d = DstGpr(m, gpr, rd, x0); m.Lsl(d.W(), a.W(), b.W()); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // SLLV
+					case 0x06: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), b = SrcGpr(m, gpr, rs, x1), d = DstGpr(m, gpr, rd, x0); m.Lsr(d.W(), a.W(), b.W()); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // SRLV
+					case 0x07: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), b = SrcGpr(m, gpr, rs, x1), d = DstGpr(m, gpr, rd, x0); m.Asr(d.W(), a.W(), b.W()); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // SRAV
 					// 32-bit add/sub -> sign-extend to 64
-					case 0x21: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Add(w0, w0, w1); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rd); } return true; // ADDU
-					case 0x23: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Sub(w0, w0, w1); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rd); } return true; // SUBU
+					case 0x21: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Add(d.W(), a.W(), b.W()); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // ADDU
+					case 0x23: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Sub(d.W(), a.W(), b.W()); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // SUBU
 					// 64-bit logic / set / add / sub
-					case 0x24: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.And(x0, x0, x1); StoreGpr(m, x0, gpr, rd); } return true; // AND
-					case 0x25: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Orr(x0, x0, x1); StoreGpr(m, x0, gpr, rd); } return true; // OR
-					case 0x26: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Eor(x0, x0, x1); StoreGpr(m, x0, gpr, rd); } return true; // XOR
-					case 0x27: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Orr(x0, x0, x1); m.Mvn(x0, x0); StoreGpr(m, x0, gpr, rd); } return true; // NOR
-					case 0x2a: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Cmp(x0, x1); m.Cset(x0, lt); StoreGpr(m, x0, gpr, rd); } return true; // SLT
-					case 0x2b: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Cmp(x0, x1); m.Cset(x0, lo); StoreGpr(m, x0, gpr, rd); } return true; // SLTU
+					case 0x24: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.And(d, a, b); FinishDst(m, gpr, rd, d); } return true; // AND
+					case 0x25: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Orr(d, a, b); FinishDst(m, gpr, rd, d); } return true; // OR
+					case 0x26: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Eor(d, a, b); FinishDst(m, gpr, rd, d); } return true; // XOR
+					case 0x27: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Orr(d, a, b); m.Mvn(d, d); FinishDst(m, gpr, rd, d); } return true; // NOR
+					case 0x2a: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Cmp(a, b); m.Cset(d, lt); FinishDst(m, gpr, rd, d); } return true; // SLT
+					case 0x2b: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Cmp(a, b); m.Cset(d, lo); FinishDst(m, gpr, rd, d); } return true; // SLTU
 					// funct map: 0x2c=DADD 0x2d=DADDU 0x2e=DSUB 0x2f=DSUBU (the
 					// interpreter's DADD/DSUB don't trap on overflow, so both
 					// pairs emit the same Add/Sub). 0x2d used to emit Sub --
@@ -1266,20 +1329,20 @@ namespace
 					// because `move rd,rs` == `daddu rd,rs,$zero` where rs-0 is
 					// accidentally correct (MMX7 post-logo stall, C.9).
 					case 0x2c:
-					case 0x2d: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Add(x0, x0, x1); StoreGpr(m, x0, gpr, rd); } return true; // DADD/DADDU
+					case 0x2d: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Add(d, a, b); FinishDst(m, gpr, rd, d); } return true; // DADD/DADDU
 					case 0x2e:
-					case 0x2f: if (rd) { LoadGpr(m, x0, gpr, rs); LoadGpr(m, x1, gpr, rt); m.Sub(x0, x0, x1); StoreGpr(m, x0, gpr, rd); } return true; // DSUB/DSUBU
+					case 0x2f: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Sub(d, a, b); FinishDst(m, gpr, rd, d); } return true; // DSUB/DSUBU
 					// 64-bit shifts (variable)
-					case 0x14: if (rd) { LoadGpr(m, x0, gpr, rt); LoadGpr(m, x1, gpr, rs); m.Lsl(x0, x0, x1); StoreGpr(m, x0, gpr, rd); } return true; // DSLLV
-					case 0x16: if (rd) { LoadGpr(m, x0, gpr, rt); LoadGpr(m, x1, gpr, rs); m.Lsr(x0, x0, x1); StoreGpr(m, x0, gpr, rd); } return true; // DSRLV
-					case 0x17: if (rd) { LoadGpr(m, x0, gpr, rt); LoadGpr(m, x1, gpr, rs); m.Asr(x0, x0, x1); StoreGpr(m, x0, gpr, rd); } return true; // DSRAV
+					case 0x14: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), b = SrcGpr(m, gpr, rs, x1), d = DstGpr(m, gpr, rd, x0); m.Lsl(d, a, b); FinishDst(m, gpr, rd, d); } return true; // DSLLV
+					case 0x16: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), b = SrcGpr(m, gpr, rs, x1), d = DstGpr(m, gpr, rd, x0); m.Lsr(d, a, b); FinishDst(m, gpr, rd, d); } return true; // DSRLV
+					case 0x17: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), b = SrcGpr(m, gpr, rs, x1), d = DstGpr(m, gpr, rd, x0); m.Asr(d, a, b); FinishDst(m, gpr, rd, d); } return true; // DSRAV
 					// 64-bit shifts (immediate)
-					case 0x38: if (rd) { LoadGpr(m, x0, gpr, rt); m.Lsl(x0, x0, sa);      StoreGpr(m, x0, gpr, rd); } return true; // DSLL
-					case 0x3a: if (rd) { LoadGpr(m, x0, gpr, rt); m.Lsr(x0, x0, sa);      StoreGpr(m, x0, gpr, rd); } return true; // DSRL
-					case 0x3b: if (rd) { LoadGpr(m, x0, gpr, rt); m.Asr(x0, x0, sa);      StoreGpr(m, x0, gpr, rd); } return true; // DSRA
-					case 0x3c: if (rd) { LoadGpr(m, x0, gpr, rt); m.Lsl(x0, x0, sa + 32); StoreGpr(m, x0, gpr, rd); } return true; // DSLL32
-					case 0x3e: if (rd) { LoadGpr(m, x0, gpr, rt); m.Lsr(x0, x0, sa + 32); StoreGpr(m, x0, gpr, rd); } return true; // DSRL32
-					case 0x3f: if (rd) { LoadGpr(m, x0, gpr, rt); m.Asr(x0, x0, sa + 32); StoreGpr(m, x0, gpr, rd); } return true; // DSRA32
+					case 0x38: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), d = DstGpr(m, gpr, rd, x0); m.Lsl(d, a, sa);      FinishDst(m, gpr, rd, d); } return true; // DSLL
+					case 0x3a: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), d = DstGpr(m, gpr, rd, x0); m.Lsr(d, a, sa);      FinishDst(m, gpr, rd, d); } return true; // DSRL
+					case 0x3b: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), d = DstGpr(m, gpr, rd, x0); m.Asr(d, a, sa);      FinishDst(m, gpr, rd, d); } return true; // DSRA
+					case 0x3c: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), d = DstGpr(m, gpr, rd, x0); m.Lsl(d, a, sa + 32); FinishDst(m, gpr, rd, d); } return true; // DSLL32
+					case 0x3e: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), d = DstGpr(m, gpr, rd, x0); m.Lsr(d, a, sa + 32); FinishDst(m, gpr, rd, d); } return true; // DSRL32
+					case 0x3f: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), d = DstGpr(m, gpr, rd, x0); m.Asr(d, a, sa + 32); FinishDst(m, gpr, rd, d); } return true; // DSRA32
 					// HI/LO moves + integer mult/div (bit-exact, sign-extended results)
 					case 0x10: case 0x11: case 0x12: case 0x13: // MFHI/MTHI/MFLO/MTLO
 					case 0x18: case 0x19: case 0x1a: case 0x1b: // MULT/MULTU/DIV/DIVU
@@ -1294,9 +1357,10 @@ namespace
 					case 0x28:
 						if (rd)
 						{
+							const Register d = DstGpr(m, gpr, rd, x0);
 							m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.sa));
-							m.Ldr(w0, MemOperand(x10)); // 32-bit load zero-extends
-							StoreGpr(m, x0, gpr, rd);
+							m.Ldr(d.W(), MemOperand(x10)); // 32-bit load zero-extends
+							FinishDst(m, gpr, rd, d);
 						}
 						return true;
 					case 0x29:
@@ -1310,24 +1374,25 @@ namespace
 					case 0x0b:
 						if (rd)
 						{
-							LoadGpr(m, x0, gpr, rs);
-							LoadGpr(m, x1, gpr, rt);
-							LoadGpr(m, x2, gpr, rd); // cache-aware: rd may be dirty
-							m.Cmp(x1, 0);
-							m.Csel(x2, x0, x2, funct == 0x0a ? eq : ne);
-							StoreGpr(m, x2, gpr, rd);
+							const Register a = SrcGpr(m, gpr, rs, x0);
+							const Register b = SrcGpr(m, gpr, rt, x1);
+							const Register dold = SrcGpr(m, gpr, rd, x2); // OLD rd value
+							const Register d = DstGpr(m, gpr, rd, x2);    // same slot / same scratch
+							m.Cmp(b, 0);
+							m.Csel(d, a, dold, funct == 0x0a ? eq : ne);
+							FinishDst(m, gpr, rd, d);
 						}
 						return true;
 					default: return false;
 				}
-			case 0x09: if (rt) { LoadGpr(m, x0, gpr, rs); m.Mov(w1, (u32)simm); m.Add(w0, w0, w1); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rt); } return true; // ADDIU
-			case 0x19: if (rt) { LoadGpr(m, x0, gpr, rs); m.Mov(x1, simm64); m.Add(x0, x0, x1); StoreGpr(m, x0, gpr, rt); } return true; // DADDIU
-			case 0x0a: if (rt) { LoadGpr(m, x0, gpr, rs); m.Mov(x1, simm64); m.Cmp(x0, x1); m.Cset(x0, lt); StoreGpr(m, x0, gpr, rt); } return true; // SLTI
-			case 0x0b: if (rt) { LoadGpr(m, x0, gpr, rs); m.Mov(x1, simm64); m.Cmp(x0, x1); m.Cset(x0, lo); StoreGpr(m, x0, gpr, rt); } return true; // SLTIU
-			case 0x0c: if (rt) { LoadGpr(m, x0, gpr, rs); m.Mov(x1, (uint64_t)zimm); m.And(x0, x0, x1); StoreGpr(m, x0, gpr, rt); } return true; // ANDI
-			case 0x0d: if (rt) { LoadGpr(m, x0, gpr, rs); m.Mov(x1, (uint64_t)zimm); m.Orr(x0, x0, x1); StoreGpr(m, x0, gpr, rt); } return true; // ORI
-			case 0x0e: if (rt) { LoadGpr(m, x0, gpr, rs); m.Mov(x1, (uint64_t)zimm); m.Eor(x0, x0, x1); StoreGpr(m, x0, gpr, rt); } return true; // XORI
-			case 0x0f: if (rt) { m.Mov(w0, zimm << 16); m.Sxtw(x0, w0); StoreGpr(m, x0, gpr, rt); } return true; // LUI
+			case 0x09: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(w1, (u32)simm); m.Add(d.W(), a.W(), w1); m.Sxtw(d, d.W()); FinishDst(m, gpr, rt, d); } return true; // ADDIU
+			case 0x19: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(x1, simm64); m.Add(d, a, x1); FinishDst(m, gpr, rt, d); } return true; // DADDIU
+			case 0x0a: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(x1, simm64); m.Cmp(a, x1); m.Cset(d, lt); FinishDst(m, gpr, rt, d); } return true; // SLTI
+			case 0x0b: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(x1, simm64); m.Cmp(a, x1); m.Cset(d, lo); FinishDst(m, gpr, rt, d); } return true; // SLTIU
+			case 0x0c: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(x1, (uint64_t)zimm); m.And(d, a, x1); FinishDst(m, gpr, rt, d); } return true; // ANDI
+			case 0x0d: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(x1, (uint64_t)zimm); m.Orr(d, a, x1); FinishDst(m, gpr, rt, d); } return true; // ORI
+			case 0x0e: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(x1, (uint64_t)zimm); m.Eor(d, a, x1); FinishDst(m, gpr, rt, d); } return true; // XORI
+			case 0x0f: if (rt) { const Register d = DstGpr(m, gpr, rt, x0); m.Mov(d.W(), zimm << 16); m.Sxtw(d, d.W()); FinishDst(m, gpr, rt, d); } return true; // LUI
 
 			// REGIMM (0x01): only MTSAB/MTSAH here -- the branches (BLTZ/BGEZ/
 			// B*ZAL/likely) are handled by EmitBranch. MTSAB/MTSAH write the
@@ -1360,7 +1425,7 @@ namespace
 			case 0x20: case 0x24: case 0x21: case 0x25: case 0x23: case 0x27: case 0x37:
 			{
 				if (no_load || (no_ld64 && op == 0x37)) return false;
-				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
 				const u32 amask = (op == 0x37) ? 7 : (op == 0x23 || op == 0x27) ? 3 : (op == 0x21 || op == 0x25) ? 1 : 0;
 				if (amask)
 			{
@@ -1419,7 +1484,7 @@ namespace
 			case 0x22: case 0x26: case 0x1a: case 0x1b:
 			{
 				if (no_load) return false;
-				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
 				m.Mov(w1, rt);
 				s_rc.FlushReg(m, gpr, rt); // the helper READS GPR[rt] for the merge
 				const uint64_t fn = (op == 0x22) ? reinterpret_cast<uint64_t>(&eeLWL_arm64)
@@ -1435,7 +1500,7 @@ namespace
 			case 0x2a: case 0x2e: case 0x2c: case 0x2d:
 			{
 				if (no_store) return false;
-				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
 				m.Mov(w1, rt);
 				s_rc.FlushReg(m, gpr, rt); // the helper reads GPR[rt] from memory
 				const uint64_t fn = (op == 0x2a) ? reinterpret_cast<uint64_t>(&eeSWL_arm64)
@@ -1449,7 +1514,7 @@ namespace
 			case 0x28: case 0x29: case 0x2b: case 0x3f:
 			{
 				if (no_store || (no_ld64 && op == 0x3f)) return false;
-				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
 				const u32 amask = (op == 0x3f) ? 7 : (op == 0x2b) ? 3 : (op == 0x29) ? 1 : 0;
 				if (amask)
 			{
@@ -1502,7 +1567,7 @@ namespace
 			case 0x1e: // LQ
 			{
 				if (no_load || !rt) return false; // rt==0: rare, leave to interp
-				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
 				m.And(w0, w0, 0xfffffff0);
 				Label slow, done;
 				if (InlineMemEnabled())
@@ -1522,7 +1587,7 @@ namespace
 			case 0x1f: // SQ
 			{
 				if (no_store) return false;
-				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
 				m.And(w0, w0, 0xfffffff0);
 				s_rc.FlushReg(m, gpr, rt); // the 128-bit source is read from memory
 				Label slow, done;
@@ -1623,7 +1688,7 @@ namespace
 			case 0x31:
 			{
 				if (no_cop1) return false;
-				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
 				Label skip;
 				m.Tst(w0, 3); m.B(&skip, ne);
 				m.Mov(x16, reinterpret_cast<uint64_t>(&eeRead32_arm64)); m.Blr(x16);
@@ -1635,7 +1700,7 @@ namespace
 			case 0x39:
 			{
 				if (no_cop1) return false;
-				LoadGpr(m, x0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
 				Label skip;
 				m.Tst(w0, 3); m.B(&skip, ne);
 				m.Mov(x1, reinterpret_cast<uint64_t>(&fpuRegs)); m.Ldr(w1, MemOperand(x1, rt * 4));
@@ -1778,6 +1843,7 @@ namespace
 	bool EmitBranch(MacroAssembler& m, const Register& gpr, u32 bpc, u32 insn, int cyc_leading)
 	{
 		if (eeDiag().no_branch) return false; // TEMP diagnostic: force branches to interpreter
+		s_rc.pinned = 0; // new op: previous op's Register handles are dead
 		const u32 op = insn >> 26, rs = (insn >> 21) & 31, rt = (insn >> 16) & 31, funct = insn & 0x3f;
 		const int32_t simm = (int16_t)(insn & 0xffff);
 
@@ -1928,8 +1994,8 @@ namespace
 		}
 		else
 		{
-			LoadGpr(m, x0, gpr, rs);
-			if (two) { LoadGpr(m, x1, gpr, rt); m.Cmp(x0, x1); } else m.Cmp(x0, 0);
+			const Register a = SrcGpr(m, gpr, rs, x0);
+			if (two) { const Register b = SrcGpr(m, gpr, rt, x1); m.Cmp(a, b); } else m.Cmp(a, 0);
 		}
 		// The taken/not-taken paths fork the compile-time cache state: the
 		// delay slot is only EXECUTED on the taken path, so its cache fills,
