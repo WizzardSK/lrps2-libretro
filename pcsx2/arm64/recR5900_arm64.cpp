@@ -1345,12 +1345,16 @@ namespace
 			return false; // CALLMS/CALLMSR/unknown -> C.29-1 interp call
 		if (Cop2MacroSkipped(insn))
 			return false; // TEMP bisect exclusion -> interp call
-		// VCLIP stays on the interpreter call: the native NEON emitter's clip
-		// judgement is subtly wrong (GT3: progressive black road sections on
-		// fresh races -- bisected to exactly this op via the funct/sub skip
-		// mask, C.30-3). CLIP is rare next to the ALU stream, so the interp
-		// call costs little; debugging the weights/ADDV bit-packing vs the
-		// interpreter's shift-register semantics is a follow-up.
+		// VCLIP stays on the interpreter call PERMANENTLY (C.30-4 root cause,
+		// GT3 black road): the interpreter's macro path keeps the live clip
+		// shift register in VU->clipflag and commits it to VI[REG_CLIP_FLAG]
+		// through the FMAC pipeline -- i.e. VI lags the live value by one op.
+		// GT3 reads the flag via CFC2 tens of thousands of times per race and
+		// depends on that delayed view; the native emitter's immediate
+		// read-shift-write on VI hands CFC2 a value shifted 6 bits too far
+		// and the road-chunk culling goes wrong. A native version would have
+		// to replicate the delayed commit (VI = old clipflag; clipflag = new)
+		// -- not worth it for an op this rare next to the ALU stream.
 		if ((insn & 0x3f) >= 0x3c && ((insn & 3) | ((insn >> 4) & 0x7c)) == 0x1f)
 			return false;
 
