@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <unordered_map>
 #include <vector>
@@ -1283,10 +1284,75 @@ namespace
 	// must be the block buffer's start so armGetCurrentCodePointer() (used for
 	// ADRP/call displacement math) computes true host addresses.
 	EEINST s_cop2AllLive; // .info set on first use
+	// TEMP bisect (C.30-2 black-texture hunt): LRPS2_COP2M_SKIP="a-b,c,d-e"
+	// (hex funct ranges) forces the listed COP2 SPECIAL functs back to the
+	// interp call while the rest stay native.
+	bool Cop2MacroSkipped(u32 insn)
+	{
+		const u32 funct = insn & 0x3f;
+		static int parsed = -1;
+		static u64 mask = 0;  // bit per funct 0..0x3f
+		static u64 smask[2] = {0, 0}; // bits per SPECIAL2 sub 0..0x43 ("sXX" entries)
+		if (parsed < 0)
+		{
+			parsed = 0;
+			// Also read the mask from a file so GUI-launched sessions (no env)
+			// can be re-tested by editing the file + restarting the frontend.
+			static char filebuf[256];
+			const char* e = getenv("LRPS2_COP2M_SKIP");
+			if (!e)
+			{
+				if (FILE* f = fopen("/home/user/lrps2_cop2skip.txt", "r"))
+				{
+					if (fgets(filebuf, sizeof(filebuf), f))
+						e = filebuf;
+					fclose(f);
+				}
+			}
+			if (e)
+			{
+				char buf[256]; strncpy(buf, e, 255); buf[255] = 0;
+				for (char* tok = strtok(buf, ","); tok; tok = strtok(nullptr, ","))
+				{
+					const bool sub = (tok[0] == 's');
+					if (sub) tok++;
+					unsigned lo, hi;
+					if (sscanf(tok, "%x-%x", &lo, &hi) == 2) {}
+					else if (sscanf(tok, "%x", &lo) == 1) hi = lo;
+					else continue;
+					// "sLO-sHI" tolerated too: strip a stray 's' on the hi bound
+					if (sub)
+						for (unsigned v = lo; v <= hi && v < 128; v++) smask[v >> 6] |= 1ull << (v & 63);
+					else
+						for (unsigned f = lo; f <= hi && f < 64; f++) mask |= 1ull << f;
+				}
+			}
+		}
+		if ((mask >> funct) & 1)
+			return true;
+		if (funct >= 0x3c) // SPECIAL2: match the sub index too
+		{
+			const u32 sub = (insn & 3) | ((insn >> 4) & 0x7c);
+			if (sub < 128 && ((smask[sub >> 6] >> (sub & 63)) & 1))
+				return true;
+		}
+		return false;
+	}
+
 	bool EmitCop2Macro(MacroAssembler& m, const Register& gpr, u32 insn)
 	{
 		if (!recVUMacroIsMode0(insn))
 			return false; // CALLMS/CALLMSR/unknown -> C.29-1 interp call
+		if (Cop2MacroSkipped(insn))
+			return false; // TEMP bisect exclusion -> interp call
+		// VCLIP stays on the interpreter call: the native NEON emitter's clip
+		// judgement is subtly wrong (GT3: progressive black road sections on
+		// fresh races -- bisected to exactly this op via the funct/sub skip
+		// mask, C.30-3). CLIP is rare next to the ALU stream, so the interp
+		// call costs little; debugging the weights/ADDV bit-packing vs the
+		// interpreter's shift-register semantics is a follow-up.
+		if ((insn & 0x3f) >= 0x3c && ((insn & 3) | ((insn >> 4) & 0x7c)) == 0x1f)
+			return false;
 
 		// The macro emitters clobber gprF0 (w23 -- one of OUR cache slots) and
 		// run their own VI-GPR allocator (macro mode excludes x19-x26; x27 is
