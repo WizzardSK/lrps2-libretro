@@ -166,7 +166,14 @@ void VU_Thread::ExecuteRingBuffer(void)
 					// output, and every MTVU GS packet arrives empty (GT3's VU1-drawn
 					// FMV went black). Set busy for the duration of the program like
 					// the non-MTVU path does; the interpreter's E-bit end clears it.
-					vuRegs[0].VI[REG_VPU_STAT].UL |= 0x0100;
+					// ONLY for the interp-style providers (InterpVU1 / the C.14
+					// interp-pair rec): microVU1 never re-clears VPU_STAT itself --
+					// it signals program end via mtvuInterrupts VUEBit -- so this
+					// worker-side set would STICK, the game would wait forever for
+					// VU1 idle, and kicks stop after a handful of programs (C.28-3:
+					// GT3 FMV black again, 4 progs then stall).
+					if (CpuVU1 != &CpuMicroVU1)
+						vuRegs[0].VI[REG_VPU_STAT].UL |= 0x0100;
 					CpuVU1->Execute(vu1RunCycles);
 					// TEMP diagnostic (LRPS2_MTVU_LOG): count worker-side VU1 programs
 					// and the GS-packet bytes they produced.
