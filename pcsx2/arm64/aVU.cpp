@@ -1378,6 +1378,12 @@ static void mvuLocalizeCompare(u32 startPC, u32 cycles)
 
 void recMicroVU1::Execute(u32 cycles)
 {
+	// TEMP DEBUG (C.28-2): prove the transplant actually executes.
+	{
+		static u64 n = 0;
+		if (++n == 1 || n == 1000 || n == 100000)
+			fprintf(stderr, "[mvu1] Execute #%llu\n", (unsigned long long)n);
+	}
 	if (!THREAD_VU1)
 	{
 		if (!(VU0.VI[REG_VPU_STAT].UL & 0x100))

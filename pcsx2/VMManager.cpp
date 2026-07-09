@@ -838,6 +838,10 @@ void VMManager::InitializeCPUProviders()
 	psxRec.Reserve();
 	recCpu.Reserve();
 	CpuRecVU1_arm64.Reserve();
+	// C.28: the armsx2 microVU1 transplant, opt-in while under verification.
+	// Its Reserve() also opens vu1Thread (idempotent with the Open() below).
+	if (getenv("LRPS2_VU1REC_MVU"))
+		CpuMicroVU1.Reserve();
 	// The MTVU worker thread is normally spawned by recMicroVU1::Reserve()
 	// (x86/microVU.cpp), which doesn't exist in this build -- with vuThread
 	// enabled the EE would push to vu1Thread's ring and wait on its WorkSema
@@ -870,6 +874,8 @@ void VMManager::ShutdownCPUProviders()
 	psxRec.Shutdown();
 	recCpu.Shutdown();
 #else
+	if (getenv("LRPS2_VU1REC_MVU"))
+		CpuMicroVU1.Shutdown(); // waits on the MTVU worker, then mVUclose
 	vu1Thread.Close();
 	dVifRelease(1);
 	dVifRelease(0);
@@ -903,10 +909,20 @@ void VMManager::UpdateCPUImplementations()
 	if (EmuConfig.Cpu.Recompiler.EnableVU1)
 		CpuVU1 = &CpuMicroVU1;
 #else
-	// C.14: arm64 VU1 recompiler (skeleton for now -- interpreter-executed
-	// blocks, byte-identical). LRPS2_NO_VU1REC=1 falls back to InterpVU1.
+	// C.14: arm64 VU1 recompiler (interp-pair blocks, byte-identical).
+	// LRPS2_NO_VU1REC=1 falls back to InterpVU1. C.28: LRPS2_VU1REC_MVU=1
+	// selects the armsx2 microVU1 transplant instead (native VU code,
+	// NOT cycle-exact vs the interpreter -- under verification).
 	if (EmuConfig.Cpu.Recompiler.EnableVU1 && !getenv("LRPS2_NO_VU1REC"))
-		CpuVU1 = &CpuRecVU1_arm64;
+	{
+		if (getenv("LRPS2_VU1REC_MVU"))
+		{
+			CpuVU1 = &CpuMicroVU1;
+			Console.WriteLn("arm64 VU1 rec (C.28): microVU1 transplant ACTIVE (native VU codegen).");
+		}
+		else
+			CpuVU1 = &CpuRecVU1_arm64;
+	}
 #endif
 }
 
