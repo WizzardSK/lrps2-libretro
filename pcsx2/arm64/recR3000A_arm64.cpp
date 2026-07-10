@@ -199,6 +199,50 @@ namespace
 					case 0x27: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Orr(w0, w0, w1); m.Mvn(w0, w0); StoreGpr(m, w0, gpr, rd); } return true;
 					case 0x2a: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Cmp(w0, w1); m.Cset(w0, lt); StoreGpr(m, w0, gpr, rd); } return true;
 					case 0x2b: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Cmp(w0, w1); m.Cset(w0, lo); StoreGpr(m, w0, gpr, rd); } return true;
+					// ---- C.33: HI/LO pipeline. hi=GPR.r[32], lo=GPR.r[33]
+					// (offsets 128/132); accessed directly, never through the
+					// register cache (host_of[] only spans guest 0..31).
+					case 0x10: if (rd) { m.Ldr(w0, MemOperand(gpr, 32 * 4)); StoreGpr(m, w0, gpr, rd); } return true; // MFHI
+					case 0x11: { LoadGpr(m, w0, gpr, rs); m.Str(w0, MemOperand(gpr, 32 * 4)); } return true;          // MTHI
+					case 0x12: if (rd) { m.Ldr(w0, MemOperand(gpr, 33 * 4)); StoreGpr(m, w0, gpr, rd); } return true; // MFLO
+					case 0x13: { LoadGpr(m, w0, gpr, rs); m.Str(w0, MemOperand(gpr, 33 * 4)); } return true;          // MTLO
+					case 0x18: // MULT
+					case 0x19: // MULTU
+					{
+						LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt);
+						if (funct == 0x18) m.Smull(x0, w0, w1);
+						else               m.Umull(x0, w0, w1);
+						m.Str(w0, MemOperand(gpr, 33 * 4)); // lo
+						m.Lsr(x0, x0, 32);
+						m.Str(w0, MemOperand(gpr, 32 * 4)); // hi
+						return true;
+					}
+					case 0x1a: // DIV (psxDIV semantics)
+					{
+						LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt);
+						m.Sdiv(w2, w0, w1);      // rt==0 -> 0 (fixed below); INT_MIN/-1 -> INT_MIN (= psxDIV's x86-overflow lo)
+						m.Msub(w3, w2, w1, w0);  // hi = rs - lo*rt; rt==0 -> rs, overflow -> 0: both match psxDIV
+						m.Cmp(w0, 0);
+						m.Mov(w4, 1);
+						m.Mov(w5, -1);
+						m.Csel(w4, w4, w5, lt);  // div-by-0 lo: rs<0 ? 1 : 0xFFFFFFFF
+						m.Cmp(w1, 0);
+						m.Csel(w2, w2, w4, ne);
+						m.Str(w2, MemOperand(gpr, 33 * 4)); // lo
+						m.Str(w3, MemOperand(gpr, 32 * 4)); // hi
+						return true;
+					}
+					case 0x1b: // DIVU (psxDIVU semantics)
+					{
+						LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt);
+						m.Udiv(w2, w0, w1);
+						m.Msub(w3, w2, w1, w0);  // rt==0 -> hi=rs
+						m.Cmp(w1, 0);
+						m.Csinv(w2, w2, wzr, ne); // rt==0 -> lo=0xFFFFFFFF
+						m.Str(w2, MemOperand(gpr, 33 * 4)); // lo
+						m.Str(w3, MemOperand(gpr, 32 * 4)); // hi
+						return true;
+					}
 					default: return false;
 				}
 			case 0x09: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, (u32)simm); m.Add(w0, w0, w1); StoreGpr(m, w0, gpr, rt); } return true;
@@ -240,6 +284,87 @@ namespace
 				m.Mov(x16, fn); m.Blr(x16);
 				return true;
 			}
+
+			// ---- C.34: unaligned LWL/LWR (psxLWL/psxLWR semantics). The
+			// aligned-word read happens even for rt==0 (IO side effects),
+			// matching the interpreter. shift = (vaddr&3)*8 and old-rt are
+			// recomputed/reloaded AFTER the helper call (rs and the register
+			// cache survive it; rt isn't written until the very end, so the
+			// rs==rt aliasing case is safe). All shift amounts are <=24, so
+			// LSLV/LSRV mod-32 semantics never bite.
+			case 0x22: case 0x26:
+			{
+				LoadGpr(m, w0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				m.And(w0, w0, 0xfffffffc);
+				m.Mov(x16, reinterpret_cast<uint64_t>(&iopMemRead32)); m.Blr(x16);
+				if (!rt) return true;
+				LoadGpr(m, w1, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w1, w1, w2);
+				m.And(w1, w1, 3); m.Lsl(w1, w1, 3); // shift
+				LoadGpr(m, w2, gpr, rt);            // old rt
+				if (op == 0x22) // LWL: rt = (rt & (0x00ffffff >> shift)) | (mem << (24-shift))
+				{
+					m.Mov(w3, 0x00ffffffu); m.Lsr(w3, w3, w1); m.And(w2, w2, w3);
+					m.Mov(w4, 24); m.Sub(w4, w4, w1); m.Lsl(w0, w0, w4);
+				}
+				else // LWR: rt = (rt & (0xffffff00 << (24-shift))) | (mem >> shift)
+				{
+					m.Mov(w3, 0xffffff00u); m.Mov(w4, 24); m.Sub(w4, w4, w1);
+					m.Lsl(w3, w3, w4); m.And(w2, w2, w3);
+					m.Lsr(w0, w0, w1);
+				}
+				m.Orr(w0, w0, w2);
+				StoreGpr(m, w0, gpr, rt);
+				return true;
+			}
+
+			// ---- C.34: unaligned SWL/SWR (read-modify-write of the aligned
+			// word, psxSWL/psxSWR semantics; two helper calls).
+			case 0x2a: case 0x2e:
+			{
+				LoadGpr(m, w0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				m.And(w0, w0, 0xfffffffc);
+				m.Mov(x16, reinterpret_cast<uint64_t>(&iopMemRead32)); m.Blr(x16);
+				LoadGpr(m, w1, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w1, w1, w2);
+				m.And(w1, w1, 3); m.Lsl(w1, w1, 3); // shift
+				LoadGpr(m, w2, gpr, rt);
+				if (op == 0x2a) // SWL: mem' = (rt >> (24-shift)) | (mem & (0xffffff00 << shift))
+				{
+					m.Mov(w3, 24); m.Sub(w3, w3, w1); m.Lsr(w2, w2, w3);
+					m.Mov(w4, 0xffffff00u); m.Lsl(w4, w4, w1); m.And(w0, w0, w4);
+				}
+				else // SWR: mem' = (rt << shift) | (mem & (0x00ffffff >> (24-shift)))
+				{
+					m.Lsl(w2, w2, w1);
+					m.Mov(w3, 24); m.Sub(w3, w3, w1);
+					m.Mov(w4, 0x00ffffffu); m.Lsr(w4, w4, w3); m.And(w0, w0, w4);
+				}
+				m.Orr(w1, w0, w2); // value
+				LoadGpr(m, w0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				m.And(w0, w0, 0xfffffffc);
+				m.Mov(x16, reinterpret_cast<uint64_t>(&iopMemWrite32)); m.Blr(x16);
+				return true;
+			}
+
+			// ---- C.34: COP0 moves. psxMFC0/CFC0/MTC0/CTC0 are plain copies
+			// against psxRegs.CP0.r[rd] (offset 136 + rd*4 from the GPR base;
+			// no side effects anywhere in this interpreter, not even for
+			// Status/Cause). RFE (rs=0x10) stays on the interpreter.
+			case 0x10:
+			{
+				const u32 rs_field = rs;
+				if (rs_field == 0x00 || rs_field == 0x02) // MFC0/CFC0
+				{
+					if (rt) { m.Ldr(w0, MemOperand(gpr, 136 + rd * 4)); StoreGpr(m, w0, gpr, rt); }
+					return true;
+				}
+				if (rs_field == 0x04 || rs_field == 0x06) // MTC0/CTC0
+				{
+					LoadGpr(m, w0, gpr, rt);
+					m.Str(w0, MemOperand(gpr, 136 + rd * 4));
+					return true;
+				}
+				return false; // RFE etc.
+			}
 			default: return false;
 		}
 	}
@@ -255,15 +380,24 @@ namespace
 			{
 				case 0x00: case 0x02: case 0x03: case 0x04: case 0x06: case 0x07:
 				case 0x21: case 0x23: case 0x24: case 0x25: case 0x26: case 0x27:
-				case 0x2a: case 0x2b: return true;
+				case 0x2a: case 0x2b:
+				case 0x10: case 0x11: case 0x12: case 0x13: // C.33 HI/LO moves
+				case 0x18: case 0x19: case 0x1a: case 0x1b: // C.33 mult/div
+					return true;
 				default: return false;
 			}
+		}
+		if (op == 0x10) // C.34 COP0: only the plain moves, not RFE
+		{
+			const u32 rs_field = (insn >> 21) & 31;
+			return rs_field == 0x00 || rs_field == 0x02 || rs_field == 0x04 || rs_field == 0x06;
 		}
 		switch (op)
 		{
 			case 0x09: case 0x0a: case 0x0b: case 0x0c: case 0x0d: case 0x0e: case 0x0f:
 			case 0x20: case 0x21: case 0x23: case 0x24: case 0x25:
-			case 0x28: case 0x29: case 0x2b: return true;
+			case 0x28: case 0x29: case 0x2b:
+			case 0x22: case 0x26: case 0x2a: case 0x2e: return true; // C.34 LWL/LWR/SWL/SWR
 			default: return false;
 		}
 	}
