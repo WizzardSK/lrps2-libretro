@@ -89,14 +89,84 @@ namespace
 		return r == 42;
 	}
 
+	// ---- C.32: block-local write-back GPR register cache (the C.27 pattern
+	// from the EE rec, sized for the IOP). Guest GPRs are 32-bit, mirrored in
+	// the callee-saved w22..w27 (x20/x21 stay reserved for the branch
+	// condition/jr-target snapshots that live across the delay slot). Helper
+	// C calls (iopMemRead/Write, iopEventTest) preserve x22..x27 (AAPCS64)
+	// and never touch psxRegs.GPR, so there are no invalidation sites at all:
+	// the only discipline is a write-back flush at every block exit (the
+	// branch tail before StorePC/eventtest/epilogue -- the conditional form
+	// computes pc with Csel and shares one exit, so there is no fork to
+	// snapshot -- and the interpreter-handoff tail, whose callee does read
+	// and write GPR memory).
+	constexpr int kIopCacheSlots = 6; // w22..w27
+	inline Register IopCacheW(int slot) { return WRegister(22 + slot); }
+	struct IopRegCache
+	{
+		int8_t host_of[32];
+		int8_t guest_of[kIopCacheSlots];
+		bool   dirty[kIopCacheSlots];
+		u8 rr;
+		void Reset()
+		{
+			for (int i = 0; i < 32; i++) host_of[i] = -1;
+			for (int i = 0; i < kIopCacheSlots; i++) { guest_of[i] = -1; dirty[i] = false; }
+			rr = 0;
+		}
+		int Alloc(MacroAssembler& m, const Register& gpr, u32 g)
+		{
+			const int s = rr;
+			rr = (u8)((rr + 1) % kIopCacheSlots);
+			if (guest_of[s] >= 0)
+			{
+				if (dirty[s]) m.Str(IopCacheW(s), MemOperand(gpr, (u32)guest_of[s] * 4));
+				host_of[(int)guest_of[s]] = -1;
+				dirty[s] = false;
+			}
+			guest_of[s] = (int8_t)g;
+			host_of[g] = (int8_t)s;
+			return s;
+		}
+		void FlushDirty(MacroAssembler& m, const Register& gpr)
+		{
+			for (int s = 0; s < kIopCacheSlots; s++)
+				if (guest_of[s] >= 0 && dirty[s])
+				{
+					m.Str(IopCacheW(s), MemOperand(gpr, (u32)guest_of[s] * 4));
+					dirty[s] = false;
+				}
+		}
+	};
+	IopRegCache s_irc;
+	inline bool IopRegCacheOn()
+	{
+		static int on = -1;
+		if (on < 0) on = getenv("LRPS2_NO_IOP_REGCACHE") ? 0 : 1;
+		return on != 0;
+	}
+
 	inline void LoadGpr(MacroAssembler& m, const Register& wd, const Register& gpr, u32 idx)
 	{
-		if (idx == 0) m.Mov(wd, 0);
-		else          m.Ldr(wd, MemOperand(gpr, idx * 4));
+		if (idx == 0) { m.Mov(wd, 0); return; }
+		if (!IopRegCacheOn()) { m.Ldr(wd, MemOperand(gpr, idx * 4)); return; }
+		int s = s_irc.host_of[idx];
+		if (s >= 0) { m.Mov(wd, IopCacheW(s)); return; }
+		m.Ldr(wd, MemOperand(gpr, idx * 4));
+		s = s_irc.Alloc(m, gpr, idx);
+		m.Mov(IopCacheW(s), wd);
 	}
 	inline void StoreGpr(MacroAssembler& m, const Register& ws, const Register& gpr, u32 idx)
 	{
-		m.Str(ws, MemOperand(gpr, idx * 4));
+		if (!IopRegCacheOn() || idx == 0)
+		{
+			m.Str(ws, MemOperand(gpr, idx * 4));
+			return;
+		}
+		int s = s_irc.host_of[idx];
+		if (s < 0) s = s_irc.Alloc(m, gpr, idx);
+		m.Mov(IopCacheW(s), ws);
+		s_irc.dirty[s] = true;
 	}
 
 	// Translate one side-effect-light instruction (ALU + aligned load/store) to
@@ -220,7 +290,10 @@ namespace
 	{
 		m.Ldp(x19, x20, MemOperand(sp, 0));
 		m.Ldp(x21, x30, MemOperand(sp, 16));
-		m.Add(sp, sp, 32);
+		m.Ldp(x22, x23, MemOperand(sp, 32));
+		m.Ldp(x24, x25, MemOperand(sp, 48));
+		m.Ldp(x26, x27, MemOperand(sp, 64));
+		m.Add(sp, sp, 80);
 		Label ret_path;
 		m.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.iopCycleEE));
 		m.Ldr(w0, MemOperand(x10));
@@ -293,6 +366,10 @@ namespace
 		EmitSimple(m, gpr, ds);
 		// time: n_leading native ops + the branch + the delay slot
 		EmitCycleBookkeeping(m, n_leading + 2);
+		// Block exit: the chained successor reads GPR MEMORY; nothing after
+		// this point (Csel/StorePC/iopEventTest/epilogue) touches guest GPRs,
+		// and both conditional outcomes share this single exit path.
+		s_irc.FlushDirty(m, gpr);
 
 		if (uncond)
 		{
@@ -329,11 +406,17 @@ namespace
 
 		u8* start = s_code + s_code_pos;
 		MacroAssembler masm(start, kCodeCacheSize - s_code_pos, PositionDependentCode);
+		s_irc.Reset(); // fresh per-block register-cache state (C.32)
 
 		const Register gpr = x19;
-		masm.Sub(sp, sp, 32);
+		// Uniform 80-byte frame across all blocks (tail-chaining: any block's
+		// epilogue must match any successor's prologue). x22..x27 = C.32 cache.
+		masm.Sub(sp, sp, 80);
 		masm.Stp(x19, x20, MemOperand(sp, 0));
 		masm.Stp(x21, x30, MemOperand(sp, 16));
+		masm.Stp(x22, x23, MemOperand(sp, 32));
+		masm.Stp(x24, x25, MemOperand(sp, 48));
+		masm.Stp(x26, x27, MemOperand(sp, 64));
 		masm.Mov(gpr, reinterpret_cast<uint64_t>(&psxRegs.GPR.r[0]));
 
 		u32 p = pc;
@@ -355,8 +438,11 @@ namespace
 				masm.Ldr(w0, MemOperand(x10)); masm.Add(w0, w0, 4 * n); masm.Str(w0, MemOperand(x10));
 				EmitCycleBookkeeping(masm, n);
 			}
+			// The interpreter tail reads AND writes guest GPR memory.
+			s_irc.FlushDirty(masm, gpr);
 			masm.Mov(x16, reinterpret_cast<uint64_t>(&iopRunBasicBlock_arm64));
 			masm.Blr(x16);
+			s_irc.Reset();
 			EmitEpilogue(masm);
 		}
 
