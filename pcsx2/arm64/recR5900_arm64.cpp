@@ -2128,6 +2128,36 @@ namespace
 		const uint64_t evt = reinterpret_cast<uint64_t>(&eeEventTest_arm64);
 		const uint64_t upd = reinterpret_cast<uint64_t>(&eeUpdateCycles_arm64);
 
+		// C.35: gate the event test on cycle >= nextEventCycle, the upstream
+		// x86 recompiler's dispatcher rule. The interpreter tests on EVERY
+		// taken branch, and mirroring that costs ~28% of CPU time in
+		// _cpuEventTest_Shared/iopEventTest bookkeeping (GT3 perf profile).
+		// This intentionally trades interpreter bit-identity (events fire at
+		// the next due branch, not the current one) for upstream-rec timing;
+		// LRPS2_NO_EVTGATE=1 restores the every-branch behaviour.
+		static const bool evt_gate = getenv("LRPS2_NO_EVTGATE") == nullptr;
+		const auto EmitEventTest = [&m, evt]()
+		{
+			if (evt_gate)
+			{
+				Label skip;
+				m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.cycle));
+				m.Ldr(w0, MemOperand(x10));
+				m.Mov(x11, reinterpret_cast<uint64_t>(&cpuRegs.nextEventCycle));
+				m.Ldr(w1, MemOperand(x11));
+				m.Subs(w0, w0, w1); // (s32)(cycle - nextEventCycle)
+				m.B(&skip, mi);     // not due yet
+				m.Mov(x16, evt);
+				m.Blr(x16);
+				m.Bind(&skip);
+			}
+			else
+			{
+				m.Mov(x16, evt);
+				m.Blr(x16);
+			}
+		};
+
 		// WaitLoop speedhack for the EE kernel idle loop at 0x81fc0 (6 nops +
 		// `beq zero,zero,-6`): the interpreter fast-forwards cpuRegs.cycle to
 		// nextEventCycle when spinning there (_doBranch_shared, gated on
@@ -2167,7 +2197,7 @@ namespace
 			s_rc.FlushDirty(m, gpr); // block exit: the next block reads GPR memory
 			m.Mov(x16, upd); m.Blr(x16);
 			if (idle_skip) EmitIdleSkip();
-			m.Mov(x16, evt); m.Blr(x16);
+			EmitEventTest();
 			EmitChainEpilogue(m);
 			return true;
 		}
@@ -2211,7 +2241,7 @@ namespace
 		s_rc.FlushDirty(m, gpr); // block exit (taken)
 		m.Mov(x16, upd); m.Blr(x16);
 		if (idle_skip) EmitIdleSkip();
-		m.Mov(x16, evt); m.Blr(x16);
+		EmitEventTest();
 		EmitChainEpilogue(m);
 		s_rc = fork_state;
 		m.Bind(&not_taken);
@@ -2231,7 +2261,7 @@ namespace
 		// interrupt delivery (EPC) inside wait loops relative to the interpreter,
 		// which cascades into different kernel-scheduler decisions (MMX7 FMV
 		// loader wedge).
-		if (op == 0x04 || op == 0x05 || (likely && !bc0 && !bc1 && !bc2)) { m.Mov(x16, evt); m.Blr(x16); }
+		if (op == 0x04 || op == 0x05 || (likely && !bc0 && !bc1 && !bc2)) EmitEventTest();
 		EmitChainEpilogue(m);
 		return true;
 	}
