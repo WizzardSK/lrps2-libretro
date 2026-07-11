@@ -9,9 +9,10 @@
 // from the pre-delay-slot register values, and psxRegs.pc is set to the taken
 // target or the fall-through (bpc+8). iopEventTest() is called only on the taken
 // path, matching the interpreter's doBranch(). Link (JAL/JALR/B*AL) writes pc+8
-// before the delay slot. J (0x02) is left to the interpreter because it carries
-// IOP module-import HLE; unaligned LWL/LWR/SWL/SWR and any opcode not covered by
-// EmitSimple/EmitBranch also hand the rest of the basic block to the interpreter.
+// before the delay slot. J (0x02) is native since C.38 except the module-import
+// stub form (delay slot `li $zero, fn`), which stays on the interpreter for the
+// HLE hook; any opcode not covered by EmitSimple/EmitBranch hands the rest of
+// the basic block to the interpreter.
 //
 // Self-modifying code is handled by granular per-4KiB-page, mirror-normalised
 // invalidation in recClearIOP (psxCpu->Clear is called on every IOP write).
@@ -59,6 +60,12 @@ namespace
 	// (block-to-block tail-chaining), mirroring the EE recompiler. ROM/scratchpad
 	// fall back to the hash.
 	constexpr u32 kRamBytes = 0x00200000;
+
+	// C.41: chained blocks keep the 80-byte frame (and x19) live and enter the
+	// successor's body directly; only the return to recExecuteBlock pops the
+	// frame. Prologue size is fixed: Sub + 5*Stp + exactly-4-instruction x19
+	// materialization.
+	constexpr u32 kChainEntryOffset = (1 + 5 + 4) * 4;
 	constexpr u32 kRamWords = kRamBytes >> 2;
 	BlockFn*      s_lut      = nullptr;
 	inline bool InRam(u32 np) { return np < kRamBytes; }
@@ -452,12 +459,9 @@ namespace
 	// recExecuteBlock. x30 propagates so the final ret unwinds to the dispatcher.
 	void EmitEpilogue(MacroAssembler& m)
 	{
-		m.Ldp(x19, x20, MemOperand(sp, 0));
-		m.Ldp(x21, x30, MemOperand(sp, 16));
-		m.Ldp(x22, x23, MemOperand(sp, 32));
-		m.Ldp(x24, x25, MemOperand(sp, 48));
-		m.Ldp(x26, x27, MemOperand(sp, 64));
-		m.Add(sp, sp, 80);
+		// C.41: dispatch FIRST with the frame (and x19) still live; the
+		// successor's chain entry skips its prologue. Only the return to
+		// recExecuteBlock pops the frame.
 		Label ret_path;
 		m.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.iopCycleEE));
 		m.Ldr(w0, MemOperand(x10));
@@ -474,8 +478,15 @@ namespace
 		m.Lsr(w2, w2, 2);
 		m.Ldr(x3, MemOperand(x0, w2, UXTW, 3));
 		m.Cbz(x3, &ret_path);
+		m.Add(x3, x3, kChainEntryOffset);    // skip the successor's prologue
 		m.Br(x3);
 		m.Bind(&ret_path);
+		m.Ldp(x19, x20, MemOperand(sp, 0));
+		m.Ldp(x21, x30, MemOperand(sp, 16));
+		m.Ldp(x22, x23, MemOperand(sp, 32));
+		m.Ldp(x24, x25, MemOperand(sp, 48));
+		m.Ldp(x26, x27, MemOperand(sp, 64));
+		m.Add(sp, sp, 80);
 		m.Ret();
 	}
 
@@ -621,7 +632,15 @@ namespace
 		masm.Stp(x22, x23, MemOperand(sp, 32));
 		masm.Stp(x24, x25, MemOperand(sp, 48));
 		masm.Stp(x26, x27, MemOperand(sp, 64));
-		masm.Mov(gpr, reinterpret_cast<uint64_t>(&psxRegs.GPR.r[0]));
+		{
+			// Exactly 4 instructions so kChainEntryOffset stays constant.
+			const uint64_t gv = reinterpret_cast<uint64_t>(&psxRegs.GPR.r[0]);
+			vixl::ExactAssemblyScope scope(&masm, 4 * kInstructionSize);
+			masm.movz(gpr, gv & 0xffff);
+			masm.movk(gpr, (gv >> 16) & 0xffff, 16);
+			masm.movk(gpr, (gv >> 32) & 0xffff, 32);
+			masm.movk(gpr, (gv >> 48) & 0xffff, 48);
+		}
 
 		u32 p = pc;
 		int n = 0;
