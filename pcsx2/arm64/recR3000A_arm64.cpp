@@ -500,7 +500,7 @@ namespace
 		if      (op == 0x00 && funct == 0x08) { uncond = true; is_jr = true; }
 		else if (op == 0x00 && funct == 0x09) { uncond = true; is_jr = true; link = (int)((insn >> 11) & 31); }
 		else if (op == 0x03) { uncond = true; link = 31; tconst = (((bpc + 4) & 0xf0000000) | ((insn & 0x3ffffff) << 2)); } // JAL
-		else if (op == 0x02) return false; // J: IOP module-import HLE -> interpreter
+		else if (op == 0x02) { uncond = true; tconst = (((bpc + 4) & 0xf0000000) | ((insn & 0x3ffffff) << 2)); } // J (C.38; import-stub form filtered below)
 		else if (op == 0x04) { two = true; cond = eq; tconst = bpc + 4 + simm * 4; } // BEQ
 		else if (op == 0x05) { two = true; cond = ne; tconst = bpc + 4 + simm * 4; } // BNE
 		else if (op == 0x06) { one = true; cond = le; tconst = bpc + 4 + simm * 4; } // BLEZ
@@ -518,6 +518,17 @@ namespace
 
 		const u32 ds = iopMemRead32(bpc + 4);
 		if (!IsTranslatable(ds))
+			return false;
+
+		// C.38: J was pinned to the interpreter wholesale for the IOP
+		// module-import HLE, which dragged every J-heavy loop through the
+		// interpreter (~9% of CPU time in the handoff cluster). The hook only
+		// fires when the delay slot is the import-stub marker `li $zero, fn`
+		// (psxJ checks `delayslot >> 16 == 0x2400`), and the delay slot is
+		// compile-time known here — stores still go through iopMemWrite, so a
+		// stub patched in later faults the page and recompiles. Only the
+		// stub form stays on the interpreter.
+		if (op == 0x02 && (ds >> 16) == 0x2400)
 			return false;
 
 		// link (before the delay slot, unconditionally)
