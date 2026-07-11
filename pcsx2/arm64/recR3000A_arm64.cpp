@@ -535,11 +535,40 @@ namespace
 		// and both conditional outcomes share this single exit path.
 		s_irc.FlushDirty(m, gpr);
 
+		// C.37: gate the event test on cycle >= iopNextEventCycle, like the
+		// upstream x86 IOP rec dispatcher (the interpreter tests on every
+		// taken branch; mirroring that made iopEventTest 5.9% of CPU time).
+		// The slice stays bounded by iopCycleEE, and the EE side's
+		// _cpuEventTest_Shared still calls iopEventTest unconditionally.
+		// LRPS2_NO_IOP_EVTGATE=1 restores the every-branch behaviour.
+		static const bool iop_evt_gate = getenv("LRPS2_NO_IOP_EVTGATE") == nullptr;
+		const auto EmitIopEventTest = [&m]()
+		{
+			if (iop_evt_gate)
+			{
+				Label skip;
+				m.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.cycle));
+				m.Ldr(w0, MemOperand(x10));
+				m.Mov(x11, reinterpret_cast<uint64_t>(&psxRegs.iopNextEventCycle));
+				m.Ldr(w1, MemOperand(x11));
+				m.Subs(w0, w0, w1); // (s32)(cycle - iopNextEventCycle)
+				m.B(&skip, mi);     // not due yet
+				m.Mov(x16, reinterpret_cast<uint64_t>(&iopEventTest));
+				m.Blr(x16);
+				m.Bind(&skip);
+			}
+			else
+			{
+				m.Mov(x16, reinterpret_cast<uint64_t>(&iopEventTest));
+				m.Blr(x16);
+			}
+		};
+
 		if (uncond)
 		{
 			if (is_jr) StorePC(m, w21);
 			else { m.Mov(w0, tconst); StorePC(m, w0); }
-			m.Mov(x16, reinterpret_cast<uint64_t>(&iopEventTest)); m.Blr(x16);
+			EmitIopEventTest();
 		}
 		else
 		{
@@ -550,7 +579,7 @@ namespace
 			StorePC(m, w0);
 			Label not_taken;
 			m.B(&not_taken, InvertCondition(cond));
-			m.Mov(x16, reinterpret_cast<uint64_t>(&iopEventTest)); m.Blr(x16);
+			EmitIopEventTest();
 			m.Bind(&not_taken);
 		}
 		EmitEpilogue(m);
