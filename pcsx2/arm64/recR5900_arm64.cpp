@@ -119,6 +119,12 @@ namespace
 	constexpr u32 kRamWords = kRamBytes >> 2;
 	BlockFn*      s_lut      = nullptr;
 
+	// C.40: chained blocks keep the 80-byte frame (and x19) live and jump
+	// straight to the successor's body; only the return to the C++ dispatcher
+	// pops the frame. The chain entry point skips the prologue, whose size is
+	// therefore fixed: Sub + 5*Stp + exactly-4-instruction x19 materialization.
+	constexpr u32 kChainEntryOffset = (1 + 5 + 4) * 4;
+
 	inline u32  Norm(u32 a)  { return a & 0x1fffffff; }
 	inline bool InRam(u32 np) { return np < kRamBytes; }
 	inline void LutClearAll() { if (s_lut) madvise(s_lut, (size_t)kRamWords * sizeof(BlockFn), MADV_DONTNEED); }
@@ -1898,17 +1904,19 @@ namespace
 	// chain, so the final `ret` returns to the C++ caller.
 	void EmitChainEpilogue(MacroAssembler& m)
 	{
+#ifdef EE_PC_SAMPLE
 		m.Ldp(x19, x20, MemOperand(sp, 0));
 		m.Ldp(x21, x30, MemOperand(sp, 16));
 		m.Ldp(x22, x23, MemOperand(sp, 32));
 		m.Ldp(x24, x25, MemOperand(sp, 48));
 		m.Ldp(x26, x27, MemOperand(sp, 64));
 		m.Add(sp, sp, 80);
-
-#ifdef EE_PC_SAMPLE
 		m.Ret(); // TEMP: disable block-linking so every block returns to the dispatcher (PC sampling)
 		return;
 #endif
+		// C.40: try to chain FIRST, with the frame (and x19) still live --
+		// the successor's chain entry skips its prologue, so back-to-back
+		// blocks pay no frame pop/push or x19 rematerialization.
 		m.Mov(x0, reinterpret_cast<uint64_t>(&cpuRegs.pc));
 		m.Ldr(w1, MemOperand(x0));          // pc
 		m.And(w2, w1, 0x1fffffff);          // np = pc & mirror mask
@@ -1921,8 +1929,15 @@ namespace
 		m.Lsr(w2, w2, 2);                   // idx = np >> 2
 		m.Ldr(x3, MemOperand(x0, w2, UXTW, 3)); // fn = s_lut[idx]
 		m.Cbz(x3, &ret_path);               // uncompiled -> return
-		m.Br(x3);                           // tail-jump to next block
+		m.Add(x3, x3, kChainEntryOffset);   // skip the successor's prologue
+		m.Br(x3);                           // tail-jump to next block's body
 		m.Bind(&ret_path);
+		m.Ldp(x19, x20, MemOperand(sp, 0));
+		m.Ldp(x21, x30, MemOperand(sp, 16));
+		m.Ldp(x22, x23, MemOperand(sp, 32));
+		m.Ldp(x24, x25, MemOperand(sp, 48));
+		m.Ldp(x26, x27, MemOperand(sp, 64));
+		m.Add(sp, sp, 80);
 		m.Ret();
 	}
 
@@ -2362,7 +2377,16 @@ namespace
 		masm.Stp(x22, x23, MemOperand(sp, 32));
 		masm.Stp(x24, x25, MemOperand(sp, 48));
 		masm.Stp(x26, x27, MemOperand(sp, 64));
-		masm.Mov(gpr, reinterpret_cast<uint64_t>(&cpuRegs.GPR.r[0]));
+		{
+			// Exactly 4 instructions so kChainEntryOffset stays constant
+			// (VIXL's Mov would shrink the sequence for compressible values).
+			const uint64_t gv = reinterpret_cast<uint64_t>(&cpuRegs.GPR.r[0]);
+			vixl::ExactAssemblyScope scope(&masm, 4 * kInstructionSize);
+			masm.movz(gpr, gv & 0xffff);
+			masm.movk(gpr, (gv >> 16) & 0xffff, 16);
+			masm.movk(gpr, (gv >> 32) & 0xffff, 32);
+			masm.movk(gpr, (gv >> 48) & 0xffff, 48);
+		}
 
 		// TEMP diagnostic (LRPS2_EXCLOG): only the EE exception vector blocks
 		// (pc 0x8000_0180/0200) call eeLogExc, dumping COP0 Cause/EPC + cycle.
