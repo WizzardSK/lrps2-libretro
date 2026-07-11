@@ -2158,6 +2158,45 @@ namespace
 			}
 		};
 
+		// C.39: inline the default-cycle-rate body of intUpdateCPUCycles
+		// (cycle += max(1, cpuBlockCycles >> 3); cpuBlockCycles &= 7) into the
+		// block tail — it runs on every block exit and the call was 4.3% of
+		// CPU time. Any non-zero EECycleRate falls back to the helper, checked
+		// at runtime so settings changes need no block flush.
+		// LRPS2_NO_INLINE_UPD=1 restores the call.
+		static const bool upd_inline = getenv("LRPS2_NO_INLINE_UPD") == nullptr;
+		const auto EmitUpdateCycles = [&m, upd]()
+		{
+			if (upd_inline)
+			{
+				Label slow, done;
+				m.Mov(x10, reinterpret_cast<uint64_t>(&EmuConfig.Speedhacks.EECycleRate));
+				m.Ldrsb(w1, MemOperand(x10));
+				m.Cbnz(w1, &slow);
+				m.Mov(x10, reinterpret_cast<uint64_t>(&cpuBlockCycles));
+				m.Ldr(w0, MemOperand(x10));
+				m.Lsr(w2, w0, 3);
+				m.Cmp(w2, 0);
+				m.Csinc(w2, w2, wzr, ne); // max(1, cpuBlockCycles >> 3)
+				m.Mov(x11, reinterpret_cast<uint64_t>(&cpuRegs.cycle));
+				m.Ldr(w3, MemOperand(x11));
+				m.Add(w3, w3, w2);
+				m.Str(w3, MemOperand(x11));
+				m.And(w0, w0, 7);
+				m.Str(w0, MemOperand(x10));
+				m.B(&done);
+				m.Bind(&slow);
+				m.Mov(x16, upd);
+				m.Blr(x16);
+				m.Bind(&done);
+			}
+			else
+			{
+				m.Mov(x16, upd);
+				m.Blr(x16);
+			}
+		};
+
 		// WaitLoop speedhack for the EE kernel idle loop at 0x81fc0 (6 nops +
 		// `beq zero,zero,-6`): the interpreter fast-forwards cpuRegs.cycle to
 		// nextEventCycle when spinning there (_doBranch_shared, gated on
@@ -2195,7 +2234,7 @@ namespace
 			EmitCycleBookkeeping(m, cyc_taken);
 			if (is_jr) StorePC(m, w20); else StorePCImm(m, tconst);
 			s_rc.FlushDirty(m, gpr); // block exit: the next block reads GPR memory
-			m.Mov(x16, upd); m.Blr(x16);
+			EmitUpdateCycles();
 			if (idle_skip) EmitIdleSkip();
 			EmitEventTest();
 			EmitChainEpilogue(m);
@@ -2239,7 +2278,7 @@ namespace
 		EmitCycleBookkeeping(m, cyc_taken);
 		StorePCImm(m, tconst);
 		s_rc.FlushDirty(m, gpr); // block exit (taken)
-		m.Mov(x16, upd); m.Blr(x16);
+		EmitUpdateCycles();
 		if (idle_skip) EmitIdleSkip();
 		EmitEventTest();
 		EmitChainEpilogue(m);
