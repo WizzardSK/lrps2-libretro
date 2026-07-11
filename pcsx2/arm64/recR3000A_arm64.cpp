@@ -256,22 +256,52 @@ namespace
 			case 0x20: case 0x24: case 0x21: case 0x25: case 0x23:
 			{
 				LoadGpr(m, w0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
-				uint64_t fn = (op == 0x23) ? reinterpret_cast<uint64_t>(&iopMemRead32)
+				const uint64_t fn = (op == 0x23) ? reinterpret_cast<uint64_t>(&iopMemRead32)
 				            : (op == 0x21 || op == 0x25) ? reinterpret_cast<uint64_t>(&iopMemRead16)
 				            : reinterpret_cast<uint64_t>(&iopMemRead8);
-				m.Mov(x16, fn); m.Blr(x16);
-				if (rt)
+				// C.36 fastmem: IOP main RAM is the first 8MB of physical
+				// space (2MB mirrored 4x into one contiguous host buffer),
+				// and iopMemRead* only does LUT bookkeeping to reach it — the
+				// top runtime hotspot after the C.35 event gate (iopMemRead32
+				// 6.8% self). Inline the RAM read and keep the helper call
+				// for everything else (HW/SIF/ROM/unmapped). iopMem->Main is
+				// stable for the process lifetime, so it embeds as a code
+				// constant. The read happens even for rt==0 (IO side effects
+				// on the slow path), matching the interpreter.
+				static const bool iop_fastmem = getenv("LRPS2_NO_IOP_FASTMEM") == nullptr;
+				const bool fast = iop_fastmem && iopMem;
+				Label slow, done;
+				if (fast)
 				{
+					m.And(w1, w0, 0x1fffffff);           // physical address
+					m.Cmp(w1, 0x00800000);
+					m.B(&slow, hs);
+					m.And(w1, w1, 0x1fffff);             // 2MB mirror fold
+					m.Mov(x2, reinterpret_cast<uint64_t>(iopMem->Main));
 					switch (op)
 					{
-						case 0x20: m.Sxtb(w0, w0); break;
-						case 0x24: m.Uxtb(w0, w0); break;
-						case 0x21: m.Sxth(w0, w0); break;
-						case 0x25: m.Uxth(w0, w0); break;
-						default: break;
+						case 0x20: m.Ldrsb(w0, MemOperand(x2, x1)); break;
+						case 0x24: m.Ldrb (w0, MemOperand(x2, x1)); break;
+						case 0x21: m.Ldrsh(w0, MemOperand(x2, x1)); break;
+						case 0x25: m.Ldrh (w0, MemOperand(x2, x1)); break;
+						default:   m.Ldr  (w0, MemOperand(x2, x1)); break;
 					}
-					StoreGpr(m, w0, gpr, rt);
+					m.B(&done);
+					m.Bind(&slow);
 				}
+				m.Mov(x16, fn); m.Blr(x16);
+				switch (op) // helpers return u8/u16; normalize like the fast path
+				{
+					case 0x20: m.Sxtb(w0, w0); break;
+					case 0x24: m.Uxtb(w0, w0); break;
+					case 0x21: m.Sxth(w0, w0); break;
+					case 0x25: m.Uxth(w0, w0); break;
+					default: break;
+				}
+				if (fast)
+					m.Bind(&done);
+				if (rt)
+					StoreGpr(m, w0, gpr, rt);
 				return true;
 			}
 			case 0x28: case 0x29: case 0x2b:
