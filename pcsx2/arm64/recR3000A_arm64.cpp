@@ -553,21 +553,6 @@ namespace
 		if (op == 0x02 && (ds >> 16) == 0x2400)
 			return false;
 
-		// link (before the delay slot, unconditionally)
-		if (link > 0) { m.Mov(w0, bpc + 8); StoreGpr(m, w0, gpr, (u32)link); }
-		// snapshot condition operands / jr target before the delay slot can clobber them
-		if (two)   { LoadGpr(m, w20, gpr, rs); LoadGpr(m, w21, gpr, rt); }
-		else if (one) { LoadGpr(m, w20, gpr, rs); }
-		if (is_jr) { LoadGpr(m, w21, gpr, rs); }
-		// the always-executed delay slot
-		EmitSimple(m, gpr, ds);
-		// time: n_leading native ops + the branch + the delay slot
-		EmitCycleBookkeeping(m, n_leading + 2);
-		// Block exit: the chained successor reads GPR MEMORY; nothing after
-		// this point (Csel/StorePC/iopEventTest/epilogue) touches guest GPRs,
-		// and both conditional outcomes share this single exit path.
-		s_irc.FlushDirty(m, gpr);
-
 		// C.37: gate the event test on cycle >= iopNextEventCycle, like the
 		// upstream x86 IOP rec dispatcher (the interpreter tests on every
 		// taken branch; mirroring that made iopEventTest 5.9% of CPU time).
@@ -594,6 +579,79 @@ namespace
 				m.Blr(x16);
 			}
 		};
+
+		// C.47: the IOP kernel idle loop is a block that is nothing but `j <self>`
+		// with a nop delay slot, spinning until an interrupt arrives. It was the
+		// single hottest block in the emulator (18% of all JIT time on MMX7):
+		// every two guest cycles paid a full block tail plus a chain hop. The
+		// loop has no side effects, so instead of running it an iteration at a
+		// time, compute how many iterations would elapse before the next IOP
+		// event or the end of the cycle budget, whichever comes first, and apply
+		// them in one step. cycle and iopCycleEE land on exactly the values the
+		// spin would have produced when the event test next fires, so the
+		// emulated timing is unchanged -- this is not a speedhack.
+		// LRPS2_NO_IOP_IDLE=1 restores the per-iteration spin.
+		static const bool iop_idle_skip = getenv("LRPS2_NO_IOP_IDLE") == nullptr;
+		if (iop_idle_skip && op == 0x02 && n_leading == 0 && ds == 0 && tconst == bpc)
+		{
+			// k = EE cycles charged per iteration = (ICFG & 8 ? 9 : 8) * 2 insns
+			m.Mov(x10, reinterpret_cast<uint64_t>(&psxHu32(HW_ICFG)));
+			m.Ldr(w5, MemOperand(x10));
+			m.Mov(w6, 9 * 2); m.Mov(w7, 8 * 2);
+			m.Tst(w5, 8);
+			m.Csel(w5, w6, w7, ne);                       // w5 = k
+
+			m.Ldr(w0, RegsField(&psxRegs.cycle));             // w0 = cycle
+			m.Ldr(w1, RegsField(&psxRegs.iopNextEventCycle)); // w1 = next event
+			m.Ldr(w4, RegsField(&psxRegs.iopCycleEE));        // w4 = budget (> 0 on entry)
+
+			// iterations until the event gate fires: ceil((s32)(next - cycle) / 2),
+			// which is <= 0 when the event is already due.
+			m.Sub(w6, w1, w0);
+			m.Add(w6, w6, 1);
+			m.Asr(w6, w6, 1);
+
+			// iterations until the budget is spent: ceil(budget / k). The epilogue
+			// stops chaining once iopCycleEE <= 0, so this is where the spin ends.
+			m.Add(w7, w4, w5);
+			m.Sub(w7, w7, 1);
+			m.Udiv(w7, w7, w5);
+
+			// n = max(min(n_evt, n_bud), 1): always make at least one iteration of
+			// progress, so a due-but-not-yet-tested event cannot livelock the loop.
+			m.Cmp(w6, w7);
+			m.Csel(w2, w6, w7, lt);
+			m.Mov(w3, 1);
+			m.Cmp(w2, 1);
+			m.Csel(w2, w2, w3, gt);
+
+			m.Add(w0, w0, Operand(w2, LSL, 1));           // cycle += 2n
+			m.Str(w0, RegsField(&psxRegs.cycle));
+			m.Mul(w3, w2, w5);                            // k * n
+			m.Sub(w4, w4, w3);                            // iopCycleEE -= k*n
+			m.Str(w4, RegsField(&psxRegs.iopCycleEE));
+
+			m.Mov(w0, tconst);
+			StorePC(m, w0);
+			EmitIopEventTest();
+			EmitEpilogue(m);
+			return true;
+		}
+
+		// link (before the delay slot, unconditionally)
+		if (link > 0) { m.Mov(w0, bpc + 8); StoreGpr(m, w0, gpr, (u32)link); }
+		// snapshot condition operands / jr target before the delay slot can clobber them
+		if (two)   { LoadGpr(m, w20, gpr, rs); LoadGpr(m, w21, gpr, rt); }
+		else if (one) { LoadGpr(m, w20, gpr, rs); }
+		if (is_jr) { LoadGpr(m, w21, gpr, rs); }
+		// the always-executed delay slot
+		EmitSimple(m, gpr, ds);
+		// time: n_leading native ops + the branch + the delay slot
+		EmitCycleBookkeeping(m, n_leading + 2);
+		// Block exit: the chained successor reads GPR MEMORY; nothing after
+		// this point (Csel/StorePC/iopEventTest/epilogue) touches guest GPRs,
+		// and both conditional outcomes share this single exit path.
+		s_irc.FlushDirty(m, gpr);
 
 		if (uncond)
 		{
