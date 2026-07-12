@@ -1545,7 +1545,13 @@ namespace
 						return true;
 					default: return false;
 				}
+			// ADDI/DADDI (0x08/0x18): the R5900's overflow trap is dropped, exactly
+			// like the upstream x86 recompiler (recADDIU just calls recADDI, which
+			// never checks overflow -- no game relies on the exception). So they are
+			// emitted identically to ADDIU/DADDIU. C.42.
+			case 0x08: // ADDI
 			case 0x09: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(w1, (u32)simm); m.Add(d.W(), a.W(), w1); m.Sxtw(d, d.W()); FinishDst(m, gpr, rt, d); } return true; // ADDIU
+			case 0x18: // DADDI
 			case 0x19: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(x1, simm64); m.Add(d, a, x1); FinishDst(m, gpr, rt, d); } return true; // DADDIU
 			case 0x0a: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(x1, simm64); m.Cmp(a, x1); m.Cset(d, lt); FinishDst(m, gpr, rt, d); } return true; // SLTI
 			case 0x0b: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(x1, simm64); m.Cmp(a, x1); m.Cset(d, lo); FinishDst(m, gpr, rt, d); } return true; // SLTIU
@@ -1991,6 +1997,7 @@ namespace
 		}
 		switch (op)
 		{
+			case 0x08: case 0x18: // ADDI/DADDI (overflow trap dropped, like the x86 rec)
 			case 0x09: case 0x19: case 0x0a: case 0x0b: case 0x0c: case 0x0d: case 0x0e: case 0x0f:
 			case 0x33: // PREF (empty body)
 				return true;
