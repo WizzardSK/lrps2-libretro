@@ -2500,6 +2500,22 @@ namespace
 			break; // unsupported -> interpreter finishes the basic block
 		}
 
+		// C.44: the block-length cap (n == kMaxInsns) was reached with every op
+		// translated and no branch yet -- i.e. a straight-line run longer than
+		// kMaxInsns (unrolled copy/vector setup, common in MMX7). Don't hand the
+		// fully-translatable tail to the interpreter; end the block cleanly at p
+		// and let the chain continue translating from there. This was the #1
+		// "breaker" in the handoff stats (LD/SD/etc. sitting at position 64).
+		static const bool cap_chain = getenv("LRPS2_NO_CAP_CHAIN") == nullptr;
+		if (!done && n == kMaxInsns && cap_chain)
+		{
+			StorePCImm(masm, p);
+			EmitCycleBookkeeping(masm, cyc);
+			s_rc.FlushDirty(masm, gpr);
+			EmitChainEpilogue(masm);
+			done = true;
+		}
+
 		if (!done)
 		{
 			if (n > 0)

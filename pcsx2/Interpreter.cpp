@@ -203,41 +203,6 @@ static void execI(void)
 	const R5900::OPCODE& opcode = R5900::GetCurrentInstruction();
 	cpuBlockCycles += opcode.cycles * (2 - ((cpuRegs.CP0.n.Config >> 18) & 0x1));
 
-#ifdef ARCH_ARM64
-	// TEMP diagnostic (LRPS2_IHIST): histogram of interpreted opcodes, keyed by
-	// a (op<<8 | funct/rs) tag, dumped periodically. Finds which untranslatable
-	// instruction is breaking EE JIT blocks into interpreter tails.
-	{
-		static int on = -1;
-		if (on < 0) on = getenv("LRPS2_IHIST") ? 1 : 0;
-		if (on)
-		{
-			static std::unordered_map<u32, u64> hist;
-			static u64 nI = 0;
-			const u32 c = cpuRegs.code, o = c >> 26;
-			const u32 rs = (c >> 21) & 0x3f;
-			// SPECIAL/MMI key on funct; COP0/1/2 key on rs, except the CO-format
-			// (rs==0x10: TLB/ERET/EI/DI) which keys on funct so the specific op shows.
-			u32 sub = 0;
-			if (o == 0 || o == 0x1c) sub = c & 0x3f;
-			else if (o == 0x10 || o == 0x11 || o == 0x12) sub = (rs == 0x10) ? (0x40 | (c & 0x3f)) : rs;
-			const u32 tag = (o << 8) | sub;
-			hist[tag]++;
-			if (++nI % 4000000 == 0)
-			{
-				std::vector<std::pair<u32, u64>> v(hist.begin(), hist.end());
-				std::partial_sort(v.begin(), v.begin() + (v.size() < 16 ? v.size() : 16), v.end(),
-					[](auto& a, auto& b) { return a.second > b.second; });
-				fprintf(stderr, "=== interpreted-opcode histogram (total=%llu) ===\n", (unsigned long long)nI);
-				for (size_t i = 0; i < v.size() && i < 16; i++)
-					fprintf(stderr, "  op=%02x sub=%02x  %llu\n", v[i].first >> 8, v[i].first & 0xff,
-						(unsigned long long)v[i].second);
-				hist.clear();
-			}
-		}
-	}
-#endif
-
 	opcode.interpret();
 }
 
