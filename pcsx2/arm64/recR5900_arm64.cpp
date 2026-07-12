@@ -1909,6 +1909,29 @@ namespace
 				m.Bind(&skip);
 				return true;
 			}
+
+			// LQC2/SQC2 (0x36/0x3e): 128-bit VU0 register load/store. Both start
+			// with vu0Sync() (a VU0 state-machine catch-up that early-outs when
+			// VU0 is idle) then a 128-bit mem access to/from vuRegs[0].VF[ft]. The
+			// vu0Sync + alignment-exact memRead128/memWrite128 semantics are
+			// delicate, so these route through the inline interpreter-call path
+			// (like MFC0/EI) rather than a hand-emitted body -- the win is that the
+			// block no longer BREAKS here (top non-exception handoff cause in MMX7:
+			// LQC2 ~827K, SQC2 ~100K). C.45.
+			case 0x36:
+			{
+				static const bool no_vuqmem = getenv("LRPS2_NO_EE_VUQMEM") != nullptr;
+				if (no_load || no_vuqmem || eeDiag().no_interpcall) return false;
+				EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::LQC2);
+				return true;
+			}
+			case 0x3e:
+			{
+				static const bool no_vuqmem = getenv("LRPS2_NO_EE_VUQMEM") != nullptr;
+				if (no_store || no_vuqmem || eeDiag().no_interpcall) return false;
+				EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::SQC2);
+				return true;
+			}
 			default: return false;
 		}
 	}
@@ -2019,6 +2042,8 @@ namespace
 			case 0x2a: case 0x2e: case 0x2c: case 0x2d: // SWL/SWR/SDL/SDR
 				return !eeDiag().no_store;
 			case 0x1e: return !eeDiag().no_load && ((insn >> 16) & 31) != 0; // LQ (rt==0 -> interp)
+			case 0x36: case 0x3e: { static const bool nq = getenv("LRPS2_NO_EE_VUQMEM") != nullptr; // LQC2/SQC2 (inline interp call)
+				return !nq && !eeDiag().no_interpcall && (op == 0x36 ? !eeDiag().no_load : !eeDiag().no_store); }
 			case 0x37: return !eeDiag().no_load && !eeDiag().no_ld64; // LD
 			case 0x28: case 0x29: case 0x2b:
 				return !eeDiag().no_store;
