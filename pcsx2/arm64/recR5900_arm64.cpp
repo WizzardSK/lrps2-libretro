@@ -42,6 +42,7 @@
 // the analysis-flag plumbing they gate on.
 #include "arm64/AsmHelpers.h"
 #include "arm64/aR5900Analysis.h"
+#include "arm64/Profiler_arm64.h"
 #include "VUmicro.h" // _vu0FinishMicro
 
 bool recVUMacroIsMode0(u32 op);   // aVU_Macro.inl (classify COP2 SPECIAL ALU)
@@ -128,6 +129,20 @@ namespace
 	inline u32  Norm(u32 a)  { return a & 0x1fffffff; }
 	inline bool InRam(u32 np) { return np < kRamBytes; }
 	inline void LutClearAll() { if (s_lut) madvise(s_lut, (size_t)kRamWords * sizeof(BlockFn), MADV_DONTNEED); }
+
+	// C.46: the whole cpuRegisters struct sits within the ldr/str immediate
+	// window of the guest-reg base already pinned in x19, so reach its fields
+	// through it instead of materializing a 64-bit absolute address (4
+	// instructions) per access. Block tails touch pc/cycle/nextEventCycle
+	// repeatedly, so this is a large part of their code size. An offset outside
+	// the window would only make the MacroAssembler fall back to a scratch
+	// register, so this stays correct by construction.
+	inline MemOperand RegsField(const void* field)
+	{
+		const intptr_t off = reinterpret_cast<intptr_t>(field) -
+		                     reinterpret_cast<intptr_t>(&cpuRegs.GPR.r[0]);
+		return MemOperand(x19, static_cast<int64_t>(off));
+	}
 
 	bool VixlEmitSelfTest()
 	{
@@ -1271,9 +1286,8 @@ namespace
 		// The interp op body reads guest GPRs from memory (MTC0 rt, QFSRV
 		// rs/rt) -- write the dirty cache back first...
 		s_rc.FlushDirty(m, gpr);
-		m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.code));
 		m.Mov(w0, insn);
-		m.Str(w0, MemOperand(x10));
+		m.Str(w0, RegsField(&cpuRegs.code));
 		m.Mov(x16, reinterpret_cast<uint64_t>(fn));
 		m.Blr(x16);
 		// ...and it may also write any guest GPR directly (MFC0 rt, QFSRV rd):
@@ -1518,15 +1532,13 @@ namespace
 						if (rd)
 						{
 							const Register d = DstGpr(m, gpr, rd, x0);
-							m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.sa));
-							m.Ldr(d.W(), MemOperand(x10)); // 32-bit load zero-extends
+							m.Ldr(d.W(), RegsField(&cpuRegs.sa)); // 32-bit load zero-extends
 							FinishDst(m, gpr, rd, d);
 						}
 						return true;
 					case 0x29:
 						LoadGpr(m, x0, gpr, rs);
-						m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.sa));
-						m.Str(w0, MemOperand(x10));
+						m.Str(w0, RegsField(&cpuRegs.sa));
 						return true;
 					// MOVZ/MOVN: rd = rs when rt ==/!= 0 (full 64-bit compare),
 					// rd unchanged otherwise.
@@ -1570,7 +1582,7 @@ namespace
 				{
 					LoadGpr(m, x0, gpr, rs); m.And(w0, w0, 0xF);
 					m.Eor(w0, w0, (u32)(zimm & 0xF));
-					m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.sa)); m.Str(w0, MemOperand(x10));
+					m.Str(w0, RegsField(&cpuRegs.sa));
 					return true;
 				}
 				if (rtf == 0x19) // MTSAH: sa = ((rs.UL[0] & 0x7) ^ (imm & 0x7)) << 1
@@ -1578,7 +1590,7 @@ namespace
 					LoadGpr(m, x0, gpr, rs); m.And(w0, w0, 0x7);
 					m.Eor(w0, w0, (u32)(zimm & 0x7));
 					m.Lsl(w0, w0, 1);
-					m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.sa)); m.Str(w0, MemOperand(x10));
+					m.Str(w0, RegsField(&cpuRegs.sa));
 					return true;
 				}
 				return false; // branches -> EmitBranch
@@ -1957,8 +1969,7 @@ namespace
 		// C.40: try to chain FIRST, with the frame (and x19) still live --
 		// the successor's chain entry skips its prologue, so back-to-back
 		// blocks pay no frame pop/push or x19 rematerialization.
-		m.Mov(x0, reinterpret_cast<uint64_t>(&cpuRegs.pc));
-		m.Ldr(w1, MemOperand(x0));          // pc
+		m.Ldr(w1, RegsField(&cpuRegs.pc)); // pc
 		m.And(w2, w1, 0x1fffffff);          // np = pc & mirror mask
 		m.Mov(w3, kRamBytes);
 		Label ret_path;
@@ -2058,8 +2069,7 @@ namespace
 	// (2 - CP0.Config[18]) factor is applied here, matching execI.
 	void EmitCycleBookkeeping(MacroAssembler& m, int cyc)
 	{
-		m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.CP0.n.Config));
-		m.Ldr(w1, MemOperand(x10));
+		m.Ldr(w1, RegsField(&cpuRegs.CP0.n.Config));
 		m.Mov(w2, cyc); m.Mov(w3, cyc * 2);
 		m.Tst(w1, 1u << 18);
 		m.Csel(w2, w2, w3, ne);
@@ -2069,8 +2079,7 @@ namespace
 
 	inline void StorePC(MacroAssembler& m, const Register& wsrc)
 	{
-		m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.pc));
-		m.Str(wsrc, MemOperand(x10));
+		m.Str(wsrc, RegsField(&cpuRegs.pc));
 	}
 	inline void StorePCImm(MacroAssembler& m, u32 v) { m.Mov(w0, v); StorePC(m, w0); }
 
@@ -2200,10 +2209,8 @@ namespace
 			if (evt_gate)
 			{
 				Label skip;
-				m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.cycle));
-				m.Ldr(w0, MemOperand(x10));
-				m.Mov(x11, reinterpret_cast<uint64_t>(&cpuRegs.nextEventCycle));
-				m.Ldr(w1, MemOperand(x11));
+				m.Ldr(w0, RegsField(&cpuRegs.cycle));
+				m.Ldr(w1, RegsField(&cpuRegs.nextEventCycle));
 				m.Subs(w0, w0, w1); // (s32)(cycle - nextEventCycle)
 				m.B(&skip, mi);     // not due yet
 				m.Mov(x16, evt);
@@ -2237,10 +2244,9 @@ namespace
 				m.Lsr(w2, w0, 3);
 				m.Cmp(w2, 0);
 				m.Csinc(w2, w2, wzr, ne); // max(1, cpuBlockCycles >> 3)
-				m.Mov(x11, reinterpret_cast<uint64_t>(&cpuRegs.cycle));
-				m.Ldr(w3, MemOperand(x11));
+				m.Ldr(w3, RegsField(&cpuRegs.cycle));
 				m.Add(w3, w3, w2);
-				m.Str(w3, MemOperand(x11));
+				m.Str(w3, RegsField(&cpuRegs.cycle));
 				m.And(w0, w0, 7);
 				m.Str(w0, MemOperand(x10));
 				m.B(&done);
@@ -2270,13 +2276,11 @@ namespace
 		const auto EmitIdleSkip = [&m]()
 		{
 			Label skip;
-			m.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.cycle));
-			m.Mov(x11, reinterpret_cast<uint64_t>(&cpuRegs.nextEventCycle));
-			m.Ldr(w0, MemOperand(x10));
-			m.Ldr(w1, MemOperand(x11));
+			m.Ldr(w0, RegsField(&cpuRegs.cycle));
+			m.Ldr(w1, RegsField(&cpuRegs.nextEventCycle));
 			m.Cmp(w1, w0);
 			m.B(&skip, eq);
-			m.Str(w1, MemOperand(x10)); // cycle = nextEventCycle
+			m.Str(w1, RegsField(&cpuRegs.cycle)); // cycle = nextEventCycle
 			m.Bind(&skip);
 		};
 
@@ -2545,8 +2549,7 @@ namespace
 		{
 			if (n > 0)
 			{
-				masm.Mov(x10, reinterpret_cast<uint64_t>(&cpuRegs.pc));
-				masm.Ldr(w0, MemOperand(x10)); masm.Add(w0, w0, 4 * n); masm.Str(w0, MemOperand(x10));
+				masm.Ldr(w0, RegsField(&cpuRegs.pc)); masm.Add(w0, w0, 4 * n); masm.Str(w0, RegsField(&cpuRegs.pc));
 				EmitCycleBookkeeping(masm, cyc);
 			}
 			// The interpreter tail reads AND writes guest GPR memory: flush the
@@ -2564,6 +2567,7 @@ namespace
 		const size_t sz = masm.GetSizeOfCodeGenerated();
 		__builtin___clear_cache(reinterpret_cast<char*>(start), reinterpret_cast<char*>(start + sz));
 		s_code_pos += (sz + 15) & ~size_t(15);
+		ArmProf::NoteBlock("ee-jit", start, sz, pc);
 
 		BlockFn fn = reinterpret_cast<BlockFn>(start);
 		// Native code covers the leading translated run; a translated branch also
@@ -2576,6 +2580,36 @@ namespace
 			for (u32 q = 0; q < (u32)rec.src.size(); q++)
 				rec.src[q] = memRead32(pc + q * 4);
 		}
+		// TEMP tooling (C.46 code-quality work): LRPS2_DUMP_HOST=0x<guest pc>
+		// writes this block's emitted host code and its guest source words next
+		// to each other, for offline disassembly (objdump -b binary -m aarch64).
+		if (const char* want = getenv("LRPS2_DUMP_HOST"))
+		{
+			if (Norm((u32)strtoul(want, nullptr, 0)) == ns)
+			{
+				char path[128];
+				snprintf(path, sizeof(path), "/tmp/eeblk_%08x.host.bin", ns);
+				if (FILE* f = fopen(path, "wb"))
+				{
+					fwrite(start, 1, sz, f);
+					fclose(f);
+				}
+				snprintf(path, sizeof(path), "/tmp/eeblk_%08x.guest.bin", ns);
+				if (FILE* f = fopen(path, "wb"))
+				{
+					const u32 nwords = (ne > ns) ? (ne - ns) >> 2 : 0;
+					for (u32 q = 0; q < nwords; q++)
+					{
+						const u32 w = memRead32(pc + q * 4);
+						fwrite(&w, 4, 1, f);
+					}
+					fclose(f);
+				}
+				fprintf(stderr, "[dump-host] guest 0x%08x: %zu host bytes, %u guest insns\n",
+					ns, sz, (ne > ns) ? (ne - ns) >> 2 : 0);
+			}
+		}
+
 		s_blocks[pc] = std::move(rec); // overwrites a dead record after SMC
 		if (InRam(ns)) s_lut[ns >> 2] = fn;
 		RegisterPages(pc, ns, ne);
@@ -2644,6 +2678,7 @@ void eeJitReserve_arm64(void)
 		if (s_lut == MAP_FAILED) s_lut = nullptr;
 	}
 	s_ok = s_ok && s_code && s_lut;
+	ArmProf::RegisterRegion("ee-jit", s_code, kCodeCacheSize);
 	Console.WriteLn("arm64 EE rec (C.7): %s.", s_ok ? "native ALU+mem+branch+FPU-mov+MMI+muldiv JIT (block-linking)" : "FAILED");
 }
 
@@ -2737,6 +2772,8 @@ extern "C" void eeJitDebugLocate_arm64(uintptr_t pc)
 
 extern "C" void eeJitRunBlock_arm64(void)
 {
+	ArmProf::AttachThread("EE");
+
 	// TEMP DEBUG (C.24 crash hunt): identify the EE-dispatch thread once.
 	if (getenv("LRPS2_FAULT_LOG"))
 	{

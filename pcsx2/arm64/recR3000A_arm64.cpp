@@ -31,6 +31,8 @@
 
 #include "aarch64/macro-assembler-aarch64.h"
 
+#include "arm64/Profiler_arm64.h"
+
 using namespace vixl::aarch64;
 
 extern "C" void iopRunBasicBlock_arm64(void);
@@ -439,18 +441,30 @@ namespace
 		}
 	}
 
+	// C.46: every psxRegisters field lives a short, constant distance from the
+	// guest-reg base already pinned in x19, so reach them through it instead of
+	// materializing a 64-bit absolute address (4 instructions) per access. The
+	// block tail touches pc/cycle/iopCycleEE/iopNextEventCycle several times
+	// each, so this is most of the tail's code size. Offsets are well inside the
+	// ldr/str immediate window; if one ever isn't, the MacroAssembler falls back
+	// to a scratch register on its own, so this stays correct by construction.
+	inline MemOperand RegsField(const void* field)
+	{
+		const intptr_t off = reinterpret_cast<intptr_t>(field) -
+		                     reinterpret_cast<intptr_t>(&psxRegs.GPR.r[0]);
+		return MemOperand(x19, static_cast<int64_t>(off));
+	}
+
 	// cycle += count ; iopCycleEE -= (ICFG&8 ? 9 : 8) * count
 	void EmitCycleBookkeeping(MacroAssembler& m, int count)
 	{
-		m.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.cycle));
-		m.Ldr(w0, MemOperand(x10)); m.Add(w0, w0, count); m.Str(w0, MemOperand(x10));
+		m.Ldr(w0, RegsField(&psxRegs.cycle)); m.Add(w0, w0, count); m.Str(w0, RegsField(&psxRegs.cycle));
 		m.Mov(x10, reinterpret_cast<uint64_t>(&psxHu32(HW_ICFG)));
 		m.Ldr(w1, MemOperand(x10));
 		m.Mov(w2, 9 * count); m.Mov(w3, 8 * count);
 		m.Tst(w1, 8);
 		m.Csel(w2, w2, w3, ne);
-		m.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.iopCycleEE));
-		m.Ldr(w0, MemOperand(x10)); m.Sub(w0, w0, w2); m.Str(w0, MemOperand(x10));
+		m.Ldr(w0, RegsField(&psxRegs.iopCycleEE)); m.Sub(w0, w0, w2); m.Str(w0, RegsField(&psxRegs.iopCycleEE));
 	}
 
 	// Restore the frame, then tail-chain straight to the next block via the RAM LUT
@@ -463,12 +477,10 @@ namespace
 		// successor's chain entry skips its prologue. Only the return to
 		// recExecuteBlock pops the frame.
 		Label ret_path;
-		m.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.iopCycleEE));
-		m.Ldr(w0, MemOperand(x10));
+		m.Ldr(w0, RegsField(&psxRegs.iopCycleEE));
 		m.Cmp(w0, 0);
 		m.B(&ret_path, le);                  // budget exhausted -> return to dispatcher
-		m.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.pc));
-		m.Ldr(w1, MemOperand(x10));
+		m.Ldr(w1, RegsField(&psxRegs.pc));
 		m.And(w2, w1, 0x1fffffff);
 		m.Mov(w3, kRamBytes);
 		m.Cmp(w2, w3);
@@ -492,8 +504,7 @@ namespace
 
 	inline void StorePC(MacroAssembler& m, const Register& wsrc)
 	{
-		m.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.pc));
-		m.Str(wsrc, MemOperand(x10));
+		m.Str(wsrc, RegsField(&psxRegs.pc));
 	}
 
 	// Translate a branch/jump (ending the block). Returns false, emitting nothing,
@@ -569,10 +580,8 @@ namespace
 			if (iop_evt_gate)
 			{
 				Label skip;
-				m.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.cycle));
-				m.Ldr(w0, MemOperand(x10));
-				m.Mov(x11, reinterpret_cast<uint64_t>(&psxRegs.iopNextEventCycle));
-				m.Ldr(w1, MemOperand(x11));
+				m.Ldr(w0, RegsField(&psxRegs.cycle));
+				m.Ldr(w1, RegsField(&psxRegs.iopNextEventCycle));
 				m.Subs(w0, w0, w1); // (s32)(cycle - iopNextEventCycle)
 				m.B(&skip, mi);     // not due yet
 				m.Mov(x16, reinterpret_cast<uint64_t>(&iopEventTest));
@@ -657,8 +666,7 @@ namespace
 		{
 			if (n > 0)
 			{
-				masm.Mov(x10, reinterpret_cast<uint64_t>(&psxRegs.pc));
-				masm.Ldr(w0, MemOperand(x10)); masm.Add(w0, w0, 4 * n); masm.Str(w0, MemOperand(x10));
+				masm.Ldr(w0, RegsField(&psxRegs.pc)); masm.Add(w0, w0, 4 * n); masm.Str(w0, RegsField(&psxRegs.pc));
 				EmitCycleBookkeeping(masm, n);
 			}
 			// The interpreter tail reads AND writes guest GPR memory.
@@ -673,11 +681,40 @@ namespace
 		const size_t sz = masm.GetSizeOfCodeGenerated();
 		__builtin___clear_cache(reinterpret_cast<char*>(start), reinterpret_cast<char*>(start + sz));
 		s_code_pos += (sz + 15) & ~size_t(15);
+		ArmProf::NoteBlock("iop-jit", start, sz, pc);
 
 		BlockFn fn = reinterpret_cast<BlockFn>(start);
 		// Native code covers the leading run; a translated branch also bakes the
 		// branch + delay slot (p still points at the branch instruction there).
 		const u32 ns = Norm(pc), ne = Norm(done ? p + 8 : p);
+
+		// TEMP tooling (C.46): LRPS2_DUMP_HOST_IOP=0x<guest pc> writes the emitted
+		// host code and the guest source words for offline disassembly.
+		if (const char* want = getenv("LRPS2_DUMP_HOST_IOP"))
+		{
+			if (Norm((u32)strtoul(want, nullptr, 0)) == ns)
+			{
+				char path[128];
+				snprintf(path, sizeof(path), "/tmp/iopblk_%08x.host.bin", ns);
+				if (FILE* f = fopen(path, "wb"))
+				{
+					fwrite(start, 1, sz, f);
+					fclose(f);
+				}
+				snprintf(path, sizeof(path), "/tmp/iopblk_%08x.guest.bin", ns);
+				if (FILE* f = fopen(path, "wb"))
+				{
+					for (u32 q = 0; ns + q * 4 < ne; q++)
+					{
+						const u32 w = iopMemRead32(pc + q * 4);
+						fwrite(&w, 4, 1, f);
+					}
+					fclose(f);
+				}
+				fprintf(stderr, "[dump-iop] guest 0x%08x: %zu host bytes, %u guest insns\n",
+					ns, sz, (ne > ns) ? (ne - ns) >> 2 : 0);
+			}
+		}
 		s_blocks.emplace(pc, BlockRec{fn, ne});
 		if (InRam(ns)) s_lut[ns >> 2] = fn;
 		if (ne > ns)
@@ -719,6 +756,7 @@ static void recReserve(void)
 		if (s_lut == MAP_FAILED) s_lut = nullptr;
 	}
 	s_ok = s_ok && s_code && s_lut;
+	ArmProf::RegisterRegion("iop-jit", s_code, kCodeCacheSize);
 	Console.WriteLn("arm64 IOP rec (C.2b-4): %s.", s_ok ? "native ALU+mem+branch JIT active" : "FAILED -> interpreter fallback");
 }
 
