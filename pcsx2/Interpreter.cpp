@@ -215,8 +215,13 @@ static void execI(void)
 			static std::unordered_map<u32, u64> hist;
 			static u64 nI = 0;
 			const u32 c = cpuRegs.code, o = c >> 26;
-			const u32 tag = (o << 8) | ((o == 0 || o == 0x10 || o == 0x11 || o == 0x12 || o == 0x1c)
-				? ((o == 0) ? (c & 0x3f) : ((c >> 21) & 0x3f)) : 0);
+			const u32 rs = (c >> 21) & 0x3f;
+			// SPECIAL/MMI key on funct; COP0/1/2 key on rs, except the CO-format
+			// (rs==0x10: TLB/ERET/EI/DI) which keys on funct so the specific op shows.
+			u32 sub = 0;
+			if (o == 0 || o == 0x1c) sub = c & 0x3f;
+			else if (o == 0x10 || o == 0x11 || o == 0x12) sub = (rs == 0x10) ? (0x40 | (c & 0x3f)) : rs;
+			const u32 tag = (o << 8) | sub;
 			hist[tag]++;
 			if (++nI % 4000000 == 0)
 			{

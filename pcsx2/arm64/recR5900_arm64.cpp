@@ -1870,6 +1870,17 @@ namespace
 				if (eeDiag().no_interpcall || icDiag().no_cop0) return false;
 				if (rs == 0x00) { EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::COP0::MFC0); return true; }
 				if (rs == 0x04) { EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::COP0::MTC0); return true; }
+				// CO-format EI/DI (funct 0x38/0x39), C.43: both just conditionally
+				// toggle the COP0 Status EIE bit -- no memory, no control flow. EI
+				// also lowers nextEventCycle, which the next branch's event gate
+				// (C.35) picks up, matching the interpreter (whose EI does the same
+				// and only checks events at the next branch). Unlike the x86 rec,
+				// the block is NOT force-ended after EI: the interpreter doesn't
+				// either. DI here is immediate (the interpreter's DI is too; the
+				// x86 rec's one-instruction delay is a rec-only quirk). ERET/TLB
+				// (control flow / TLB state) stay interpreter handoffs.
+				if (rs == 0x10 && funct == 0x38) { EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::COP0::EI); return true; }
+				if (rs == 0x10 && funct == 0x39) { EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::COP0::DI); return true; }
 				return false;
 
 			// LWC1 ft, off(base): fpr[ft].UL = read32(addr). Unlike integer LW, a
@@ -1990,10 +2001,11 @@ namespace
 		if (op == 0x12) // COP2: all but BC2 (branches -> EmitBranch)
 		return ((insn >> 21) & 31) != 0x08 && !eeDiag().no_interpcall && !icDiag().no_cop2;
 	if (op == 0x2f) return !eeDiag().no_interpcall && !icDiag().no_cache; // CACHE
-		if (op == 0x10) // COP0: MFC0/MTC0 only
+		if (op == 0x10) // COP0: MFC0/MTC0 + CO-format EI/DI
 		{
-			const u32 crs = (insn >> 21) & 31;
-			return !eeDiag().no_interpcall && !icDiag().no_cop0 && (crs == 0x00 || crs == 0x04);
+			const u32 crs = (insn >> 21) & 31, cf = insn & 0x3f;
+			return !eeDiag().no_interpcall && !icDiag().no_cop0 &&
+			       (crs == 0x00 || crs == 0x04 || (crs == 0x10 && (cf == 0x38 || cf == 0x39)));
 		}
 		switch (op)
 		{
