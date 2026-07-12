@@ -254,7 +254,7 @@ namespace
 					}
 					default: return false;
 				}
-			case 0x09: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, (u32)simm); m.Add(w0, w0, w1); StoreGpr(m, w0, gpr, rt); } return true;
+			case 0x09: if (rt) { LoadGpr(m, w0, gpr, rs); m.Add(w0, w0, simm); StoreGpr(m, w0, gpr, rt); } return true;
 			case 0x0a: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, (u32)simm); m.Cmp(w0, w1); m.Cset(w0, lt); StoreGpr(m, w0, gpr, rt); } return true;
 			case 0x0b: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, (u32)simm); m.Cmp(w0, w1); m.Cset(w0, lo); StoreGpr(m, w0, gpr, rt); } return true;
 			case 0x0c: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, zimm); m.And(w0, w0, w1); StoreGpr(m, w0, gpr, rt); } return true;
@@ -264,7 +264,7 @@ namespace
 
 			case 0x20: case 0x24: case 0x21: case 0x25: case 0x23:
 			{
-				LoadGpr(m, w0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				LoadGpr(m, w0, gpr, rs); m.Add(w0, w0, simm);
 				const uint64_t fn = (op == 0x23) ? reinterpret_cast<uint64_t>(&iopMemRead32)
 				            : (op == 0x21 || op == 0x25) ? reinterpret_cast<uint64_t>(&iopMemRead16)
 				            : reinterpret_cast<uint64_t>(&iopMemRead8);
@@ -315,7 +315,7 @@ namespace
 			}
 			case 0x28: case 0x29: case 0x2b:
 			{
-				LoadGpr(m, w0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				LoadGpr(m, w0, gpr, rs); m.Add(w0, w0, simm);
 				LoadGpr(m, w1, gpr, rt);
 				uint64_t fn = (op == 0x2b) ? reinterpret_cast<uint64_t>(&iopMemWrite32)
 				            : (op == 0x29) ? reinterpret_cast<uint64_t>(&iopMemWrite16)
@@ -333,11 +333,11 @@ namespace
 			// LSLV/LSRV mod-32 semantics never bite.
 			case 0x22: case 0x26:
 			{
-				LoadGpr(m, w0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				LoadGpr(m, w0, gpr, rs); m.Add(w0, w0, simm);
 				m.And(w0, w0, 0xfffffffc);
 				m.Mov(x16, reinterpret_cast<uint64_t>(&iopMemRead32)); m.Blr(x16);
 				if (!rt) return true;
-				LoadGpr(m, w1, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w1, w1, w2);
+				LoadGpr(m, w1, gpr, rs); m.Add(w1, w1, simm);
 				m.And(w1, w1, 3); m.Lsl(w1, w1, 3); // shift
 				LoadGpr(m, w2, gpr, rt);            // old rt
 				if (op == 0x22) // LWL: rt = (rt & (0x00ffffff >> shift)) | (mem << (24-shift))
@@ -360,10 +360,10 @@ namespace
 			// word, psxSWL/psxSWR semantics; two helper calls).
 			case 0x2a: case 0x2e:
 			{
-				LoadGpr(m, w0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				LoadGpr(m, w0, gpr, rs); m.Add(w0, w0, simm);
 				m.And(w0, w0, 0xfffffffc);
 				m.Mov(x16, reinterpret_cast<uint64_t>(&iopMemRead32)); m.Blr(x16);
-				LoadGpr(m, w1, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w1, w1, w2);
+				LoadGpr(m, w1, gpr, rs); m.Add(w1, w1, simm);
 				m.And(w1, w1, 3); m.Lsl(w1, w1, 3); // shift
 				LoadGpr(m, w2, gpr, rt);
 				if (op == 0x2a) // SWL: mem' = (rt >> (24-shift)) | (mem & (0xffffff00 << shift))
@@ -378,7 +378,7 @@ namespace
 					m.Mov(w4, 0x00ffffffu); m.Lsr(w4, w4, w3); m.And(w0, w0, w4);
 				}
 				m.Orr(w1, w0, w2); // value
-				LoadGpr(m, w0, gpr, rs); m.Mov(w2, (u32)simm); m.Add(w0, w0, w2);
+				LoadGpr(m, w0, gpr, rs); m.Add(w0, w0, simm);
 				m.And(w0, w0, 0xfffffffc);
 				m.Mov(x16, reinterpret_cast<uint64_t>(&iopMemWrite32)); m.Blr(x16);
 				return true;

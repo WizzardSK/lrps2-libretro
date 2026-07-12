@@ -1603,7 +1603,7 @@ namespace
 			case 0x20: case 0x24: case 0x21: case 0x25: case 0x23: case 0x27: case 0x37:
 			{
 				if (no_load || (no_ld64 && op == 0x37)) return false;
-				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				const u32 amask = (op == 0x37) ? 7 : (op == 0x23 || op == 0x27) ? 3 : (op == 0x21 || op == 0x25) ? 1 : 0;
 				if (amask)
 			{
@@ -1662,7 +1662,7 @@ namespace
 			case 0x22: case 0x26: case 0x1a: case 0x1b:
 			{
 				if (no_load) return false;
-				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				m.Mov(w1, rt);
 				s_rc.FlushReg(m, gpr, rt); // the helper READS GPR[rt] for the merge
 				const uint64_t fn = (op == 0x22) ? reinterpret_cast<uint64_t>(&eeLWL_arm64)
@@ -1678,7 +1678,7 @@ namespace
 			case 0x2a: case 0x2e: case 0x2c: case 0x2d:
 			{
 				if (no_store) return false;
-				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				m.Mov(w1, rt);
 				s_rc.FlushReg(m, gpr, rt); // the helper reads GPR[rt] from memory
 				const uint64_t fn = (op == 0x2a) ? reinterpret_cast<uint64_t>(&eeSWL_arm64)
@@ -1692,7 +1692,7 @@ namespace
 			case 0x28: case 0x29: case 0x2b: case 0x3f:
 			{
 				if (no_store || (no_ld64 && op == 0x3f)) return false;
-				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				const u32 amask = (op == 0x3f) ? 7 : (op == 0x2b) ? 3 : (op == 0x29) ? 1 : 0;
 				if (amask)
 			{
@@ -1745,7 +1745,7 @@ namespace
 			case 0x1e: // LQ
 			{
 				if (no_load || !rt) return false; // rt==0: rare, leave to interp
-				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				m.And(w0, w0, 0xfffffff0);
 				Label slow, done;
 				if (InlineMemEnabled())
@@ -1765,7 +1765,7 @@ namespace
 			case 0x1f: // SQ
 			{
 				if (no_store) return false;
-				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				m.And(w0, w0, 0xfffffff0);
 				s_rc.FlushReg(m, gpr, rt); // the 128-bit source is read from memory
 				Label slow, done;
@@ -1901,7 +1901,7 @@ namespace
 			case 0x31:
 			{
 				if (no_cop1) return false;
-				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				Label skip;
 				m.Tst(w0, 3); m.B(&skip, ne);
 				m.Mov(x16, reinterpret_cast<uint64_t>(&eeRead32_arm64)); m.Blr(x16);
@@ -1913,7 +1913,7 @@ namespace
 			case 0x39:
 			{
 				if (no_cop1) return false;
-				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Mov(w2, (u32)simm); m.Add(w0, a.W(), w2); }
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				Label skip;
 				m.Tst(w0, 3); m.B(&skip, ne);
 				m.Mov(x1, reinterpret_cast<uint64_t>(&fpuRegs)); m.Ldr(w1, MemOperand(x1, rt * 4));
