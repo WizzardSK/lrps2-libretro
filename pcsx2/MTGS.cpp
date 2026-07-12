@@ -28,6 +28,7 @@
 #include "Elfheader.h"
 
 #include "Host.h"
+#include "arm64/Profiler_arm64.h"
 
 // Mask to apply to ring buffer indices to wrap the pointer from end to
 // start (the wrapping is what makes it a ringbuffer, yo!)
@@ -162,6 +163,8 @@ void MTGS::TryOpenGS(void)
 
 void MTGS::MainLoop(bool flush_all)
 {
+	ArmProf::AttachThread("GS");
+
 	// Threading info: run in MTGS thread
 	// s_ReadPos is only update by the MTGS thread so it is safe to load it with a relaxed atomic
 

@@ -23,6 +23,7 @@
 #include "Vif_Dynarec.h"
 
 #include "../common/Threading.h"
+#include "arm64/Profiler_arm64.h"
 
 VU_Thread vu1Thread;
 
@@ -137,6 +138,8 @@ void VU_Thread::Reset()
 
 void VU_Thread::ExecuteRingBuffer(void)
 {
+	ArmProf::AttachThread("MTVU");
+
 	for (;;)
 	{
 		semaEvent.WaitForWork();
