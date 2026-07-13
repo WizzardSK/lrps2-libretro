@@ -2153,19 +2153,31 @@ namespace
 		// C.40: try to chain FIRST, with the frame (and x19) still live --
 		// the successor's chain entry skips its prologue, so back-to-back
 		// blocks pay no frame pop/push or x19 rematerialization.
-		m.Ldr(w1, RegsField(&cpuRegs.pc)); // pc
-		m.And(w2, w1, 0x1fffffff);          // np = pc & mirror mask
-		m.Mov(w3, kRamBytes);
+		// C.52: the pc still has to be READ here -- an event test in the tail can
+		// redirect it (an interrupt/exception sets pc to the handler), and a
+		// chain that jumped to the compile-time successor instead would never
+		// deliver those. What can go is the arithmetic around it:
+		//   * mask + RAM range check collapse into one Tst. np = pc & 0x1fffffff
+		//     is in RAM (< 32 MB) exactly when pc has no bits set in 0x1e000000.
+		//   * the index is then a plain bitfield extract of pc (bits 2..24).
+		//   * s_lut never moves after eeJitReserve, so materialize its VALUE
+		//     instead of the address of the pointer variable: same 4-instruction
+		//     movz/movk chain, but the load of the pointer goes away. (A literal
+		//     -pool load of the base was tried instead and is SLOWER: it trades
+		//     4 cheap ALU ops for a data-cache access, the same trap as C.49.)
+		// 15 instructions and 3 loads -> 12 instructions and 2 loads, on every
+		// block exit -- the hot EE loops are many tiny blocks, so their tails are
+		// a real part of what they execute.
 		Label ret_path;
-		m.Cmp(w2, w3);
-		m.B(&ret_path, hs);                 // not RAM -> return to dispatcher
-		m.Mov(x0, reinterpret_cast<uint64_t>(&s_lut));
-		m.Ldr(x0, MemOperand(x0));          // s_lut base
-		m.Lsr(w2, w2, 2);                   // idx = np >> 2
+		m.Ldr(w1, RegsField(&cpuRegs.pc));      // pc (may have been redirected by the event test)
+		m.Tst(w1, 0x1e000000);                  // outside the 32 MB RAM window?
+		m.B(&ret_path, ne);                     // -> return to the dispatcher
+		m.Mov(x0, reinterpret_cast<uint64_t>(s_lut)); // the LUT base itself, materialized
+		m.Ubfx(w2, w1, 2, 23);                  // idx = (pc & 0x01ffffff) >> 2
 		m.Ldr(x3, MemOperand(x0, w2, UXTW, 3)); // fn = s_lut[idx]
-		m.Cbz(x3, &ret_path);               // uncompiled -> return
-		m.Add(x3, x3, kChainEntryOffset);   // skip the successor's prologue
-		m.Br(x3);                           // tail-jump to next block's body
+		m.Cbz(x3, &ret_path);                   // uncompiled -> return
+		m.Add(x3, x3, kChainEntryOffset);       // skip the successor's prologue
+		m.Br(x3);                               // tail-jump to next block's body
 		m.Bind(&ret_path);
 		m.Ldp(x19, x20, MemOperand(sp, 0));
 		m.Ldp(x21, x30, MemOperand(sp, 16));
