@@ -120,11 +120,23 @@ namespace
 	constexpr u32 kRamWords = kRamBytes >> 2;
 	BlockFn*      s_lut      = nullptr;
 
-	// C.40: chained blocks keep the 80-byte frame (and x19) live and jump
+	// C.40: chained blocks keep the 96-byte frame (and x19/x28) live and jump
 	// straight to the successor's body; only the return to the C++ dispatcher
 	// pops the frame. The chain entry point skips the prologue, whose size is
-	// therefore fixed: Sub + 5*Stp + exactly-4-instruction x19 materialization.
-	constexpr u32 kChainEntryOffset = (1 + 5 + 4) * 4;
+	// therefore fixed: Sub + 5*Stp + Str + exactly-4-instruction x19
+	// materialization + the 5-instruction x28 (vmap base) load.
+	constexpr u32 kChainEntryOffset = (1 + 5 + 1 + 4 + 5) * 4;
+
+	// C.49: the vtlb vmap array base, pinned for the lifetime of the frame.
+	// vtlbdata.vmap is a pointer allocated once from the bump allocator
+	// (vtlb_Core_Alloc) and only cleared at vtlb_Core_Free, i.e. it cannot move
+	// while blocks are running -- so loading it once per block entry is as
+	// correct as re-loading it per access, and every inline fastmem lookup
+	// saves the 4-instruction address materialization plus the indirection.
+	// x28 is free: the microVU allocator only tracks w0..w26 (mVU_GPR_TOTAL),
+	// helper calls preserve it (AAPCS64 callee-saved), and the EE block cache
+	// owns x21..x27.
+	const Register vmapbase = x28;
 
 	inline u32  Norm(u32 a)  { return a & 0x1fffffff; }
 	inline bool InRam(u32 np) { return np < kRamBytes; }
@@ -176,12 +188,10 @@ namespace
 	}
 	inline void EmitVmapLookup(MacroAssembler& m, Label* slow)
 	{
-		m.Mov(x10, reinterpret_cast<uint64_t>(&vtlb_private::vtlbdata.vmap));
-		m.Ldr(x10, MemOperand(x10));                 // vmap array base (realloc-safe)
 		m.Lsr(w11, w0, 12);
-		m.Ldr(x10, MemOperand(x10, x11, LSL, 3));    // vmv.value
-		m.Add(x10, x10, x0);                         // + guest addr
-		m.Tbnz(x10, 63, slow);                       // sign bit = handler
+		m.Ldr(x10, MemOperand(vmapbase, x11, LSL, 3)); // vmv.value
+		m.Add(x10, x10, x0);                           // + guest addr
+		m.Tbnz(x10, 63, slow);                         // sign bit = handler
 	}
 
 	// ---- C.27: block-local write-through GPR register cache ----
@@ -1962,7 +1972,8 @@ namespace
 		m.Ldp(x22, x23, MemOperand(sp, 32));
 		m.Ldp(x24, x25, MemOperand(sp, 48));
 		m.Ldp(x26, x27, MemOperand(sp, 64));
-		m.Add(sp, sp, 80);
+		m.Ldr(x28, MemOperand(sp, 80));
+		m.Add(sp, sp, 96);
 		m.Ret(); // TEMP: disable block-linking so every block returns to the dispatcher (PC sampling)
 		return;
 #endif
@@ -1988,7 +1999,8 @@ namespace
 		m.Ldp(x22, x23, MemOperand(sp, 32));
 		m.Ldp(x24, x25, MemOperand(sp, 48));
 		m.Ldp(x26, x27, MemOperand(sp, 64));
-		m.Add(sp, sp, 80);
+		m.Ldr(x28, MemOperand(sp, 80));
+		m.Add(sp, sp, 96);
 		m.Ret();
 	}
 
@@ -2416,15 +2428,17 @@ namespace
 
 		const Register gpr = x19;
 		s_rc.Reset(); // fresh per-block register-cache state (C.27)
-		// Uniform 80-byte frame across ALL blocks (the chain epilogue of any
+		// Uniform 96-byte frame across ALL blocks (the chain epilogue of any
 		// block must match any successor's prologue): x19/x20 (gpr base, jr
-		// target), x21..x27 (GPR register cache), x30 (chain return).
-		masm.Sub(sp, sp, 80);
+		// target), x21..x27 (GPR register cache), x28 (vmap base), x30 (chain
+		// return).
+		masm.Sub(sp, sp, 96);
 		masm.Stp(x19, x20, MemOperand(sp, 0));
 		masm.Stp(x21, x30, MemOperand(sp, 16));
 		masm.Stp(x22, x23, MemOperand(sp, 32));
 		masm.Stp(x24, x25, MemOperand(sp, 48));
 		masm.Stp(x26, x27, MemOperand(sp, 64));
+		masm.Str(x28, MemOperand(sp, 80));
 		{
 			// Exactly 4 instructions so kChainEntryOffset stays constant
 			// (VIXL's Mov would shrink the sequence for compressible values).
@@ -2434,6 +2448,18 @@ namespace
 			masm.movk(gpr, (gv >> 16) & 0xffff, 16);
 			masm.movk(gpr, (gv >> 32) & 0xffff, 32);
 			masm.movk(gpr, (gv >> 48) & 0xffff, 48);
+		}
+		{
+			// x28 = vtlbdata.vmap (the array base, not its address): 4 fixed
+			// instructions for the address + the load, so the prologue size
+			// stays constant for kChainEntryOffset.
+			const uint64_t vv = reinterpret_cast<uint64_t>(&vtlb_private::vtlbdata.vmap);
+			vixl::ExactAssemblyScope scope(&masm, 5 * kInstructionSize);
+			masm.movz(vmapbase, vv & 0xffff);
+			masm.movk(vmapbase, (vv >> 16) & 0xffff, 16);
+			masm.movk(vmapbase, (vv >> 32) & 0xffff, 32);
+			masm.movk(vmapbase, (vv >> 48) & 0xffff, 48);
+			masm.ldr(vmapbase, MemOperand(vmapbase));
 		}
 
 		// TEMP diagnostic (LRPS2_EXCLOG): only the EE exception vector blocks
