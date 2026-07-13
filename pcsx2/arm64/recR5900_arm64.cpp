@@ -27,6 +27,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <unordered_map>
+#include <deque>
 #include <vector>
 #include <algorithm>
 #include <sys/syscall.h>
@@ -223,10 +224,28 @@ namespace
 	static std::vector<FmSite> s_fm_sites;    // sorted by code address
 	static std::vector<u32>    s_fm_faulting; // sorted guest pcs: never fastmem again
 
-	// Sites of the block currently being emitted. Absolute addresses only exist
-	// after FinalizeCode, so collect buffer offsets and resolve them there.
-	struct FmPending { size_t site_off; size_t stub_off; u32 pc; };
+	// C.51: the stubs live OUT OF LINE, past the block's epilogue. The fast path
+	// is then just the access itself -- no `b` over the stub, and no ~6 dead
+	// instructions of wrapper call sitting in the middle of the hot instruction
+	// stream. Sites of the block being emitted are collected here (absolute
+	// addresses only exist after FinalizeCode) and their stubs are emitted, in
+	// order, right before it.
+	//   kind 0: args are already live (w0 = addr, x1 = store value)
+	//   kind 1: 128-bit wrapper, needs x1 = &GPR[rt] first
+	struct FmPending
+	{
+		size_t   site_off;   // the patchable access
+		size_t   stub_off;   // filled in when the stub is emitted
+		u32      pc;
+		uint64_t fn;         // wrapper to call
+		int      kind;
+		u32      rt;
+		Label*   resume;     // where the stub jumps back to (bound after the fast path)
+	};
 	static std::vector<FmPending> s_fm_pending;
+	// Labels outlive their block's emission (VIXL Labels are neither copyable nor
+	// movable, and a deque never relocates what it holds).
+	static std::deque<Label> s_fm_labels;
 
 	// Guest pc of the op being emitted (compilation is EE-thread-only, like s_rc).
 	u32 s_emit_pc = 0;
@@ -250,8 +269,7 @@ namespace
 		       !std::binary_search(s_fm_faulting.begin(), s_fm_faulting.end(), guest_pc);
 	}
 	// Emits the patchable access as EXACTLY one instruction (ExactAssemblyScope
-	// keeps VIXL from expanding it or dropping a literal pool in the middle) and
-	// records where it and its stub live.
+	// keeps VIXL from expanding it or dropping a literal pool in the middle).
 	template <typename EmitAccess>
 	inline void EmitFastmemAccess(MacroAssembler& m, EmitAccess emit_access)
 	{
@@ -260,13 +278,32 @@ namespace
 			vixl::ExactAssemblyScope scope(&m, kInstructionSize);
 			emit_access();
 		}
-		s_fm_pending.push_back({site_off, 0, s_emit_pc});
+		s_fm_pending.push_back({site_off, 0, s_emit_pc, 0, 0, 0, nullptr});
 	}
-	// Call with the cursor at the first instruction of the slow stub (i.e. right
-	// after the fast path's `b done`), which is what a fault patches into.
-	inline void NoteFastmemStub(MacroAssembler& m)
+	// Closes the site: binds the resume point at the cursor (i.e. after the whole
+	// fast path -- for LQ that includes the Str into the guest register, which a
+	// patched access must skip because the 128-bit wrapper writes GPR[rt] itself)
+	// and queues the out-of-line stub.
+	inline void DeferFastmemStub(MacroAssembler& m, uint64_t fn, int kind, u32 rt)
 	{
-		s_fm_pending.back().stub_off = m.GetBuffer()->GetCursorOffset();
+		s_fm_labels.emplace_back();
+		Label* resume = &s_fm_labels.back();
+		m.Bind(resume);
+		FmPending& p = s_fm_pending.back();
+		p.fn = fn; p.kind = kind; p.rt = rt; p.resume = resume;
+	}
+	// Emitted once per block, after the epilogue: nothing falls through into it.
+	inline void EmitFastmemStubs(MacroAssembler& m)
+	{
+		for (FmPending& p : s_fm_pending)
+		{
+			p.stub_off = m.GetBuffer()->GetCursorOffset();
+			if (p.kind == 1)
+				m.Add(x1, x19, p.rt * 16); // x1 = &GPR[rt] (x19 = guest-reg base)
+			m.Mov(x16, p.fn);
+			m.Blr(x16);
+			m.B(p.resume);
+		}
 	}
 
 	// ---- C.27: block-local write-through GPR register cache ----
@@ -1711,7 +1748,6 @@ namespace
 					// until a fault patches the access into `b stub`. Ldrb/Ldrh/
 					// Ldr w0 zero-extend into x0 exactly like the u32-returning
 					// wrappers, so the value semantics are unchanged.
-					Label done;
 					EmitFastmemAccess(m, [&] {
 						switch (op)
 						{
@@ -1721,10 +1757,7 @@ namespace
 							default:              m.ldr (x0, MemOperand(vmapbase, w0, UXTW)); break; // LD
 						}
 					});
-					m.B(&done);
-					NoteFastmemStub(m);
-					m.Mov(x16, fn); m.Blr(x16);
-					m.Bind(&done);
+					DeferFastmemStub(m, fn, 0, 0);
 				}
 				else if (InlineVmapEnabled())
 				{
@@ -1824,7 +1857,6 @@ namespace
 					// blocks before the kernel retries this store -- it never
 					// reaches the backpatch path, exactly like the inline
 					// stores below.
-					Label done;
 					EmitFastmemAccess(m, [&] {
 						switch (op)
 						{
@@ -1834,10 +1866,7 @@ namespace
 							default:   m.str (x1, MemOperand(vmapbase, w0, UXTW)); break; // SD
 						}
 					});
-					m.B(&done);
-					NoteFastmemStub(m);
-					m.Mov(x16, fn); m.Blr(x16);
-					m.Bind(&done);
+					DeferFastmemStub(m, fn, 0, 0);
 				}
 				else if (InlineVmapEnabled())
 				{
@@ -1882,23 +1911,26 @@ namespace
 					// Only the fastmem load can fault; patching it into `b stub`
 					// also skips the Str below, and the stub's wrapper writes
 					// GPR[rt] itself (x1 = &GPR[rt]), so the result lands in the
-					// same place either way.
+					// same place either way -- which is why the resume point is
+					// AFTER the Str.
 					EmitFastmemAccess(m, [&] { m.ldr(q0, MemOperand(vmapbase, w0, UXTW)); });
 					m.Str(q0, MemOperand(gpr, rt * 16));
-					m.B(&done);
-					NoteFastmemStub(m);
+					DeferFastmemStub(m, reinterpret_cast<uint64_t>(&eeRead128_arm64), 1, rt);
 				}
-				else if (InlineVmapEnabled())
+				else
 				{
-					EmitVmapLookup(m, &slow);
-					m.Ldr(q0, MemOperand(x10));
-					m.Str(q0, MemOperand(gpr, rt * 16));
-					m.B(&done);
-					m.Bind(&slow);
+					if (InlineVmapEnabled())
+					{
+						EmitVmapLookup(m, &slow);
+						m.Ldr(q0, MemOperand(x10));
+						m.Str(q0, MemOperand(gpr, rt * 16));
+						m.B(&done);
+						m.Bind(&slow);
+					}
+					m.Add(x1, gpr, rt * 16);
+					m.Mov(x16, reinterpret_cast<uint64_t>(&eeRead128_arm64)); m.Blr(x16);
+					m.Bind(&done);
 				}
-				m.Add(x1, gpr, rt * 16);
-				m.Mov(x16, reinterpret_cast<uint64_t>(&eeRead128_arm64)); m.Blr(x16);
-				m.Bind(&done);
 				s_rc.Invalidate(rt); // 128-bit write bypasses StoreGpr (both paths)
 				return true;
 			}
@@ -1915,20 +1947,22 @@ namespace
 					// patch site (the wrapper re-reads GPR[rt] via x1).
 					m.Ldr(q0, MemOperand(gpr, rt * 16)); // GPR.r[0] is kept zero
 					EmitFastmemAccess(m, [&] { m.str(q0, MemOperand(vmapbase, w0, UXTW)); });
-					m.B(&done);
-					NoteFastmemStub(m);
+					DeferFastmemStub(m, reinterpret_cast<uint64_t>(&eeWrite128_arm64), 1, rt);
 				}
-				else if (InlineVmapEnabled())
+				else
 				{
-					EmitVmapLookup(m, &slow);
-					m.Ldr(q0, MemOperand(gpr, rt * 16)); // GPR.r[0] is kept zero
-					m.Str(q0, MemOperand(x10));
-					m.B(&done);
-					m.Bind(&slow);
+					if (InlineVmapEnabled())
+					{
+						EmitVmapLookup(m, &slow);
+						m.Ldr(q0, MemOperand(gpr, rt * 16)); // GPR.r[0] is kept zero
+						m.Str(q0, MemOperand(x10));
+						m.B(&done);
+						m.Bind(&slow);
+					}
+					m.Add(x1, gpr, rt * 16);
+					m.Mov(x16, reinterpret_cast<uint64_t>(&eeWrite128_arm64)); m.Blr(x16);
+					m.Bind(&done);
 				}
-				m.Add(x1, gpr, rt * 16);
-				m.Mov(x16, reinterpret_cast<uint64_t>(&eeWrite128_arm64)); m.Blr(x16);
-				m.Bind(&done);
 				return true;
 			}
 
@@ -2562,6 +2596,8 @@ namespace
 		}
 
 		u8* start = s_code + s_code_pos;
+		s_fm_pending.clear(); // C.50/C.51: per-block site state
+		s_fm_labels.clear();
 		MacroAssembler masm(start, kCodeCacheSize - s_code_pos, PositionDependentCode);
 		// The aVU macro emitters (C.30-2) hold RSCRATCHADDR (x17) and q31 across
 		// vixl macro expansions -- keep the assembler from synthesizing into them
@@ -2738,6 +2774,7 @@ namespace
 			EmitChainEpilogue(masm);
 		}
 
+		EmitFastmemStubs(masm); // C.51: out of line, past the epilogue -- nothing falls into it
 		masm.FinalizeCode();
 
 		const size_t sz = masm.GetSizeOfCodeGenerated();
@@ -2751,6 +2788,7 @@ namespace
 			s_fm_sites.push_back({reinterpret_cast<uintptr_t>(start) + fp.site_off,
 			                      reinterpret_cast<uintptr_t>(start) + fp.stub_off, fp.pc});
 		s_fm_pending.clear();
+		s_fm_labels.clear(); // the labels are resolved; the block is finalized
 		s_code_pos += (sz + 15) & ~size_t(15);
 		ArmProf::NoteBlock("ee-jit", start, sz, pc);
 
