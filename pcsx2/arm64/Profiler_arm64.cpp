@@ -276,7 +276,14 @@ namespace ArmProf
 		struct sigevent sev = {};
 		sev.sigev_notify = SIGEV_THREAD_ID;
 		sev.sigev_signo = SIGPROF;
+		// glibc only exposes the sigev_notify_thread_id name under _GNU_SOURCE
+		// (the field itself is _sigev_un._tid); musl names it directly. Reach the
+		// tid field without depending on which of the two is in effect.
+#if defined(__GLIBC__) && !defined(sigev_notify_thread_id)
+		sev._sigev_un._tid = static_cast<pid_t>(syscall(SYS_gettid));
+#else
 		sev.sigev_notify_thread_id = static_cast<pid_t>(syscall(SYS_gettid));
+#endif
 
 		timer_t timer;
 		if (timer_create(CLOCK_THREAD_CPUTIME_ID, &sev, &timer) != 0)
