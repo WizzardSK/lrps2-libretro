@@ -397,6 +397,43 @@ namespace
 		}
 	};
 	RegCache s_rc;
+
+	// ---- C.53: out-of-line misalign cold paths ----
+	// A misaligned EE load/store raises an exception: flush the dirty register
+	// cache (the interpreter resumes from GPR memory) and fastjmp out through
+	// eeCancelInstruction. That is ~14 instructions -- up to 7 cache stores plus
+	// the 4-instruction call setup -- and it was emitted INLINE after the
+	// alignment test, i.e. in the middle of the hot instruction stream, once per
+	// memory op. It never executes in practice (the guest keeps its accesses
+	// aligned), so park it past the epilogue with the fastmem stubs and leave
+	// only `Tst; B.ne <stub>` in the stream. The cold path never returns, so it
+	// needs no resume point -- but it does need the register-cache state as it
+	// was AT THE ACCESS, so snapshot that (RegCache is a plain value).
+	struct MaPending { Label* label; RegCache state; };
+	static std::vector<MaPending> s_ma_pending;
+	static std::deque<Label>      s_ma_labels;
+
+	inline void EmitMisalignGuard(MacroAssembler& m, u32 amask)
+	{
+		if (!amask)
+			return;
+		s_ma_labels.emplace_back();
+		Label* l = &s_ma_labels.back();
+		m.Tst(w0, amask);
+		m.B(l, ne);
+		s_ma_pending.push_back({l, s_rc});
+	}
+	inline void EmitMisalignStubs(MacroAssembler& m, const Register& gpr)
+	{
+		for (MaPending& p : s_ma_pending)
+		{
+			m.Bind(p.label);
+			p.state.FlushDirtyColdPath(m, gpr);
+			m.Mov(x16, reinterpret_cast<uint64_t>(&eeCancelInstruction_arm64));
+			m.Blr(x16); // fastjmps out of the block; never returns
+		}
+	}
+
 	inline bool RegCacheOn()
 	{
 		// LRPS2_TRACE_STEP's per-op hook hashes GPR MEMORY mid-block; with a
@@ -1727,17 +1764,7 @@ namespace
 				if (no_load || (no_ld64 && op == 0x37)) return false;
 				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				const u32 amask = (op == 0x37) ? 7 : (op == 0x23 || op == 0x27) ? 3 : (op == 0x21 || op == 0x25) ? 1 : 0;
-				if (amask)
-			{
-				// Cold path: the cancel fastjmp leaves the block and the
-				// interpreter resumes from GPR MEMORY -- write the dirty cache
-				// back on this (never-taken-in-practice) path only, leaving
-				// the fall-through compile-time state untouched.
-				Label ok; m.Tst(w0, amask); m.B(&ok, eq);
-				s_rc.FlushDirtyColdPath(m, gpr);
-				m.Mov(x16, reinterpret_cast<uint64_t>(&eeCancelInstruction_arm64)); m.Blr(x16);
-				m.Bind(&ok);
-			}
+				EmitMisalignGuard(m, amask); // C.53: cold path lives out of line
 				uint64_t fn = (op == 0x37) ? reinterpret_cast<uint64_t>(&eeRead64_arm64)
 				            : (op == 0x23 || op == 0x27) ? reinterpret_cast<uint64_t>(&eeRead32_arm64)
 				            : (op == 0x21 || op == 0x25) ? reinterpret_cast<uint64_t>(&eeRead16_arm64)
@@ -1833,17 +1860,7 @@ namespace
 				if (no_store || (no_ld64 && op == 0x3f)) return false;
 				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				const u32 amask = (op == 0x3f) ? 7 : (op == 0x2b) ? 3 : (op == 0x29) ? 1 : 0;
-				if (amask)
-			{
-				// Cold path: the cancel fastjmp leaves the block and the
-				// interpreter resumes from GPR MEMORY -- write the dirty cache
-				// back on this (never-taken-in-practice) path only, leaving
-				// the fall-through compile-time state untouched.
-				Label ok; m.Tst(w0, amask); m.B(&ok, eq);
-				s_rc.FlushDirtyColdPath(m, gpr);
-				m.Mov(x16, reinterpret_cast<uint64_t>(&eeCancelInstruction_arm64)); m.Blr(x16);
-				m.Bind(&ok);
-			}
+				EmitMisalignGuard(m, amask); // C.53: cold path lives out of line
 				LoadGpr(m, x1, gpr, rt); // value (low bits used by the wrapper)
 				uint64_t fn = (op == 0x3f) ? reinterpret_cast<uint64_t>(&eeWrite64_arm64)
 				            : (op == 0x2b) ? reinterpret_cast<uint64_t>(&eeWrite32_arm64)
@@ -2610,6 +2627,8 @@ namespace
 		u8* start = s_code + s_code_pos;
 		s_fm_pending.clear(); // C.50/C.51: per-block site state
 		s_fm_labels.clear();
+		s_ma_pending.clear(); // C.53
+		s_ma_labels.clear();
 		MacroAssembler masm(start, kCodeCacheSize - s_code_pos, PositionDependentCode);
 		// The aVU macro emitters (C.30-2) hold RSCRATCHADDR (x17) and q31 across
 		// vixl macro expansions -- keep the assembler from synthesizing into them
@@ -2686,8 +2705,21 @@ namespace
 			}
 		}
 
-		// TEMP: one-shot disasm dump of the MMX7 stall loop block range.
-		if (getenv("LRPS2_DUMP_STALL") && (pc & 0x1fffffff) >= 0x0010b7a8 && (pc & 0x1fffffff) <= 0x0010bd74)
+		// One-shot dump of the guest ops each block in a pc range compiles from,
+		// with their translatability -- the tool for "why is this hot loop split
+		// into so many blocks / what still hands off to the interpreter".
+		// LRPS2_DUMP_RANGE=lo:hi (physical pcs, hex); LRPS2_DUMP_STALL keeps the
+		// original MMX7 stall-loop range.
+		static u32 dump_lo = 0, dump_hi = 0;
+		static bool dump_init = false;
+		if (!dump_init)
+		{
+			dump_init = true;
+			if (const char* r = getenv("LRPS2_DUMP_RANGE"))
+				sscanf(r, "%x:%x", &dump_lo, &dump_hi);
+			else if (getenv("LRPS2_DUMP_STALL")) { dump_lo = 0x0010b7a8; dump_hi = 0x0010bd74; }
+		}
+		if (dump_hi && (pc & 0x1fffffff) >= dump_lo && (pc & 0x1fffffff) <= dump_hi)
 		{
 			static u32 dumped = 0;
 			if (!(dumped & (1u << ((pc >> 4) & 31))))
@@ -2786,7 +2818,8 @@ namespace
 			EmitChainEpilogue(masm);
 		}
 
-		EmitFastmemStubs(masm); // C.51: out of line, past the epilogue -- nothing falls into it
+		EmitFastmemStubs(masm);       // C.51: out of line, past the epilogue -- nothing falls into it
+		EmitMisalignStubs(masm, gpr); // C.53: same, for the misalign cancels
 		masm.FinalizeCode();
 
 		const size_t sz = masm.GetSizeOfCodeGenerated();
@@ -2801,6 +2834,8 @@ namespace
 			                      reinterpret_cast<uintptr_t>(start) + fp.stub_off, fp.pc});
 		s_fm_pending.clear();
 		s_fm_labels.clear(); // the labels are resolved; the block is finalized
+		s_ma_pending.clear();
+		s_ma_labels.clear();
 		s_code_pos += (sz + 15) & ~size_t(15);
 		ArmProf::NoteBlock("ee-jit", start, sz, pc);
 
