@@ -413,6 +413,12 @@ namespace
 	static std::vector<MaPending> s_ma_pending;
 	static std::deque<Label>      s_ma_labels;
 
+	// C.54: per-block exit state -- the event-due stubs and the single return tail.
+	struct ExitPending { Label* slow; uint64_t evt; };
+	static std::vector<ExitPending> s_exit_pending;
+	static std::deque<Label>        s_exit_labels;
+	static Label*                   s_blk_ret = nullptr;
+
 	inline void EmitMisalignGuard(MacroAssembler& m, u32 amask)
 	{
 		if (!amask)
@@ -2185,17 +2191,21 @@ namespace
 		// 15 instructions and 3 loads -> 12 instructions and 2 loads, on every
 		// block exit -- the hot EE loops are many tiny blocks, so their tails are
 		// a real part of what they execute.
-		Label ret_path;
 		m.Ldr(w1, RegsField(&cpuRegs.pc));      // pc (may have been redirected by the event test)
 		m.Tst(w1, 0x1e000000);                  // outside the 32 MB RAM window?
-		m.B(&ret_path, ne);                     // -> return to the dispatcher
+		m.B(s_blk_ret, ne);                     // -> return to the dispatcher
 		m.Mov(x0, reinterpret_cast<uint64_t>(s_lut)); // the LUT base itself, materialized
 		m.Ubfx(w2, w1, 2, 23);                  // idx = (pc & 0x01ffffff) >> 2
 		m.Ldr(x3, MemOperand(x0, w2, UXTW, 3)); // fn = s_lut[idx]
-		m.Cbz(x3, &ret_path);                   // uncompiled -> return
+		m.Cbz(x3, s_blk_ret);                   // uncompiled -> return
 		m.Add(x3, x3, kChainEntryOffset);       // skip the successor's prologue
 		m.Br(x3);                               // tail-jump to next block's body
-		m.Bind(&ret_path);
+	}
+
+	// C.54: the frame pop + ret, emitted ONCE per block in the stub area (every
+	// exit used to carry its own copy: 8 instructions each, inline, cold).
+	void EmitFrameRet(MacroAssembler& m)
+	{
 		m.Ldp(x19, x20, MemOperand(sp, 0));
 		m.Ldp(x21, x30, MemOperand(sp, 16));
 		m.Ldp(x22, x23, MemOperand(sp, 32));
@@ -2204,6 +2214,65 @@ namespace
 		m.Ldr(x28, MemOperand(sp, 80));
 		m.Add(sp, sp, 96);
 		m.Ret();
+	}
+
+	// C.54: exit to a compile-time-known successor.
+	//
+	// cpuRegs.pc can only differ from that successor if the tail's event test
+	// actually RAN -- an exception redirects pc to its handler (C.52 learned this
+	// the hard way: chaining blindly to the assumed successor never delivers
+	// interrupts and the EE just spins). But the test is GATED on cycle >=
+	// nextEventCycle, so on the gate's not-due path -- the overwhelmingly common
+	// one -- pc IS the constant. Then the LUT slot address is a compile-time
+	// constant too: no pc load, no mirror mask, no range check, no index
+	// computation. The due path (call the event test, then chain generically off
+	// the possibly-redirected pc) is deferred to the block's stub area, so the
+	// hot stream carries none of it -- same reasoning as C.51/C.53.
+	void EmitKnownExit(MacroAssembler& m, u32 target_pc, uint64_t evt, bool evt_gate)
+	{
+		const u32 np = Norm(target_pc);
+#ifdef EE_PC_SAMPLE
+		if (evt) { m.Mov(x16, evt); m.Blr(x16); }
+		EmitChainEpilogue(m);
+		return;
+#endif
+		// An ungated event test runs unconditionally, so pc is never known; a
+		// target outside RAM has no LUT slot. Both fall back to the generic tail.
+		if (!s_lut || !InRam(np) || (evt && !evt_gate))
+		{
+			if (evt) { m.Mov(x16, evt); m.Blr(x16); }
+			EmitChainEpilogue(m);
+			return;
+		}
+		if (evt)
+		{
+			s_exit_labels.emplace_back();
+			Label* slow = &s_exit_labels.back();
+			m.Ldr(w0, RegsField(&cpuRegs.cycle));
+			m.Ldr(w1, RegsField(&cpuRegs.nextEventCycle));
+			m.Subs(w0, w0, w1);   // (s32)(cycle - nextEventCycle)
+			m.B(slow, pl);        // event due -> out-of-line stub
+			s_exit_pending.push_back({slow, evt});
+		}
+		// Not due (or no test at all): pc == target_pc, guaranteed.
+		m.Mov(x3, reinterpret_cast<uint64_t>(&s_lut[np >> 2])); // the LUT slot itself
+		m.Ldr(x3, MemOperand(x3));
+		m.Cbz(x3, s_blk_ret);             // uncompiled -> return to the dispatcher
+		m.Add(x3, x3, kChainEntryOffset); // skip the successor's prologue
+		m.Br(x3);
+	}
+	// Deferred: the event-due tails, then the block's single return path.
+	void EmitExitStubs(MacroAssembler& m)
+	{
+		for (ExitPending& e : s_exit_pending)
+		{
+			m.Bind(e.slow);
+			m.Mov(x16, e.evt);
+			m.Blr(x16);           // may redirect pc (exception/interrupt)
+			EmitChainEpilogue(m); // ... so chain off the pc it left behind
+		}
+		m.Bind(s_blk_ret);
+		EmitFrameRet(m);
 	}
 
 	bool IsTranslatable(u32 insn)
@@ -2514,8 +2583,8 @@ namespace
 			s_rc.FlushDirty(m, gpr); // block exit: the next block reads GPR memory
 			EmitUpdateCycles();
 			if (idle_skip) EmitIdleSkip();
-			EmitEventTest();
-			EmitChainEpilogue(m);
+			if (is_jr) { EmitEventTest(); EmitChainEpilogue(m); }
+			else       EmitKnownExit(m, tconst, evt, evt_gate); // C.54
 			return true;
 		}
 
@@ -2559,8 +2628,7 @@ namespace
 		s_rc.FlushDirty(m, gpr); // block exit (taken)
 		EmitUpdateCycles();
 		if (idle_skip) EmitIdleSkip();
-		EmitEventTest();
-		EmitChainEpilogue(m);
+		EmitKnownExit(m, tconst, evt, evt_gate); // C.54
 		s_rc = fork_state;
 		m.Bind(&not_taken);
 		EmitCycleBookkeeping(m, cyc_nt);
@@ -2579,8 +2647,8 @@ namespace
 		// interrupt delivery (EPC) inside wait loops relative to the interpreter,
 		// which cascades into different kernel-scheduler decisions (MMX7 FMV
 		// loader wedge).
-		if (op == 0x04 || op == 0x05 || (likely && !bc0 && !bc1 && !bc2)) EmitEventTest();
-		EmitChainEpilogue(m);
+		const bool nt_evt = (op == 0x04 || op == 0x05 || (likely && !bc0 && !bc1 && !bc2));
+		EmitKnownExit(m, bpc + (likely ? 8 : 4), nt_evt ? evt : 0, evt_gate); // C.54
 		return true;
 	}
 
@@ -2629,6 +2697,10 @@ namespace
 		s_fm_labels.clear();
 		s_ma_pending.clear(); // C.53
 		s_ma_labels.clear();
+		s_exit_pending.clear(); // C.54
+		s_exit_labels.clear();
+		s_exit_labels.emplace_back();
+		s_blk_ret = &s_exit_labels.front(); // the block's one return tail
 		MacroAssembler masm(start, kCodeCacheSize - s_code_pos, PositionDependentCode);
 		// The aVU macro emitters (C.30-2) hold RSCRATCHADDR (x17) and q31 across
 		// vixl macro expansions -- keep the assembler from synthesizing into them
@@ -2776,7 +2848,7 @@ namespace
 					StorePCImm(masm, p);
 					EmitCycleBookkeeping(masm, cyc);
 					s_rc.FlushDirty(masm, gpr); // block exit: memory must be current
-					EmitChainEpilogue(masm);
+					EmitKnownExit(masm, p, 0, true); // C.54: no event test here -> pc is p
 					done = true; break;
 				}
 				continue;
@@ -2797,7 +2869,7 @@ namespace
 			StorePCImm(masm, p);
 			EmitCycleBookkeeping(masm, cyc);
 			s_rc.FlushDirty(masm, gpr);
-			EmitChainEpilogue(masm);
+			EmitKnownExit(masm, p, 0, true); // C.54
 			done = true;
 		}
 
@@ -2820,6 +2892,7 @@ namespace
 
 		EmitFastmemStubs(masm);       // C.51: out of line, past the epilogue -- nothing falls into it
 		EmitMisalignStubs(masm, gpr); // C.53: same, for the misalign cancels
+		EmitExitStubs(masm);          // C.54: event-due tails + the block's single return path
 		masm.FinalizeCode();
 
 		const size_t sz = masm.GetSizeOfCodeGenerated();
@@ -2836,6 +2909,9 @@ namespace
 		s_fm_labels.clear(); // the labels are resolved; the block is finalized
 		s_ma_pending.clear();
 		s_ma_labels.clear();
+		s_exit_pending.clear();
+		s_exit_labels.clear();
+		s_blk_ret = nullptr;
 		s_code_pos += (sz + 15) & ~size_t(15);
 		ArmProf::NoteBlock("ee-jit", start, sz, pc);
 
