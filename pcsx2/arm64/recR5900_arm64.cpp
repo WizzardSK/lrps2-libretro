@@ -45,6 +45,10 @@
 #include "arm64/aR5900Analysis.h"
 #include "arm64/Profiler_arm64.h"
 #include "VUmicro.h" // _vu0FinishMicro
+// vu0Sync() lives in VU0.cpp with no header declaration (the interpreter ops call
+// it from the same TU); the C.58 COP2 transfers need it by address.
+extern void vu0Sync();
+extern void _vu0WaitMicro();
 
 bool recVUMacroIsMode0(u32 op);   // aVU_Macro.inl (classify COP2 SPECIAL ALU)
 bool recVUMacroEmitMode0(u32 op); // aVU_Macro.inl (emit via microVU0 single-op emitters)
@@ -1599,6 +1603,133 @@ namespace
 		return ok;
 	}
 
+	// ---- C.58: native COP2 transfers (QMFC2 / CFC2 / QMTC2 / CTC2) ----
+	//
+	// Once the VU0 syncs are done these are plain register moves, but they were
+	// still going out through EmitInterpOpCall, which flushes the GPR register
+	// cache before the call and drops the whole thing afterwards -- expensive in
+	// a COP2-heavy block. Emit them natively instead, mirroring VU0.cpp exactly:
+	//
+	//   * every one of them calls vu0Sync() first;
+	//   * the interlock bit is cpuRegs.code & 1, which we know while COMPILING,
+	//     so the _vu0FinishMicro/_vu0WaitMicro call is only emitted when it is
+	//     actually set (it usually isn't);
+	//   * CFC2's REG_R case writes only UL[0] and leaves UL[1] alone, while the
+	//     general case sign-extends into UL[1] -- i.e. a 64-bit signed store. The
+	//     upper 64 bits of the 128-bit GPR are untouched in both, so the write is
+	//     a read-modify-write of the low half, not a StoreGpr;
+	//   * CTC2 to FBRST or CMSAR1 resets a VU / kicks off a VU1 microprogram, and
+	//     MAC_FLAG/TPC/VPU_STAT are read-only. The side-effect pair stays on the
+	//     interpreter call (return false); the read-only ones become no-ops (but
+	//     still sync).
+	//
+	// vu0Sync() reads cpuRegs.cycle, which inside a JIT block only advances at
+	// block boundaries -- exactly as it did through the interpreter call, so this
+	// changes nothing about VU0 timing (same argument as MFC0 Count, C.18).
+	// Must agree with EmitCop2Transfer exactly: IsTranslatable and the emitter
+	// have to make the same call, or the block builder and the delay-slot path
+	// disagree about where a block ends.
+	inline bool Cop2XferSupported(u32 insn)
+	{
+		const u32 rs = (insn >> 21) & 31;
+		const u32 fs = (insn >> 11) & 31;
+		if (rs != 0x01 && rs != 0x02 && rs != 0x05 && rs != 0x06)
+			return false; // CALLMS/CALLMSR and friends stay interpreted
+		// CTC2 to FBRST resets a VU and to CMSAR1 kicks off a VU1 microprogram:
+		// side effects not worth open-coding.
+		if (rs == 0x06 && fs != 0 && (fs == REG_FBRST || fs == REG_CMSAR1))
+			return false;
+		return true;
+	}
+
+	bool EmitCop2Transfer(MacroAssembler& m, const Register& gpr, u32 insn)
+	{
+		if (!Cop2XferSupported(insn))
+			return false;
+
+		const u32 rs = (insn >> 21) & 31; // COP2 sub-op
+		const u32 rt = (insn >> 16) & 31;
+		const u32 fs = (insn >> 11) & 31; // rd slot
+		const bool interlock = (insn & 1) != 0;
+
+		const uint64_t vu0vf = reinterpret_cast<uint64_t>(&vuRegs[0].VF[0]);
+		const uint64_t vu0vi = reinterpret_cast<uint64_t>(&vuRegs[0].VI[0]);
+		const bool is_read = (rs == 0x01 || rs == 0x02); // QMFC2 / CFC2
+
+		m.Mov(x16, reinterpret_cast<uint64_t>(&vu0Sync));
+		m.Blr(x16);
+		if (interlock)
+		{
+			m.Mov(x16, is_read ? reinterpret_cast<uint64_t>(&_vu0FinishMicro)
+			                   : reinterpret_cast<uint64_t>(&_vu0WaitMicro));
+			m.Blr(x16);
+		}
+
+		switch (rs)
+		{
+			case 0x01: // QMFC2 rt, fs: GPR[rt].UQ = VF[fs].UQ
+				if (!rt) return true;
+				m.Mov(x10, vu0vf + fs * sizeof(vuRegs[0].VF[0]));
+				m.Ldr(q0, MemOperand(x10));
+				m.Str(q0, MemOperand(gpr, rt * 16));
+				s_rc.Invalidate(rt); // 128-bit write bypasses StoreGpr
+				return true;
+
+			case 0x05: // QMTC2 rt, fs: VF[fs].UQ = GPR[rt].UQ  (fs == 0 is a no-op)
+				if (!fs) return true;
+				s_rc.FlushReg(m, gpr, rt); // the 128-bit source is read from memory
+				m.Ldr(q0, MemOperand(gpr, rt * 16));
+				m.Mov(x10, vu0vf + fs * sizeof(vuRegs[0].VF[0]));
+				m.Str(q0, MemOperand(x10));
+				return true;
+
+			case 0x02: // CFC2 rt, fs
+			{
+				if (!rt) return true;
+				m.Mov(x10, vu0vi + fs * sizeof(vuRegs[0].VI[0]));
+				m.Ldr(w0, MemOperand(x10));
+				s_rc.FlushReg(m, gpr, rt); // read-modify-write of GPR memory below
+				if (fs == REG_R)
+				{
+					// UL[0] = VI[R] & 0x7fffff; UL[1] untouched.
+					m.And(w0, w0, 0x7fffff);
+					m.Ldr(x1, MemOperand(gpr, rt * 16));
+					m.Bfi(x1, x0, 0, 32);
+					m.Str(x1, MemOperand(gpr, rt * 16));
+				}
+				else
+				{
+					// UL[0] = VI[fs]; UL[1] = sign of it -- a 64-bit signed store.
+					m.Sxtw(x0, w0);
+					m.Str(x0, MemOperand(gpr, rt * 16));
+				}
+				s_rc.Invalidate(rt);
+				return true;
+			}
+
+			case 0x06: // CTC2 rt, fs
+			{
+				if (!fs) return true;
+				if (fs == REG_MAC_FLAG || fs == REG_TPC || fs == REG_VPU_STAT)
+					return true; // read-only: the syncs above are the whole op
+				const Register src = SrcGpr(m, gpr, rt, x0);
+				m.Mov(x10, vu0vi + fs * sizeof(vuRegs[0].VI[0]));
+				if (fs == REG_R)
+				{
+					m.And(w1, src.W(), 0x7fffff);
+					m.Orr(w1, w1, 0x3f800000);
+					m.Str(w1, MemOperand(x10));
+				}
+				else
+				{
+					m.Str(src.W(), MemOperand(x10));
+				}
+				return true;
+			}
+		}
+		return false;
+	}
+
 	// QFSRV is MMI1 (funct 0x28) sub 0x1b -- NOT MMI3 (0x29), whose sub 0x1b is
 	// PCPYH. The first C.18 cut called QFSRV() on PCPYH instructions (the
 	// GT3-attract breaker at funct=29/sub=1b) and broke MMX7's post-logo
@@ -1608,7 +1739,7 @@ namespace
 
 	// TEMP bisect toggles for the C.18 inline-call op groups (finer than
 	// LRPS2_NO_EE_INTERPCALL, which disables all of them).
-	struct IcFlags { int no_cop0, no_cache, no_qfsrv, no_cop2, no_cop2macro; };
+	struct IcFlags { int no_cop0, no_cache, no_qfsrv, no_cop2, no_cop2macro, no_cop2xfer; };
 	const IcFlags& icDiag()
 	{
 		static IcFlags f = {
@@ -1617,6 +1748,7 @@ namespace
 			getenv("LRPS2_NO_EE_IC_QFSRV") ? 1 : 0,
 			getenv("LRPS2_NO_EE_IC_COP2")  ? 1 : 0,
 			getenv("LRPS2_NO_EE_COP2MACRO") ? 1 : 0,
+			getenv("LRPS2_NO_EE_COP2XFER") ? 1 : 0, // C.58
 		};
 		return f;
 	}
@@ -2081,9 +2213,14 @@ namespace
 				if (rs == 0x08) return false; // BC2F/T(L) -> EmitBranch
 				// C.30-2: SPECIAL1/2 ALU ops emit natively via the microVU0
 				// single-op emitters; LRPS2_NO_EE_COP2MACRO=1 forces them back
-				// to the C.29-1 interp call. Everything else (transfers,
-				// CALLMS/CALLMSR) stays on the interp call.
+				// to the C.29-1 interp call.
 				if (rs >= 0x10 && !icDiag().no_cop2macro && EmitCop2Macro(m, gpr, insn))
+					return true;
+				// C.58: the COP2 transfers (QMFC2/CFC2/QMTC2/CTC2) are register
+				// moves once the VU0 syncs are out of the way -- no reason to pay
+				// an interpreter call, which also has to flush and then drop the
+				// whole GPR register cache.
+				if (!icDiag().no_cop2xfer && EmitCop2Transfer(m, gpr, insn))
 					return true;
 				if (eeDiag().no_interpcall || icDiag().no_cop2) return false;
 				EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::COP2);
@@ -2348,7 +2485,11 @@ namespace
 			return rtf == 0x18 || rtf == 0x19;
 		}
 		if (op == 0x12) // COP2: all but BC2 (branches -> EmitBranch)
-		return ((insn >> 21) & 31) != 0x08 && !eeDiag().no_interpcall && !icDiag().no_cop2;
+		{
+			if (((insn >> 21) & 31) == 0x08) return false;
+			if (!icDiag().no_cop2xfer && Cop2XferSupported(insn)) return true; // C.58: native
+			return !eeDiag().no_interpcall && !icDiag().no_cop2;
+		}
 	if (op == 0x2f) return !eeDiag().no_interpcall && !icDiag().no_cache; // CACHE
 		if (op == 0x10) // COP0: MFC0/MTC0 + CO-format EI/DI
 		{
