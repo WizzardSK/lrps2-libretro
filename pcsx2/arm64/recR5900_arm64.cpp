@@ -2305,18 +2305,47 @@ namespace
 			// (like MFC0/EI) rather than a hand-emitted body -- the win is that the
 			// block no longer BREAKS here (top non-exception handoff cause in MMX7:
 			// LQC2 ~827K, SQC2 ~100K). C.45.
-			case 0x36:
+			// C.59: emitted natively now. The op is vu0Sync() + a 128-bit access
+			// between memory and vuRegs[0].VF[ft], and the destination is a VU
+			// register, NOT a GPR -- so unlike the interpreter-call path this
+			// leaves the EE register cache alone instead of flushing it and then
+			// dropping it wholesale, on an op MMX7 executes ~827K times.
+			// Faithful to VU0.cpp: the address is NOT 16-byte aligned here (LQ/SQ
+			// mask it, LQC2/SQC2 hand the raw address to memRead128/memWrite128),
+			// and LQC2 with ft == 0 still performs the read -- the load can have
+			// side effects -- it just throws the value away.
+			case 0x36: // LQC2
 			{
 				static const bool no_vuqmem = getenv("LRPS2_NO_EE_VUQMEM") != nullptr;
-				if (no_load || no_vuqmem || eeDiag().no_interpcall) return false;
-				EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::LQC2);
+				if (no_load) return false;
+				if (no_vuqmem)
+				{
+					if (eeDiag().no_interpcall) return false;
+					EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::LQC2);
+					return true;
+				}
+				static u128 s_lqc2_sink; // ft == 0: the read happens, the value doesn't land
+				m.Mov(x16, reinterpret_cast<uint64_t>(&vu0Sync)); m.Blr(x16);
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
+				m.Mov(x1, rt ? reinterpret_cast<uint64_t>(&vuRegs[0].VF[rt])
+				             : reinterpret_cast<uint64_t>(&s_lqc2_sink));
+				m.Mov(x16, reinterpret_cast<uint64_t>(&eeRead128_arm64)); m.Blr(x16);
 				return true;
 			}
-			case 0x3e:
+			case 0x3e: // SQC2
 			{
 				static const bool no_vuqmem = getenv("LRPS2_NO_EE_VUQMEM") != nullptr;
-				if (no_store || no_vuqmem || eeDiag().no_interpcall) return false;
-				EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::SQC2);
+				if (no_store) return false;
+				if (no_vuqmem)
+				{
+					if (eeDiag().no_interpcall) return false;
+					EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::SQC2);
+					return true;
+				}
+				m.Mov(x16, reinterpret_cast<uint64_t>(&vu0Sync)); m.Blr(x16);
+				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
+				m.Mov(x1, reinterpret_cast<uint64_t>(&vuRegs[0].VF[rt])); // VF[0] is the (0,0,0,1) constant
+				m.Mov(x16, reinterpret_cast<uint64_t>(&eeWrite128_arm64)); m.Blr(x16);
 				return true;
 			}
 			default: return false;
@@ -2509,8 +2538,10 @@ namespace
 			case 0x2a: case 0x2e: case 0x2c: case 0x2d: // SWL/SWR/SDL/SDR
 				return !eeDiag().no_store;
 			case 0x1e: return !eeDiag().no_load && ((insn >> 16) & 31) != 0; // LQ (rt==0 -> interp)
-			case 0x36: case 0x3e: { static const bool nq = getenv("LRPS2_NO_EE_VUQMEM") != nullptr; // LQC2/SQC2 (inline interp call)
-				return !nq && !eeDiag().no_interpcall && (op == 0x36 ? !eeDiag().no_load : !eeDiag().no_store); }
+			case 0x36: case 0x3e: { // LQC2/SQC2: native (C.59), interp call when LRPS2_NO_EE_VUQMEM=1
+				static const bool nq = getenv("LRPS2_NO_EE_VUQMEM") != nullptr;
+				if (op == 0x36 ? eeDiag().no_load : eeDiag().no_store) return false;
+				return !nq || !eeDiag().no_interpcall; }
 			case 0x37: return !eeDiag().no_load && !eeDiag().no_ld64; // LD
 			case 0x28: case 0x29: case 0x2b:
 				return !eeDiag().no_store;
