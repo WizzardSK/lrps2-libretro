@@ -2350,15 +2350,55 @@ namespace
 
 	// cyc = raw sum of the block's per-op cycle costs (see OpCycles); the
 	// (2 - CP0.Config[18]) factor is applied here, matching execI.
-	void EmitCycleBookkeeping(MacroAssembler& m, int cyc)
+	//
+	// C.55: cpuBlockCycles and the cycle-rate speedhack are ordinary globals,
+	// far from cpuRegs (367 KB and 26 MB in the image), so the x19-base trick of
+	// C.46 cannot reach them -- their addresses have to be materialized. What
+	// CAN go is doing it twice: a branch exit ran this and then the cycle update,
+	// each with its own 4-instruction movz/movk chain for &cpuBlockCycles, and
+	// each round-tripping the value through memory. Fuse them: one
+	// materialization, one load, one store, and the non-default-rate path (which
+	// calls the helper) is a stub, not inline.
+	void EmitTailCycles(MacroAssembler& m, int cyc, bool with_update)
 	{
+		static const bool upd_inline = getenv("LRPS2_NO_INLINE_UPD") == nullptr;
+		const uint64_t upd = reinterpret_cast<uint64_t>(&eeUpdateCycles_arm64);
+		m.Mov(x10, reinterpret_cast<uint64_t>(&cpuBlockCycles)); // once, for both halves
 		m.Ldr(w1, RegsField(&cpuRegs.CP0.n.Config));
 		m.Mov(w2, cyc); m.Mov(w3, cyc * 2);
 		m.Tst(w1, 1u << 18);
 		m.Csel(w2, w2, w3, ne);
-		m.Mov(x10, reinterpret_cast<uint64_t>(&cpuBlockCycles));
-		m.Ldr(w0, MemOperand(x10)); m.Add(w0, w0, w2); m.Str(w0, MemOperand(x10));
+		m.Ldr(w0, MemOperand(x10));
+		m.Add(w0, w0, w2); // cpuBlockCycles += cyc * (2 - CP0.Config[18])
+
+		if (!with_update || !upd_inline)
+		{
+			m.Str(w0, MemOperand(x10));
+			if (with_update) { m.Mov(x16, upd); m.Blr(x16); }
+			return;
+		}
+		// Default cycle rate: cycle += max(1, cpuBlockCycles >> 3); bc &= 7.
+		Label slow, done;
+		m.Mov(x11, reinterpret_cast<uint64_t>(&EmuConfig.Speedhacks.EECycleRate));
+		m.Ldrsb(w1, MemOperand(x11));
+		m.Cbnz(w1, &slow);
+		m.Lsr(w2, w0, 3);
+		m.Cmp(w2, 0);
+		m.Csinc(w2, w2, wzr, ne); // max(1, bc >> 3)
+		m.Ldr(w3, RegsField(&cpuRegs.cycle));
+		m.Add(w3, w3, w2);
+		m.Str(w3, RegsField(&cpuRegs.cycle));
+		m.And(w0, w0, 7);
+		m.Str(w0, MemOperand(x10));
+		m.B(&done);
+		m.Bind(&slow);
+		m.Str(w0, MemOperand(x10)); // the helper reads cpuBlockCycles from memory
+		m.Mov(x16, upd);
+		m.Blr(x16);
+		m.Bind(&done);
 	}
+
+	void EmitCycleBookkeeping(MacroAssembler& m, int cyc) { EmitTailCycles(m, cyc, false); }
 
 	inline void StorePC(MacroAssembler& m, const Register& wsrc)
 	{
@@ -2477,7 +2517,6 @@ namespace
 		const int cyc_nt    = cyc_leading + OpCycles(insn);
 
 		const uint64_t evt = reinterpret_cast<uint64_t>(&eeEventTest_arm64);
-		const uint64_t upd = reinterpret_cast<uint64_t>(&eeUpdateCycles_arm64);
 
 		// C.35: gate the event test on cycle >= nextEventCycle, the upstream
 		// x86 recompiler's dispatcher rule. The interpreter tests on EVERY
@@ -2513,37 +2552,6 @@ namespace
 		// CPU time. Any non-zero EECycleRate falls back to the helper, checked
 		// at runtime so settings changes need no block flush.
 		// LRPS2_NO_INLINE_UPD=1 restores the call.
-		static const bool upd_inline = getenv("LRPS2_NO_INLINE_UPD") == nullptr;
-		const auto EmitUpdateCycles = [&m, upd]()
-		{
-			if (upd_inline)
-			{
-				Label slow, done;
-				m.Mov(x10, reinterpret_cast<uint64_t>(&EmuConfig.Speedhacks.EECycleRate));
-				m.Ldrsb(w1, MemOperand(x10));
-				m.Cbnz(w1, &slow);
-				m.Mov(x10, reinterpret_cast<uint64_t>(&cpuBlockCycles));
-				m.Ldr(w0, MemOperand(x10));
-				m.Lsr(w2, w0, 3);
-				m.Cmp(w2, 0);
-				m.Csinc(w2, w2, wzr, ne); // max(1, cpuBlockCycles >> 3)
-				m.Ldr(w3, RegsField(&cpuRegs.cycle));
-				m.Add(w3, w3, w2);
-				m.Str(w3, RegsField(&cpuRegs.cycle));
-				m.And(w0, w0, 7);
-				m.Str(w0, MemOperand(x10));
-				m.B(&done);
-				m.Bind(&slow);
-				m.Mov(x16, upd);
-				m.Blr(x16);
-				m.Bind(&done);
-			}
-			else
-			{
-				m.Mov(x16, upd);
-				m.Blr(x16);
-			}
-		};
 
 		// WaitLoop speedhack for the EE kernel idle loop at 0x81fc0 (6 nops +
 		// `beq zero,zero,-6`): the interpreter fast-forwards cpuRegs.cycle to
@@ -2578,10 +2586,9 @@ namespace
 		{
 			s_emit_pc = bpc + 4; // delay slot
 			EmitSimple(m, gpr, ds);
-			EmitCycleBookkeeping(m, cyc_taken);
 			if (is_jr) StorePC(m, w20); else StorePCImm(m, tconst);
 			s_rc.FlushDirty(m, gpr); // block exit: the next block reads GPR memory
-			EmitUpdateCycles();
+			EmitTailCycles(m, cyc_taken, true); // C.55 (bookkeeping + update, fused)
 			if (idle_skip) EmitIdleSkip();
 			if (is_jr) { EmitEventTest(); EmitChainEpilogue(m); }
 			else       EmitKnownExit(m, tconst, evt, evt_gate); // C.54
@@ -2623,10 +2630,9 @@ namespace
 		m.B(&not_taken, InvertCondition(cond));
 		s_emit_pc = bpc + 4; // delay slot
 		EmitSimple(m, gpr, ds);
-		EmitCycleBookkeeping(m, cyc_taken);
 		StorePCImm(m, tconst);
 		s_rc.FlushDirty(m, gpr); // block exit (taken)
-		EmitUpdateCycles();
+		EmitTailCycles(m, cyc_taken, true); // C.55 (bookkeeping + update, fused)
 		if (idle_skip) EmitIdleSkip();
 		EmitKnownExit(m, tconst, evt, evt_gate); // C.54
 		s_rc = fork_state;
