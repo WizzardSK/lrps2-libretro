@@ -2110,7 +2110,18 @@ namespace
 				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				Label skip;
 				m.Tst(w0, 3); m.B(&skip, ne);
-				m.Mov(x16, reinterpret_cast<uint64_t>(&eeRead32_arm64)); m.Blr(x16);
+				// C.56: the FP loads/stores were the last memory ops still paying a
+				// full wrapper call (a 4-instruction address materialization plus
+				// the blr) on every access -- they never even used the old inline
+				// vmap path. Give them fastmem like the integer ones: the access is
+				// one instruction, and a fault patches it into the stub that does
+				// the call.
+				if (FastmemOk(s_emit_pc))
+				{
+					EmitFastmemAccess(m, [&] { m.ldr(w0, MemOperand(vmapbase, w0, UXTW)); });
+					DeferFastmemStub(m, reinterpret_cast<uint64_t>(&eeRead32_arm64), 0, 0);
+				}
+				else { m.Mov(x16, reinterpret_cast<uint64_t>(&eeRead32_arm64)); m.Blr(x16); }
 				m.Mov(x1, reinterpret_cast<uint64_t>(&fpuRegs)); m.Str(w0, MemOperand(x1, rt * 4));
 				m.Bind(&skip);
 				return true;
@@ -2123,7 +2134,12 @@ namespace
 				Label skip;
 				m.Tst(w0, 3); m.B(&skip, ne);
 				m.Mov(x1, reinterpret_cast<uint64_t>(&fpuRegs)); m.Ldr(w1, MemOperand(x1, rt * 4));
-				m.Mov(x16, reinterpret_cast<uint64_t>(&eeWrite32_arm64)); m.Blr(x16);
+				if (FastmemOk(s_emit_pc)) // C.56
+				{
+					EmitFastmemAccess(m, [&] { m.str(w1, MemOperand(vmapbase, w0, UXTW)); });
+					DeferFastmemStub(m, reinterpret_cast<uint64_t>(&eeWrite32_arm64), 0, 0);
+				}
+				else { m.Mov(x16, reinterpret_cast<uint64_t>(&eeWrite32_arm64)); m.Blr(x16); }
 				m.Bind(&skip);
 				return true;
 			}
