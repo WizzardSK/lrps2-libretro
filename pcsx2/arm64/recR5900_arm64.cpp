@@ -1727,9 +1727,25 @@ namespace
 			// never checks overflow -- no game relies on the exception). So they are
 			// emitted identically to ADDIU/DADDIU. C.42.
 			case 0x08: // ADDI
-			case 0x09: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(w1, (u32)simm); m.Add(d.W(), a.W(), w1); m.Sxtw(d, d.W()); FinishDst(m, gpr, rt, d); } return true; // ADDIU
+			// C.57: fold the immediate into the add (VIXL materializes a scratch
+			// itself if it doesn't fit an add/sub imm, i.e. never worse), and skip
+			// the add entirely when rs is r0 -- `li` is everywhere and cost three
+			// instructions: a zero into a scratch, the immediate into another, then
+			// the add. Safe for the same reason as C.48: SrcGpr(r0) hands back a
+			// scratch holding zero, never xzr (xzr in the Rn slot of an immediate
+			// add encodes SP).
+			case 0x09: if (rt) {
+				// NB: the source must be claimed BEFORE the destination -- for the
+				// very common rs == rt form, DstGpr would otherwise hand back a
+				// slot it never loaded and SrcGpr would read garbage out of it.
+				if (!rs) { const Register d = DstGpr(m, gpr, rt, x0); m.Mov(d, static_cast<int64_t>(simm)); FinishDst(m, gpr, rt, d); }
+				else { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Add(d.W(), a.W(), simm); m.Sxtw(d, d.W()); FinishDst(m, gpr, rt, d); }
+				} return true; // ADDIU
 			case 0x18: // DADDI
-			case 0x19: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(x1, simm64); m.Add(d, a, x1); FinishDst(m, gpr, rt, d); } return true; // DADDIU
+			case 0x19: if (rt) { // C.57 (same source-before-destination rule as ADDIU)
+				if (!rs) { const Register d = DstGpr(m, gpr, rt, x0); m.Mov(d, simm64); FinishDst(m, gpr, rt, d); }
+				else { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Add(d, a, simm64); FinishDst(m, gpr, rt, d); }
+				} return true; // DADDIU
 			case 0x0a: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(x1, simm64); m.Cmp(a, x1); m.Cset(d, lt); FinishDst(m, gpr, rt, d); } return true; // SLTI
 			case 0x0b: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(x1, simm64); m.Cmp(a, x1); m.Cset(d, lo); FinishDst(m, gpr, rt, d); } return true; // SLTIU
 			case 0x0c: if (rt) { const Register a = SrcGpr(m, gpr, rs, x0), d = DstGpr(m, gpr, rt, x0); m.Mov(x1, (uint64_t)zimm); m.And(d, a, x1); FinishDst(m, gpr, rt, d); } return true; // ANDI
@@ -2634,7 +2650,10 @@ namespace
 		else
 		{
 			const Register a = SrcGpr(m, gpr, rs, x0);
-			if (two) { const Register b = SrcGpr(m, gpr, rt, x1); m.Cmp(a, b); } else m.Cmp(a, 0);
+			// C.57: beqz/bnez (rt == r0) is the common form -- compare against the
+			// immediate zero instead of materializing a zero into a scratch first.
+			if (two && rt) { const Register b = SrcGpr(m, gpr, rt, x1); m.Cmp(a, b); }
+			else m.Cmp(a, 0);
 		}
 		// The taken/not-taken paths fork the compile-time cache state: the
 		// delay slot is only EXECUTED on the taken path, so its cache fills,
@@ -2936,6 +2955,22 @@ namespace
 		s_blk_ret = nullptr;
 		s_code_pos += (sz + 15) & ~size_t(15);
 		ArmProf::NoteBlock("ee-jit", start, sz, pc);
+
+		// LRPS2_DUMP_HOST=<hex guest pc>: write this block's emitted host code to
+		// /home/user/ee_block_<pc>.bin, for `objdump -D -b binary -m aarch64`.
+		if (const char* dh = getenv("LRPS2_DUMP_HOST"))
+		{
+			const u32 want = (u32)strtoul(dh, nullptr, 16);
+			static bool done_dump = false;
+			if (!done_dump && (pc & 0x1fffffff) == want)
+			{
+				done_dump = true;
+				char path[128];
+				snprintf(path, sizeof(path), "/home/user/ee_block_%08x.bin", pc);
+				if (FILE* f = fopen(path, "wb")) { fwrite(start, 1, sz, f); fclose(f); }
+				fprintf(stderr, "[dump-host] guest %08x -> %s (%zu bytes)\n", pc, path, sz);
+			}
+		}
 
 		BlockFn fn = reinterpret_cast<BlockFn>(start);
 		// Native code covers the leading translated run; a translated branch also
