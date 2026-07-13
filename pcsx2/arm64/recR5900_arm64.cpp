@@ -186,12 +186,87 @@ namespace
 		if (on < 0) on = (getenv("LRPS2_WLOG") || getenv("LRPS2_NO_INLINE_MEM")) ? 0 : 1;
 		return on != 0;
 	}
+	// The inline vmap path reads x28 as the VMAP base, so it is only legal when
+	// fastmem is off (in fastmem mode x28 holds the fastmem base instead). An op
+	// whose guest pc is blacklisted out of fastmem therefore takes the wrapper
+	// call, not this path -- those are hardware-register accesses anyway, which
+	// the vmap path would have sent to the wrapper too.
+	inline bool InlineVmapEnabled();
+
 	inline void EmitVmapLookup(MacroAssembler& m, Label* slow)
 	{
 		m.Lsr(w11, w0, 12);
 		m.Ldr(x10, MemOperand(vmapbase, x11, LSL, 3)); // vmv.value
 		m.Add(x10, x10, x0);                           // + guest addr
 		m.Tbnz(x10, 63, slow);                         // sign bit = handler
+	}
+
+	// ---- C.50: fastmem ----
+	// The vtlb already maintains a 4 GB host area (vtlbdata.fastmem_base) in
+	// which every memory-backed guest page is mapped at its own guest address --
+	// it was built for the x86 rec and is kept up to date on arm64 too, we just
+	// never used it. With its base pinned in x28, a load/store is ONE
+	// instruction: ldr/str <data>, [x28, w<addr>, UXTW]. No vmap indirection, no
+	// handler test (C.49 established that the two dependent loads, not the
+	// address arithmetic, are what the old inline path costs).
+	//
+	// Pages that aren't memory-backed (hardware registers, unmapped vaddrs) are
+	// absent from the area, so touching one SIGSEGVs. vtlb's PageFaultHandler
+	// already routes such a fault here (eeFastmemFault_arm64): we rewrite the
+	// faulting instruction into a branch to the slow stub emitted right next to
+	// it at compile time, and remember the guest pc so later compiles of that op
+	// skip fastmem. NOTHING is generated in the signal handler -- the stub
+	// already exists, the patch is one store plus cache maintenance. (Stores
+	// into write-protected RAM pages don't come here at all: the fault handler
+	// takes its SMC branch first, exactly as it does for the old inline stores.)
+	struct FmSite { uintptr_t code; uintptr_t stub; u32 pc; };
+	static std::vector<FmSite> s_fm_sites;    // sorted by code address
+	static std::vector<u32>    s_fm_faulting; // sorted guest pcs: never fastmem again
+
+	// Sites of the block currently being emitted. Absolute addresses only exist
+	// after FinalizeCode, so collect buffer offsets and resolve them there.
+	struct FmPending { size_t site_off; size_t stub_off; u32 pc; };
+	static std::vector<FmPending> s_fm_pending;
+
+	// Guest pc of the op being emitted (compilation is EE-thread-only, like s_rc).
+	u32 s_emit_pc = 0;
+
+	// Latched once: x28 holds the fastmem base in this mode, the vmap base
+	// otherwise, and every block's prologue must agree with every other block's
+	// (they inherit x28 from each other across chain hops).
+	inline bool FastmemMode()
+	{
+		static int mode = -1;
+		if (mode < 0)
+			mode = (!getenv("LRPS2_NO_FASTMEM") && !getenv("LRPS2_WLOG") && !getenv("LRPS2_NO_INLINE_MEM") &&
+			        CHECK_FASTMEM && vtlb_private::vtlbdata.fastmem_base != 0) ? 1 : 0;
+		return mode != 0;
+	}
+	inline bool InlineVmapEnabled() { return InlineMemEnabled() && !FastmemMode(); }
+
+	inline bool FastmemOk(u32 guest_pc)
+	{
+		return FastmemMode() &&
+		       !std::binary_search(s_fm_faulting.begin(), s_fm_faulting.end(), guest_pc);
+	}
+	// Emits the patchable access as EXACTLY one instruction (ExactAssemblyScope
+	// keeps VIXL from expanding it or dropping a literal pool in the middle) and
+	// records where it and its stub live.
+	template <typename EmitAccess>
+	inline void EmitFastmemAccess(MacroAssembler& m, EmitAccess emit_access)
+	{
+		const size_t site_off = m.GetBuffer()->GetCursorOffset();
+		{
+			vixl::ExactAssemblyScope scope(&m, kInstructionSize);
+			emit_access();
+		}
+		s_fm_pending.push_back({site_off, 0, s_emit_pc});
+	}
+	// Call with the cursor at the first instruction of the slow stub (i.e. right
+	// after the fast path's `b done`), which is what a fault patches into.
+	inline void NoteFastmemStub(MacroAssembler& m)
+	{
+		s_fm_pending.back().stub_off = m.GetBuffer()->GetCursorOffset();
 	}
 
 	// ---- C.27: block-local write-through GPR register cache ----
@@ -1630,7 +1705,28 @@ namespace
 				            : (op == 0x23 || op == 0x27) ? reinterpret_cast<uint64_t>(&eeRead32_arm64)
 				            : (op == 0x21 || op == 0x25) ? reinterpret_cast<uint64_t>(&eeRead16_arm64)
 				            : reinterpret_cast<uint64_t>(&eeRead8_arm64);
-				if (InlineMemEnabled())
+				if (FastmemOk(s_emit_pc))
+				{
+					// One-instruction access; the stub after it is dead code
+					// until a fault patches the access into `b stub`. Ldrb/Ldrh/
+					// Ldr w0 zero-extend into x0 exactly like the u32-returning
+					// wrappers, so the value semantics are unchanged.
+					Label done;
+					EmitFastmemAccess(m, [&] {
+						switch (op)
+						{
+							case 0x20: case 0x24: m.ldrb(w0, MemOperand(vmapbase, w0, UXTW)); break; // LB/LBU
+							case 0x21: case 0x25: m.ldrh(w0, MemOperand(vmapbase, w0, UXTW)); break; // LH/LHU
+							case 0x23: case 0x27: m.ldr (w0, MemOperand(vmapbase, w0, UXTW)); break; // LW/LWU
+							default:              m.ldr (x0, MemOperand(vmapbase, w0, UXTW)); break; // LD
+						}
+					});
+					m.B(&done);
+					NoteFastmemStub(m);
+					m.Mov(x16, fn); m.Blr(x16);
+					m.Bind(&done);
+				}
+				else if (InlineVmapEnabled())
 				{
 					// Inline vtlb direct case; handlers (hw regs) fall back to
 					// the wrapper call. Same value semantics: Ldrb/Ldrh/Ldr w0
@@ -1720,7 +1816,30 @@ namespace
 				            : (op == 0x2b) ? reinterpret_cast<uint64_t>(&eeWrite32_arm64)
 				            : (op == 0x29) ? reinterpret_cast<uint64_t>(&eeWrite16_arm64)
 				            : reinterpret_cast<uint64_t>(&eeWrite8_arm64);
-				if (InlineMemEnabled())
+				if (FastmemOk(s_emit_pc))
+				{
+					// A store into a write-protected RAM page (one holding
+					// compiled blocks) SIGSEGVs into the fault handler's SMC
+					// branch, which unprotects the page and drops the stale
+					// blocks before the kernel retries this store -- it never
+					// reaches the backpatch path, exactly like the inline
+					// stores below.
+					Label done;
+					EmitFastmemAccess(m, [&] {
+						switch (op)
+						{
+							case 0x28: m.strb(w1, MemOperand(vmapbase, w0, UXTW)); break; // SB
+							case 0x29: m.strh(w1, MemOperand(vmapbase, w0, UXTW)); break; // SH
+							case 0x2b: m.str (w1, MemOperand(vmapbase, w0, UXTW)); break; // SW
+							default:   m.str (x1, MemOperand(vmapbase, w0, UXTW)); break; // SD
+						}
+					});
+					m.B(&done);
+					NoteFastmemStub(m);
+					m.Mov(x16, fn); m.Blr(x16);
+					m.Bind(&done);
+				}
+				else if (InlineVmapEnabled())
 				{
 					// Inline direct store. A store into a write-protected RAM
 					// page (holding compiled blocks) SIGSEGVs -> vtlb
@@ -1758,7 +1877,18 @@ namespace
 				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				m.And(w0, w0, 0xfffffff0);
 				Label slow, done;
-				if (InlineMemEnabled())
+				if (FastmemOk(s_emit_pc))
+				{
+					// Only the fastmem load can fault; patching it into `b stub`
+					// also skips the Str below, and the stub's wrapper writes
+					// GPR[rt] itself (x1 = &GPR[rt]), so the result lands in the
+					// same place either way.
+					EmitFastmemAccess(m, [&] { m.ldr(q0, MemOperand(vmapbase, w0, UXTW)); });
+					m.Str(q0, MemOperand(gpr, rt * 16));
+					m.B(&done);
+					NoteFastmemStub(m);
+				}
+				else if (InlineVmapEnabled())
 				{
 					EmitVmapLookup(m, &slow);
 					m.Ldr(q0, MemOperand(x10));
@@ -1779,7 +1909,16 @@ namespace
 				m.And(w0, w0, 0xfffffff0);
 				s_rc.FlushReg(m, gpr, rt); // the 128-bit source is read from memory
 				Label slow, done;
-				if (InlineMemEnabled())
+				if (FastmemOk(s_emit_pc))
+				{
+					// The GPR-side load can't fault; the fastmem store is the
+					// patch site (the wrapper re-reads GPR[rt] via x1).
+					m.Ldr(q0, MemOperand(gpr, rt * 16)); // GPR.r[0] is kept zero
+					EmitFastmemAccess(m, [&] { m.str(q0, MemOperand(vmapbase, w0, UXTW)); });
+					m.B(&done);
+					NoteFastmemStub(m);
+				}
+				else if (InlineVmapEnabled())
 				{
 					EmitVmapLookup(m, &slow);
 					m.Ldr(q0, MemOperand(gpr, rt * 16)); // GPR.r[0] is kept zero
@@ -2305,6 +2444,7 @@ namespace
 
 		if (uncond)
 		{
+			s_emit_pc = bpc + 4; // delay slot
 			EmitSimple(m, gpr, ds);
 			EmitCycleBookkeeping(m, cyc_taken);
 			if (is_jr) StorePC(m, w20); else StorePCImm(m, tconst);
@@ -2349,6 +2489,7 @@ namespace
 		const RegCache fork_state = s_rc;
 		Label not_taken;
 		m.B(&not_taken, InvertCondition(cond));
+		s_emit_pc = bpc + 4; // delay slot
 		EmitSimple(m, gpr, ds);
 		EmitCycleBookkeeping(m, cyc_taken);
 		StorePCImm(m, tconst);
@@ -2416,6 +2557,8 @@ namespace
 			s_page.clear();
 			LutClearAll();
 			s_code_pos = 0;
+			s_fm_sites.clear(); // C.50: the code they point at gets overwritten
+			s_fm_pending.clear();
 		}
 
 		u8* start = s_code + s_code_pos;
@@ -2450,10 +2593,16 @@ namespace
 			masm.movk(gpr, (gv >> 48) & 0xffff, 48);
 		}
 		{
-			// x28 = vtlbdata.vmap (the array base, not its address): 4 fixed
-			// instructions for the address + the load, so the prologue size
-			// stays constant for kChainEntryOffset.
-			const uint64_t vv = reinterpret_cast<uint64_t>(&vtlb_private::vtlbdata.vmap);
+			// x28 = the fastmem area base (C.50) or, when fastmem is off, the
+			// vtlb vmap array base (C.49) -- in both cases the VALUE of the
+			// field, not its address. 4 fixed instructions for the address plus
+			// the load, so the prologue size stays constant for
+			// kChainEntryOffset. Every block agrees on which of the two it is
+			// (FastmemMode() is latched), which is what lets chained blocks
+			// inherit x28 without reloading it.
+			const uint64_t vv = FastmemMode()
+				? reinterpret_cast<uint64_t>(&vtlb_private::vtlbdata.fastmem_base)
+				: reinterpret_cast<uint64_t>(&vtlb_private::vtlbdata.vmap);
 			vixl::ExactAssemblyScope scope(&masm, 5 * kInstructionSize);
 			masm.movz(vmapbase, vv & 0xffff);
 			masm.movk(vmapbase, (vv >> 16) & 0xffff, 16);
@@ -2530,6 +2679,7 @@ namespace
 				masm.Mov(x16, reinterpret_cast<uint64_t>(&eeTraceHook));
 				masm.Blr(x16);
 			}
+			s_emit_pc = p; // C.50: guest pc of the op being emitted (fastmem site bookkeeping)
 			if (EmitSimple(masm, gpr, insn))
 			{
 				cyc += OpCycles(insn); p += 4; n++;
@@ -2592,6 +2742,15 @@ namespace
 
 		const size_t sz = masm.GetSizeOfCodeGenerated();
 		__builtin___clear_cache(reinterpret_cast<char*>(start), reinterpret_cast<char*>(start + sz));
+
+		// C.50: buffer offsets -> absolute addresses. Blocks are emitted at
+		// increasing s_code_pos and offsets grow within a block, so appending
+		// keeps s_fm_sites sorted by code address; the only thing that breaks
+		// that ordering is a code-cache wrap, which clears the list.
+		for (const FmPending& fp : s_fm_pending)
+			s_fm_sites.push_back({reinterpret_cast<uintptr_t>(start) + fp.site_off,
+			                      reinterpret_cast<uintptr_t>(start) + fp.stub_off, fp.pc});
+		s_fm_pending.clear();
 		s_code_pos += (sz + 15) & ~size_t(15);
 		ArmProf::NoteBlock("ee-jit", start, sz, pc);
 
@@ -2714,6 +2873,11 @@ void eeJitReset_arm64(void)
 	s_page.clear();
 	LutClearAll();
 	s_code_pos = 0;
+	// C.50: the code these sites point at is about to be overwritten. Faulting
+	// pcs are kept -- they are guest addresses, still valid, and re-learning
+	// them would mean re-taking every fault.
+	s_fm_sites.clear();
+	s_fm_pending.clear();
 }
 
 void eeJitClear_arm64(u32 addr, u32 size)
@@ -2757,6 +2921,47 @@ void eeJitShutdown_arm64(void)
 // whether it lies in the EE JIT cache, which block contains it, and hexdump
 // the emitted code around it (offline-disassemblable). Not signal-safe --
 // debug only.
+// C.50: a fastmem access touched a page the vtlb doesn't back with memory (a
+// hardware register, or an unmapped vaddr). Rewrite the faulting instruction
+// into a branch to the slow stub that was emitted next to it, so the kernel's
+// retry of the same pc takes the wrapper call instead, and blacklist the guest
+// pc so later compiles of that op don't use fastmem at all.
+//
+// Runs on the faulting (EE) thread from the SIGSEGV handler. It only reads a
+// sorted vector that is mutated by the same thread while COMPILING -- never
+// while executing, which is the only time a fault can arrive -- and writes 4
+// bytes of RWX code cache. Returns false for any fault we don't own, which
+// lets the handler fall through to its default (abort) path.
+extern "C" bool eeFastmemFault_arm64(uintptr_t code_address)
+{
+	size_t lo = 0, hi = s_fm_sites.size();
+	while (lo < hi)
+	{
+		const size_t mid = lo + ((hi - lo) >> 1);
+		if (s_fm_sites[mid].code < code_address) lo = mid + 1; else hi = mid;
+	}
+	if (lo >= s_fm_sites.size() || s_fm_sites[lo].code != code_address)
+		return false;
+
+	const FmSite site = s_fm_sites[lo];
+	const ptrdiff_t delta = (ptrdiff_t)(site.stub - site.code) >> 2; // in instructions
+	if (delta < -(1 << 25) || delta >= (1 << 25))
+		return false; // out of B range -- impossible within one block, but don't corrupt code
+
+	u32* const insn = reinterpret_cast<u32*>(site.code);
+	*insn = 0x14000000u | (static_cast<u32>(delta) & 0x03ffffffu); // B <stub>
+	__builtin___clear_cache(reinterpret_cast<char*>(insn), reinterpret_cast<char*>(insn + 1));
+
+	const auto it = std::lower_bound(s_fm_faulting.begin(), s_fm_faulting.end(), site.pc);
+	if (it == s_fm_faulting.end() || *it != site.pc)
+		s_fm_faulting.insert(it, site.pc);
+
+	if (getenv("LRPS2_FASTMEM_LOG"))
+		fprintf(stderr, "[fastmem] patched site %p (guest pc %08x) -> stub %p\n",
+			(void*)site.code, site.pc, (void*)site.stub);
+	return true;
+}
+
 extern "C" void eeJitDebugLocate_arm64(uintptr_t pc)
 {
 	if (!s_code || pc < (uintptr_t)s_code || pc >= (uintptr_t)s_code + kCodeCacheSize)

@@ -942,12 +942,23 @@ void vtlb_AddLoadStoreInfo(uptr code_address, u32 code_size, u32 guest_pc, u32 g
 	s_fastmem_backpatch_count++;
 }
 
+#ifdef ARCH_ARM64
+extern "C" bool eeFastmemFault_arm64(uintptr_t code_address); // arm64 EE rec (C.50)
+#endif
+
 static bool vtlb_BackpatchLoadStore(uptr code_address, uptr fault_address)
 {
 	uptr fastmem_start = (uptr)vtlbdata.fastmem_base;
 	uptr fastmem_end = fastmem_start + 0xFFFFFFFFu;
 	if (fault_address < fastmem_start || fault_address > fastmem_end)
 		return false;
+
+#ifdef ARCH_ARM64
+	// The arm64 EE rec (C.50) keeps its own site registry and pre-emits the slow
+	// stub next to every fastmem access, so backpatching is a single instruction
+	// rewrite over there -- none of the info block below is needed.
+	return eeFastmemFault_arm64(code_address);
+#endif
 
 	bool   found;
 	size_t pos = vtlb_BackpatchLowerBound(code_address, &found);
