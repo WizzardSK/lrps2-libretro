@@ -316,6 +316,14 @@ static bool cpuIntsEnabled(int Interrupt)
 // and the recompiler.  (moved here to help alleviate redundant code)
 __fi void _cpuEventTest_Shared(void)
 {
+	// TEMP diagnostic (LRPS2_EVT_STATS): how often are we here, and how often do
+	// the individual sub-tests actually do something?
+	static const bool evt_stats = getenv("LRPS2_EVT_STATS") != nullptr;
+	static u64 n_calls = 0, n_rcnt = 0, n_int = 0, n_exc = 0, n_iop = 0;
+	if (evt_stats && (++n_calls & 0xfffff) == 0)
+		fprintf(stderr, "[evt] calls=%lluM rcntUpdate=%llu ints=%llu exc=%llu iop=%llu\n",
+			(unsigned long long)(n_calls >> 20), (unsigned long long)n_rcnt,
+			(unsigned long long)n_int, (unsigned long long)n_exc, (unsigned long long)n_iop);
 	eeEventTestIsActive    = true;
 	cpuRegs.nextEventCycle = cpuRegs.cycle + EE_WAIT_CYCLES;
 	cpuRegs.lastEventCycle = cpuRegs.cycle;
@@ -326,7 +334,10 @@ __fi void _cpuEventTest_Shared(void)
 
 	uint mask = intcInterrupt() | dmacInterrupt();
 	if (cpuIntsEnabled(mask))
+	{
+		if (evt_stats) n_exc++;
 		cpuException(mask, cpuRegs.branch);
+	}
 
 
 	// ---- Counters -------------
@@ -336,6 +347,7 @@ __fi void _cpuEventTest_Shared(void)
 
 	if (cpuTestCycle(nextStartCounter, nextDeltaCounter))
 	{
+		if (evt_stats) n_rcnt++;
 		rcntUpdate();
 		// Perfs are updated when read by games (COP0's MFC0/MTC0 instructions), so we need
 		// only update them at semi-regular intervals to keep cpuRegs.cycle from wrapping
@@ -363,6 +375,7 @@ __fi void _cpuEventTest_Shared(void)
 
 	if (cpuRegs.interrupt)
 	{
+		if (evt_stats) n_int++;
 		// This is a BIOS hack because the coding in the BIOS is terrible but the bug is masked by Data Cache
 		// where a DMA buffer is overwritten without waiting for the transfer to end, which causes the fonts to get all messed up
 		// so to fix it, we run all the DMA's instantly when in the BIOS.
@@ -394,6 +407,7 @@ __fi void _cpuEventTest_Shared(void)
 
 	if (iopEventAction)
 	{
+		if (evt_stats) n_iop++;
 		EEsCycle = psxCpu->ExecuteBlock(EEsCycle);
 
 		iopEventAction = false;
