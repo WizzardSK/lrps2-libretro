@@ -30,7 +30,7 @@ save state instead:
 No IPU at all, and the event test that looked like a 6-7 % problem is 2.3 %.
 Any performance claim here should say which of the two it came from.
 
-Two findings that came out of getting that profile:
+Three findings that came out of getting that profile:
 
 * **Loading a save state used to drop the EE onto the interpreter for the rest
   of the session** (3.5x slower: GT3 in-race 92 s -> 26 s per 600 frames). The
@@ -45,6 +45,15 @@ Two findings that came out of getting that profile:
   EE run frames ahead of the GS, or turning MTVU off, both measure as nothing.
   (The sampling profiler's cross-thread percentages are undercounts -- SIGPROF
   does not queue -- so only within-thread splits are trustworthy.)
+* **The EE thread is not instruction-count-bound either.** The in-race handoff
+  work (C.63-C.65) removed 63 % of the interpreter handoffs, and the code-quality
+  work (C.66-C.67) shrank the hottest block 35 % (3068 -> 1984 host bytes:
+  dead COP2 flag pipelines dropped, unaligned pairs fused to single accesses) --
+  and wall time did not move for any of them. On this core (A76/A55) the OoO
+  front end absorbs the removed instructions; what remains is bound by memory
+  and dependency chains, so further emitted-code polishing has a low ceiling.
+  These changes are kept for coverage, interpreter-fidelity, code density and
+  x86 parity, not for speed.
 
 Overall recompiler-suite progress: roughly **~86 %** (weighted by remaining
 work; dynamic instruction coverage on the tested titles is much higher — the
