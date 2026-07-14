@@ -113,8 +113,48 @@ namespace
 		BlockFn fn;
 		u32 end;  // Norm(one past the native-covered range); == Norm(pc) if none
 		bool live;
+		bool manual; // C.60: validates its source at entry; its pages are unprotected
 		std::vector<u32> src; // words [Norm(pc), end) at compile time
 	};
+
+	// ---- C.60: manual pages ----
+	// A page holding code is write-protected so any store to it faults and
+	// invalidates the blocks compiled from it. When a page holds code AND data
+	// the game keeps writing, that turns into a ping-pong: fault -> unprotect +
+	// drop blocks -> next entry revives them and RE-protects -> next store
+	// faults again. On GT3 two pages (0x01000, 0x81000) did this ~23k times each
+	// -- 46.7k of the run's 48k protect/clear pairs -- and each cycle costs a
+	// SIGSEGV plus four mprotect calls (the RAM page and its alias in the 4 GB
+	// fastmem area, protect and unprotect), which is where `mprotect` got to
+	// 6.2% of the EE thread.
+	//
+	// So once a page has been cleared often enough to prove it is not really
+	// static code, stop protecting it and pay for correctness at block entry
+	// instead: blocks compiled from such a page re-check their source words
+	// against live memory each time they are entered, and discard themselves
+	// when it changed. (Upstream does the same thing, from the first clear;
+	// a threshold keeps the ~240 pages that are cleared exactly once -- overlay
+	// loads -- on the cheaper protected path, paying nothing per entry.)
+	constexpr u32 kManualClears = 4;
+	std::vector<u32> s_page_clears; // per RAM page, sized on reserve
+
+	inline bool PageIsManual(u32 pg)
+	{
+		// LRPS2_NO_EE_MANUAL: back to protect-on-every-revive, for A/B.
+		static const bool off = getenv("LRPS2_NO_EE_MANUAL") != nullptr;
+		return !off && pg < s_page_clears.size() && s_page_clears[pg] >= kManualClears;
+	}
+	// Any page the block's source spans having gone manual makes the block manual:
+	// none of them are protected any more, so it must validate all of its source.
+	inline bool RangeIsManual(u32 ns, u32 ne)
+	{
+		if (ne <= ns)
+			return false;
+		for (u32 pg = ns >> kPageShift; pg <= (ne - 1) >> kPageShift; pg++)
+			if (PageIsManual(pg))
+				return true;
+		return false;
+	}
 	std::unordered_map<u32, BlockRec>         s_blocks;
 	std::unordered_map<u32, std::vector<u32>> s_page;
 
@@ -421,6 +461,9 @@ namespace
 	struct ExitPending { Label* slow; uint64_t evt; };
 	static std::vector<ExitPending> s_exit_pending;
 	static std::deque<Label>        s_exit_labels;
+	static Label*                   s_stale = nullptr; // C.60: manual block failed its check
+	static u32                      s_stale_pc = 0;
+	extern "C" u32 eeBlockValidate_arm64(u32 pc);
 	static Label*                   s_blk_ret = nullptr;
 
 	inline void EmitMisalignGuard(MacroAssembler& m, u32 amask)
@@ -2469,6 +2512,16 @@ namespace
 			m.Blr(x16);           // may redirect pc (exception/interrupt)
 			EmitChainEpilogue(m); // ... so chain off the pc it left behind
 		}
+		// C.60: the manual block's source changed under it. It has just been
+		// discarded, so hand the guest pc (this block's, we are at its entry)
+		// back to the dispatcher, which compiles it again from live memory.
+		if (s_stale)
+		{
+			m.Bind(s_stale);
+			m.Mov(w0, s_stale_pc);
+			m.Str(w0, RegsField(&cpuRegs.pc));
+			m.B(s_blk_ret);
+		}
 		m.Bind(s_blk_ret);
 		EmitFrameRet(m);
 	}
@@ -2883,7 +2936,9 @@ namespace
 			auto& vec = s_page[pg];
 			if (std::find(vec.begin(), vec.end(), pc) == vec.end())
 				vec.push_back(pc);
-			if (InRam(pg << kPageShift))
+			// C.60: a manual page is deliberately left writable -- protecting it
+			// again is what the ping-pong was. Its blocks validate at entry.
+			if (InRam(pg << kPageShift) && !PageIsManual(pg))
 				mmap_MarkCountedRamPage(pg << kPageShift);
 		}
 	}
@@ -2906,6 +2961,11 @@ namespace
 		}
 
 		u8* start = s_code + s_code_pos;
+		// C.60: decided before emission (the entry check is part of the code we are
+		// about to emit) from the pages the block can possibly cover; the exact
+		// range is re-checked once it is known, below.
+		const u32 startpg = Norm(pc) >> kPageShift;
+		const bool manual = PageIsManual(startpg) || PageIsManual(startpg + 1);
 		s_fm_pending.clear(); // C.50/C.51: per-block site state
 		s_fm_labels.clear();
 		s_ma_pending.clear(); // C.53
@@ -2961,6 +3021,22 @@ namespace
 			masm.movk(vmapbase, (vv >> 32) & 0xffff, 32);
 			masm.movk(vmapbase, (vv >> 48) & 0xffff, 48);
 			masm.ldr(vmapbase, MemOperand(vmapbase));
+		}
+
+		// C.60: a block on a manual page is not protected by anything -- check its
+		// source before running it. This sits at kChainEntryOffset (the prologue
+		// above has a fixed size), so the chained entry from another block runs it
+		// as well. x30 is clobbered by the call but the frame already holds it.
+		s_stale = nullptr;
+		if (manual)
+		{
+			s_stale_pc = pc;
+			masm.Mov(w0, pc);
+			masm.Mov(x16, reinterpret_cast<uint64_t>(&eeBlockValidate_arm64));
+			masm.Blr(x16);
+			s_exit_labels.emplace_back();
+			s_stale = &s_exit_labels.back();
+			masm.Cbz(w0, s_stale); // source changed -> discarded, back to dispatcher
 		}
 
 		// TEMP diagnostic (LRPS2_EXCLOG): only the EE exception vector blocks
@@ -3148,7 +3224,9 @@ namespace
 		// Native code covers the leading translated run; a translated branch also
 		// bakes the branch + delay slot (p still points at the branch there).
 		const u32 ns = Norm(pc), ne = Norm(branch_end ? p + 8 : p);
-		BlockRec rec{fn, ne, true, {}};
+		if (!manual && RangeIsManual(ns, ne))
+			return fn; // ran once, never cached: recompiled fresh on the next entry
+		BlockRec rec{fn, ne, true, manual, {}};
 		if (ne > ns)
 		{
 			rec.src.resize((ne - ns) >> 2);
@@ -3197,6 +3275,9 @@ namespace
 	// source really changed (caller erases + recompiles).
 	BlockFn Revive(u32 pc, BlockRec& r)
 	{
+		// C.60: the page went manual under it -- recompile so it gets its check.
+		if (!r.manual && RangeIsManual(Norm(pc), r.end))
+			return nullptr;
 		for (u32 q = 0; q < (u32)r.src.size(); q++)
 			if (memRead32(pc + q * 4) != r.src[q])
 				return nullptr;
@@ -3213,6 +3294,36 @@ namespace
 				fprintf(stderr, "[eerec] %llu block revives\n", (unsigned long long)nrev);
 		}
 		return r.fn;
+	}
+
+	// C.60: entry check for a block compiled from a manual (unprotected) page.
+	// Emitted at kChainEntryOffset, so BOTH the dispatcher's call and a chained
+	// jump from another block run it. Returns 0 when the source words changed --
+	// the block is discarded here, and its code branches to the stale tail,
+	// which hands the pc back to the dispatcher for a fresh compile.
+	extern "C" u32 eeBlockValidate_arm64(u32 pc)
+	{
+		auto it = s_blocks.find(pc);
+		if (it == s_blocks.end())
+			return 1; // already gone; the code we are in is still what memory says
+		BlockRec& r = it->second;
+		const u32 np = Norm(pc);
+		const size_t bytes = r.src.size() * sizeof(u32);
+		bool same;
+		if (InRam(np) && eeMem)
+			same = memcmp(eeMem->Main + np, r.src.data(), bytes) == 0;
+		else
+		{
+			same = true;
+			for (u32 q = 0; same && q < (u32)r.src.size(); q++)
+				same = memRead32(pc + q * 4) == r.src[q];
+		}
+		if (same)
+			return 1;
+		if (InRam(np))
+			s_lut[np >> 2] = nullptr;
+		s_blocks.erase(it);
+		return 0;
 	}
 
 	inline BlockFn BlockForPC(u32 pc)
@@ -3252,6 +3363,7 @@ void eeJitReserve_arm64(void)
 		                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		if (s_lut == MAP_FAILED) s_lut = nullptr;
 	}
+	s_page_clears.assign(kRamBytes >> kPageShift, 0); // C.60
 	s_ok = s_ok && s_code && s_lut;
 	ArmProf::RegisterRegion("ee-jit", s_code, kCodeCacheSize);
 	Console.WriteLn("arm64 EE rec (C.7): %s.", s_ok ? "native ALU+mem+branch+FPU-mov+MMI+muldiv JIT (block-linking)" : "FAILED");
@@ -3286,6 +3398,8 @@ void eeJitClear_arm64(u32 addr, u32 size)
 		auto it = s_page.find(pg);
 		if (it == s_page.end())
 			continue;
+		if (pg < s_page_clears.size())
+			s_page_clears[pg]++; // C.60: enough of these and the page goes manual
 		for (u32 spc : it->second)
 		{
 			auto bit = s_blocks.find(spc);

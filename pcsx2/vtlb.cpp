@@ -1379,6 +1379,32 @@ vtlb_ProtectionMode mmap_GetRamPageInfo(u32 paddr)
 	return m_PageProtectInfo[rampage].Mode;
 }
 
+// TEMP diagnostic (LRPS2_SMC_STATS): shape of the protect/fault/clear churn.
+// Counts protects and clears per RAM page, dumps the worst offenders at exit.
+namespace {
+	struct SmcStats
+	{
+		bool  on = getenv("LRPS2_SMC_STATS") != nullptr;
+		u64   protects = 0, clears = 0;
+		std::map<u32, std::pair<u32, u32>> per_page; // page -> (protects, clears)
+		~SmcStats()
+		{
+			if (!on)
+				return;
+			fprintf(stderr, "[smc] %llu protects, %llu clears over %zu pages\n",
+				(unsigned long long)protects, (unsigned long long)clears, per_page.size());
+			std::vector<std::pair<u32, std::pair<u32, u32>>> v(per_page.begin(), per_page.end());
+			std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) {
+				return a.second.second > b.second.second;
+			});
+			for (size_t i = 0; i < v.size() && i < 15; i++)
+				fprintf(stderr, "[smc]   page %5u (ram %08x)  protects=%7u clears=%7u\n",
+					v[i].first, v[i].first << __pageshift, v[i].second.first, v[i].second.second);
+		}
+	};
+	SmcStats s_smc;
+}
+
 // paddr - physically mapped PS2 address
 void mmap_MarkCountedRamPage(u32 paddr)
 {
@@ -1407,6 +1433,7 @@ void mmap_MarkCountedRamPage(u32 paddr)
 		return; // skip town if we're already protected.
 
 	m_PageProtectInfo[rampage].Mode = ProtMode_Write;
+	if (s_smc.on) { s_smc.protects++; s_smc.per_page[rampage].first++; }
 	mode.m_read  = true;
 	mode.m_write = false;
 	mode.m_exec  = false;
@@ -1430,6 +1457,7 @@ static __fi void mmap_ClearCpuBlock(uint offset)
 	if (CHECK_FASTMEM)
 		vtlb_UpdateFastmemProtection(rampage << __pageshift, __pagesize, mode);
 	m_PageProtectInfo[rampage].Mode = ProtMode_Manual;
+	if (s_smc.on) { s_smc.clears++; s_smc.per_page[rampage].second++; }
 	Cpu->Clear(m_PageProtectInfo[rampage].ReverseRamMap, __pagesize);
 }
 
