@@ -704,13 +704,34 @@ static void intExecute(void)
 // COPx sub-ops separate. Dumps the top of the table every 100M interpreted ops;
 // this is what decides which ops are worth translating next.
 static const bool s_handoffStats = getenv("LRPS2_HANDOFF_STATS") != nullptr;
+namespace {
+	struct HandoffTables
+	{
+		std::unordered_map<u32, u64> h, hf;
+		u64 n = 0, nf = 0;
+		~HandoffTables(); // dumps at exit: a 600-frame run never reaches 100M ops
+	};
+	HandoffTables s_handoff;
+}
+static void eeHandoffDump(const char* tag, std::unordered_map<u32, u64>& m, u64 total);
+
+HandoffTables::~HandoffTables()
+{
+	if (!s_handoffStats)
+		return;
+	eeHandoffDump("histogram", h, n);
+	eeHandoffDump("BREAKERS (first op)", hf, nf);
+}
+
 static void eeHandoffCount(u32 insn, bool first)
 {
 	// Two tables: h = every interpreted op (shows total interp volume, mostly
 	// already-translated ops stuck in handed-off block tails), hf = only the
 	// FIRST op of each handoff = the untranslated op that actually broke the
 	// block. hf is what decides which op to translate next.
-	static std::unordered_map<u32, u64> h, hf; static u64 n = 0, nf = 0;
+	std::unordered_map<u32, u64>& h = s_handoff.h;
+	std::unordered_map<u32, u64>& hf = s_handoff.hf;
+	u64& n = s_handoff.n; u64& nf = s_handoff.nf;
 	const u32 op = insn >> 26;
 	u32 key = op << 16;
 	if      (op == 0x00) key |= (insn & 0x3f) << 8;                            // SPECIAL: funct
@@ -722,19 +743,21 @@ static void eeHandoffCount(u32 insn, bool first)
 	if (first) { hf[key]++; nf++; }
 	if (++n % 100000000 != 0)
 		return;
-	const auto dump = [](const char* tag, std::unordered_map<u32, u64>& m, u64 total) {
-		std::vector<std::pair<u32, u64>> v(m.begin(), m.end());
-		const size_t k = v.size() < 24 ? v.size() : 24;
-		std::partial_sort(v.begin(), v.begin() + k, v.end(), [](auto& x, auto& y) { return x.second > y.second; });
-		fprintf(stderr, "=== EE handoff %s (%lluM ops, uniq=%zu) ===\n", tag,
-			(unsigned long long)(total / 1000000), v.size());
-		for (size_t i = 0; i < k; i++)
-			fprintf(stderr, "  op=%02x funct=%02x sub=%02x  %llu\n",
-				v[i].first >> 16, (v[i].first >> 8) & 0xff, v[i].first & 0xff,
-				(unsigned long long)v[i].second);
-	};
-	dump("histogram", h, n);
-	dump("BREAKERS (first op)", hf, nf);
+	eeHandoffDump("histogram", h, n);
+	eeHandoffDump("BREAKERS (first op)", hf, nf);
+}
+
+static void eeHandoffDump(const char* tag, std::unordered_map<u32, u64>& m, u64 total)
+{
+	std::vector<std::pair<u32, u64>> v(m.begin(), m.end());
+	const size_t k = v.size() < 24 ? v.size() : 24;
+	std::partial_sort(v.begin(), v.begin() + k, v.end(), [](auto& x, auto& y) { return x.second > y.second; });
+	fprintf(stderr, "=== EE handoff %s (%llu ops, uniq=%zu) ===\n", tag,
+		(unsigned long long)total, v.size());
+	for (size_t i = 0; i < k; i++)
+		fprintf(stderr, "  op=%02x funct=%02x sub=%02x  %llu\n",
+			v[i].first >> 16, (v[i].first >> 8) & 0xff, v[i].first & 0xff,
+			(unsigned long long)v[i].second);
 }
 
 // Run a single EE basic block through the interpreter (instructions until the

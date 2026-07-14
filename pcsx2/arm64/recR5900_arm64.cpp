@@ -138,6 +138,11 @@ namespace
 	constexpr u32 kManualClears = 4;
 	std::vector<u32> s_page_clears; // per RAM page, sized on reserve
 
+	// C.63 A/B toggles (cached: these are read per compiled instruction).
+	inline bool NoEeAdd()   { static const bool v = getenv("LRPS2_NO_EE_ADD")   != nullptr; return v; }
+	inline bool NoEePlzcw() { static const bool v = getenv("LRPS2_NO_EE_PLZCW") != nullptr; return v; }
+	inline bool NoEePrevh() { static const bool v = getenv("LRPS2_NO_EE_PREVH") != nullptr; return v; }
+
 	inline bool PageIsManual(u32 pg)
 	{
 		// LRPS2_NO_EE_MANUAL: back to protect-on-every-revive, for A/B.
@@ -1151,7 +1156,8 @@ namespace
 	       M_NOR, M_CMGT, M_CMEQ, M_SMAX, M_SMIN, M_ZIP1, M_ZIP2,
 	       M_SLLI, M_SRLI, M_SRAI, // immediate shifts (fmt 1=.8H sa&0xf, 2=.4S sa)
 	       M_PACK,                 // PPACB/H/W: even elements, rt -> low, rs -> high
-	       M_CPYLD, M_CPYUD };     // PCPYLD/PCPYUD (64-bit lane zips)
+	       M_CPYLD, M_CPYUD,       // PCPYLD/PCPYUD (64-bit lane zips)
+	       M_REVH };               // PREVH: reverse the halfwords within each 64-bit half
 
 	// Decode an MMI instruction to (action, lane fmt: 0=16B,1=8H,2=4S). Returns the
 	// action or -1 if not natively supported. funct selects the sub-class
@@ -1220,6 +1226,7 @@ namespace
 				if (sub == 0x0e) { *fmt = 3; return M_CPYLD; } // PCPYLD
 				if (sub == 0x12) { *fmt = 0; return M_AND; }   // PAND
 				if (sub == 0x13) { *fmt = 0; return M_EOR; }   // PXOR
+				if (sub == 0x1b && !NoEePrevh()) { *fmt = 1; return M_REVH; }  // PREVH (C.63)
 				return -1;
 			case 0x29: // MMI3
 				if (sub == 0x0e) { *fmt = 3; return M_CPYUD; } // PCPYUD
@@ -1285,6 +1292,9 @@ namespace
 			case M_PACK:  m.Uzp1(d, o, n);  break; // PPAC*: rt evens -> low, rs evens -> high
 			case M_CPYLD: m.Zip1(d, o, n);  break; // PCPYLD: rd = {rt.UD[0], rs.UD[0]}
 			case M_CPYUD: m.Zip2(d, n, o);  break; // PCPYUD: rd = {rs.UD[1], rt.UD[1]}
+			// PREVH: rd.US[0..3] = rt.US[3..0], rd.US[4..7] = rt.US[7..4] -- exactly
+			// what REV64 does on a .8H view (reverse halfwords within each 64 bits).
+			case M_REVH:  m.Rev64(d, o);    break;
 		}
 		m.Str(q0, MemOperand(gpr, rd * 16));
 		s_rc.Invalidate(rd); // 128-bit write bypasses StoreGpr
@@ -1828,8 +1838,12 @@ namespace
 					case 0x06: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), b = SrcGpr(m, gpr, rs, x1), d = DstGpr(m, gpr, rd, x0); m.Lsr(d.W(), a.W(), b.W()); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // SRLV
 					case 0x07: if (rd) { const Register a = SrcGpr(m, gpr, rt, x0), b = SrcGpr(m, gpr, rs, x1), d = DstGpr(m, gpr, rd, x0); m.Asr(d.W(), a.W(), b.W()); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // SRAV
 					// 32-bit add/sub -> sign-extend to 64
-					case 0x21: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Add(d.W(), a.W(), b.W()); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // ADDU
-					case 0x23: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Sub(d.W(), a.W(), b.W()); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // SUBU
+					// ADD/SUB trap on signed overflow; the x86 rec does not emulate that
+					// exception and neither do we for ADDI/DADDI, so they are ADDU/SUBU.
+					case 0x20: if (NoEeAdd()) break;
+					case 0x21: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Add(d.W(), a.W(), b.W()); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // ADD/ADDU
+					case 0x22: if (NoEeAdd()) break;
+					case 0x23: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Sub(d.W(), a.W(), b.W()); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // SUB/SUBU
 					// 64-bit logic / set / add / sub
 					case 0x24: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.And(d, a, b); FinishDst(m, gpr, rd, d); } return true; // AND
 					case 0x25: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Orr(d, a, b); FinishDst(m, gpr, rd, d); } return true; // OR
@@ -2212,6 +2226,25 @@ namespace
 						EmitMadd(m, gpr, funct == 0x21, rs, rt, rd, 8);
 						return true;
 				}
+				// C.63: PLZCW -- rd.UL[0..1] = count_leading_sign_bits(rs.SL[0..1]) - 1,
+				// which is exactly what AArch64's CLS computes (it excludes the sign
+				// bit). Only the low 64 bits of rd are written, like the interpreter.
+				if ((insn & 0x3f) == 0x04 && !NoEePlzcw())
+				{
+					const u32 rd = (insn >> 11) & 31, rs = (insn >> 21) & 31;
+					if (rd)
+					{
+						const Register a = SrcGpr(m, gpr, rs, x0);
+						m.Cls(w1, a.W());        // low word
+						m.Lsr(x2, a, 32);
+						m.Cls(w2, w2);           // high word
+						m.Bfi(x1, x2, 32, 32);   // rd = lo | (hi << 32)
+						const Register d = DstGpr(m, gpr, rd, x0);
+						m.Mov(d, x1);
+						FinishDst(m, gpr, rd, d);
+					}
+					return true;
+				}
 				if (MmiSupported(insn)) { EmitMmi(m, gpr, insn); return true; }
 				// PCPYH: broadcast halfword 0 of each 64-bit half of rt across
 				// that half. Scalar: (u16)half * 0x0001000100010001.
@@ -2543,6 +2576,8 @@ namespace
 				case 0x10: case 0x11: case 0x12: case 0x13: // MFHI/MTHI/MFLO/MTLO
 				case 0x18: case 0x19: case 0x1a: case 0x1b: // MULT/MULTU/DIV/DIVU
 					return !eeDiag().no_muldiv;
+				case 0x20: case 0x22:                       // ADD/SUB (C.63, trap dropped)
+					return !NoEeAdd();
 				case 0x0f: return true;                     // SYNC (empty body)
 				case 0x0a: case 0x0b: return true;          // MOVZ/MOVN
 				case 0x28: case 0x29: return true;          // MFSA/MTSA
@@ -2558,6 +2593,8 @@ namespace
 			if ((f >= 0x10 && f <= 0x13) || (f >= 0x18 && f <= 0x1b) // pipeline-1 muldiv
 				|| f == 0x00 || f == 0x01 || f == 0x20 || f == 0x21) // MADD/MADDU(1)
 				return !eeDiag().no_mmi && !eeDiag().no_muldiv;
+			if (f == 0x04)             // PLZCW (C.63)
+				return !eeDiag().no_mmi && !NoEePlzcw();
 			return !eeDiag().no_mmi &&
 				(MmiSupported(insn) || IsPcpyh(insn) ||
 				 (IsQfsrv(insn) && !eeDiag().no_interpcall && !icDiag().no_qfsrv));
