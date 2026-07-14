@@ -604,6 +604,7 @@ namespace
 	{
 		const u32 rs = (insn >> 21) & 31;
 		if (rs == 0x00 || rs == 0x04) return true;
+		if (rs == 0x02 || rs == 0x06) return true;    // CFC1/CTC1 (C.65)
 		if (rs == 0x14) return (insn & 0x3f) == 0x20; // W format: CVT.S.W
 		if (rs == 0x10)
 		{
@@ -1097,6 +1098,27 @@ namespace
 		if (rs == 0x04) // MTC1 rt, fs : fpr[fs].UL = GPR[rt].UL[0]
 		{
 			m.Mov(x1, fbase); LoadGpr(m, x0, gpr, rt); m.Str(w0, MemOperand(x1, fs * 4));
+			return;
+		}
+		// C.65: the control-register moves. fs is a compile-time constant, so the
+		// three CFC1 cases specialize to a load or a constant (FPU.cpp: fs==31 ->
+		// sign-extended FCR31; fs==0 -> revision 0x2E00; anything else -> 0), and
+		// a CTC1 to any register but FCR31 is a nop. fprc[31] sits at fpuRegs
+		// byte offset 252 (fpr[32] first, 4 bytes each) -- same as the BC1 test.
+		if (rs == 0x02) // CFC1 rt, fs
+		{
+			if (rt)
+			{
+				if (fs == 31) { m.Mov(x1, fbase); m.Ldr(w0, MemOperand(x1, 252)); m.Sxtw(x0, w0); }
+				else if (fs == 0) m.Mov(x0, 0x2E00);
+				else              m.Mov(x0, 0);
+				StoreGpr(m, x0, gpr, rt);
+			}
+			return;
+		}
+		if (rs == 0x06) // CTC1 rt, fs : only FCR31 is writable
+		{
+			if (fs == 31) { m.Mov(x1, fbase); LoadGpr(m, x0, gpr, rt); m.Str(w0, MemOperand(x1, 252)); }
 			return;
 		}
 		if (rs == 0x14) // W format: CVT.S.W only
