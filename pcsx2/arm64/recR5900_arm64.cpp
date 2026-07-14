@@ -463,7 +463,8 @@ namespace
 	static std::deque<Label>        s_exit_labels;
 	static Label*                   s_stale = nullptr; // C.60: manual block failed its check
 	static u32                      s_stale_pc = 0;
-	extern "C" u32 eeBlockValidate_arm64(u32 pc);
+	struct BlockRec;
+	extern "C" u32 eeBlockValidate_arm64(BlockRec* r, u32 pc);
 	static Label*                   s_blk_ret = nullptr;
 
 	inline void EmitMisalignGuard(MacroAssembler& m, u32 amask)
@@ -2966,6 +2967,15 @@ namespace
 		// range is re-checked once it is known, below.
 		const u32 startpg = Norm(pc) >> kPageShift;
 		const bool manual = PageIsManual(startpg) || PageIsManual(startpg + 1);
+		// C.61: a manual block's check needs its record's address while it is being
+		// emitted, so the (empty) record goes in first and is filled in below.
+		BlockRec* rec_ptr = nullptr;
+		if (manual)
+		{
+			BlockRec& r = s_blocks[pc];
+			r = BlockRec{nullptr, Norm(pc), true, true, {}};
+			rec_ptr = &r;
+		}
 		s_fm_pending.clear(); // C.50/C.51: per-block site state
 		s_fm_labels.clear();
 		s_ma_pending.clear(); // C.53
@@ -3031,7 +3041,8 @@ namespace
 		if (manual)
 		{
 			s_stale_pc = pc;
-			masm.Mov(w0, pc);
+			masm.Mov(x0, reinterpret_cast<uint64_t>(rec_ptr)); // C.61: no lookup
+			masm.Mov(w1, pc);
 			masm.Mov(x16, reinterpret_cast<uint64_t>(&eeBlockValidate_arm64));
 			masm.Blr(x16);
 			s_exit_labels.emplace_back();
@@ -3301,28 +3312,30 @@ namespace
 	// jump from another block run it. Returns 0 when the source words changed --
 	// the block is discarded here, and its code branches to the stale tail,
 	// which hands the pc back to the dispatcher for a fresh compile.
-	extern "C" u32 eeBlockValidate_arm64(u32 pc)
+	// C.61: the record is reached through the pointer baked into the block at
+	// compile time. Looking it up by pc (an unordered_map probe on every single
+	// block entry, chained ones included) was 2.1% of the EE thread on its own --
+	// more than the comparison it exists to perform. References into an
+	// unordered_map are stable across inserts, so the pointer stays good for the
+	// life of the block, and the block is erased only from here or from a clear.
+	extern "C" u32 eeBlockValidate_arm64(BlockRec* r, u32 pc)
 	{
-		auto it = s_blocks.find(pc);
-		if (it == s_blocks.end())
-			return 1; // already gone; the code we are in is still what memory says
-		BlockRec& r = it->second;
 		const u32 np = Norm(pc);
-		const size_t bytes = r.src.size() * sizeof(u32);
+		const size_t bytes = r->src.size() * sizeof(u32);
 		bool same;
 		if (InRam(np) && eeMem)
-			same = memcmp(eeMem->Main + np, r.src.data(), bytes) == 0;
+			same = memcmp(eeMem->Main + np, r->src.data(), bytes) == 0;
 		else
 		{
 			same = true;
-			for (u32 q = 0; same && q < (u32)r.src.size(); q++)
-				same = memRead32(pc + q * 4) == r.src[q];
+			for (u32 q = 0; same && q < (u32)r->src.size(); q++)
+				same = memRead32(pc + q * 4) == r->src[q];
 		}
 		if (same)
 			return 1;
 		if (InRam(np))
 			s_lut[np >> 2] = nullptr;
-		s_blocks.erase(it);
+		s_blocks.erase(pc);
 		return 0;
 	}
 
