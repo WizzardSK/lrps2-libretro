@@ -12,7 +12,19 @@ Verified booting to real in-game content (Mega Man X7 gameplay, Gran Turismo 3
 intro/FMV) on a Snapdragon-class device (Adreno 618, 4K-page Linux, glibc
 RetroArch flatpak + musl test host).
 
-Overall recompiler-suite progress: roughly **~82 %** (weighted by remaining
+**A caveat worth stating up front, because it colours every number below.** The
+headless runs used for profiling do not reach VU-heavy content. Gran Turismo 3
+never leaves its opening movie on its own -- 9000 frames (150 s of emulated
+time) with Start auto-pressed still land in the intro -- and Mega Man X7, which
+does reach gameplay, is light on geometry. So in both, the MTVU thread sits at
+0.2-0.3 % of CPU while the IPU (`IPUWorker` + `yuv2rgb`, ~14 %) tops the EE
+thread: **what these runs measure is largely the video decoder, not the game.**
+The recompilers are correctness-verified against the interpreter regardless
+(the framebuffers are byte-identical), but any *performance* claim from them
+describes FMV playback. Entering real gameplay needs a save state made in
+RetroArch; the profile above a race is still to be taken.
+
+Overall recompiler-suite progress: roughly **~83 %** (weighted by remaining
 work; dynamic instruction coverage on the tested titles is much higher — the
 vast majority of EE+IOP instructions already execute natively, and the
 remaining interpreter handoffs are mostly untranslatable exceptions). Opcode
@@ -28,7 +40,7 @@ table.
 | VU1 recompiler | 60 % | **microVU1 (armsx2 aVU transplant) is the default provider**: native AArch64 VU codegen, MVU_DIFF-verified register-exact against the interpreter on both test titles, byte-identical framebuffers through 12000-frame runs. Instant-VU1 and MTVU are back to default-on with it. Fallbacks: `LRPS2_VU1REC_PAIR=1` (interp-pair rec), `LRPS2_NO_VU1REC=1` (interpreter; both restore conservative non-instant/opt-in-MTVU behavior) |
 | VU0 / COP2 | 70 % | **microVU0 runs VU0 micro programs** (VCALLMS) natively; **COP2 macro ALU ops emit native NEON directly into EE JIT blocks** (aVU_Macro single-op emitters, conservative all-flags-live gating); BC2 branches native; **the COP2 transfers (QMFC2/CFC2/QMTC2/CTC2) are native too** (C.58) -- the interlock bit is known at compile time, so the `_vu0FinishMicro`/`_vu0WaitMicro` call is only emitted when set, and CFC2's REG_R quirk (writes UL[0], leaves UL[1]) is reproduced exactly. CTC2 to FBRST/CMSAR1 (VU reset / VU1 microprogram kick) and CALLMS/CALLMSR stay on the interpreter call, faithful to x86. `LRPS2_NO_VU0REC=1` / `LRPS2_NO_EE_COP2MACRO=1` / `LRPS2_NO_EE_COP2XFER=1` fall back |
 | VIF unpack dynarec | 100 % | NEON unpack kernels (armsx2 transplant); portable C fallback (`LRPS2_NO_VIF_DYNAREC=1`) |
-| SMC / overlays | Compiled pages are write-protected; faults invalidate stale blocks (vtlb `mmap_MarkCountedRamPage` flow) |
+| SMC / overlays | Compiled pages are write-protected; faults invalidate stale blocks (vtlb `mmap_MarkCountedRamPage` flow). A page the game keeps *writing* would otherwise ping-pong forever — fault, unprotect, drop blocks, revive them, re-protect, fault again — at a SIGSEGV plus four `mprotect` calls a cycle (the RAM page and its alias in the fastmem area). After `kManualClears` clears a page is therefore left writable and its blocks check their own source words at entry instead (C.60), which is where the chained entry point sits, so a chained jump validates too; the check is handed its block record at compile time rather than looking itself up (C.61). On GT3 that took the run from 48006 protects / 47803 clears to 251 / 49 — two pages had been ping-ponging ~23k times each — and `mprotect` left the profile entirely. `LRPS2_NO_EE_MANUAL=1` restores protect-on-every-revive, `LRPS2_SMC_STATS=1` dumps the per-page protect/clear counts |
 | MTVU (VU1 thread) | **Default-on** with microVU1 (≥3 cores; `LRPS2_NO_MTVU=1` disables). Partial-packet flush protocol prevents the continuous-microprogram livelock; with an interp-style VU1 provider MTVU stays opt-in (`LRPS2_MTVU=1`) |
 | GS renderer | Standard **Vulkan** renderer (`pcsx2_renderer = "Vulkan"`). paraLLEl-GS requires GPU features (8/16-bit storage, small subgroups) that e.g. Adreno 618 lacks |
 | MTGS | Works (GS thread active) |
@@ -69,6 +81,7 @@ Bisection switches:
 | `LRPS2_NO_EE_DIVS/SQRTS/RSQRTS=1` | Route just DIV.S / SQRT.S / RSQRT.S to the interpreter |
 | `LRPS2_EE_SPLIT_MEM=1` | End the block after every native mem op |
 | `LRPS2_NO_INLINE_MEM=1` | Disable the inline vtlb fast path (wrapper calls only) |
+| `LRPS2_NO_EE_MANUAL=1` | Re-protect a code page on every revive instead of letting it go manual (C.60) |
 | `LRPS2_MTVU=1` | Opt in to the MTVU (VU1 worker thread) |
 | `LRPS2_VU1_INSTANT=1` | Restore instant VU1 (off on arm64; see VU0/VU1 row) |
 | `LRPS2_MTVU_LOG=1` | MTVU worker/GS packet + per-path GS byte counters |
@@ -87,6 +100,20 @@ Tracing/logging:
 | `LRPS2_FAULT_LOG=1` | Log vtlb page-fault handler activity; on an unhandled fault, locate the faulting pc's JIT block (guest pc, emitted-code hexdump, guest MIPS source) |
 | `LRPS2_HANDOFF_STATS=1` | Histogram of ops handed to the interpreter + first-op breaker table |
 | `LRPS2_JIT_STATS=1` | JIT compile statistics (e.g. likely-branch counts) |
+| `LRPS2_SMC_STATS=1` | Per-page write-protect/clear counts (which pages ping-pong between code and data) |
+| `LRPS2_EVT_STATS=1` | EE event-test rate: entries, how many run the IOP or the interrupt scan, and which clamp set `nextEventCycle` |
+
+## Measured and rejected
+
+Kept here because each looks obviously worth doing until you measure it. The
+common thread: on this core (A76/A55) scalar integer ALU work is close to free,
+so anything that trades it for wider-but-longer-latency code, or for fewer
+instructions at the cost of a memory access, tends to lose.
+
+| Idea | Why it was dropped |
+|---|---|
+| NEON `IDCT_Block` (IPU) | Written and **bit-exact on 602k blocks** — but slower at every block density: 169 vs 73 ns/block for the full vector version, and even a hybrid keeping the scalar row pass (whose DC shortcut skips most rows of a real MPEG block) with a NEON column pass that needs no transpose is 78 vs 74. The scalar code is not naive; it is well matched to the data. `yuv2rgb` already has a NEON path, so IPU is closed |
+| Coarsening the EE↔IOP slice | The event test runs 102M times on a 3000-frame MMX7 run and is 5–7 % of the EE thread, but it is not slow — it is asked for that often. The 48-cycle re-test at the end of the test wins the clamp 663 times out of 76M; sweeping it 48→384 changed neither the call count, nor the output (bit-identical), nor the time. `CPU_INT`/`cpuTestINTCInts` keep pulling `nextEventCycle` back to 4–8 cycles, so the rate is the density of the DMA/INT schedule. Thinning that moves interrupt delivery, for a ceiling measured at 2–4 % (inside the noise) |
 
 ## Project Details
 
