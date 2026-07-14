@@ -68,6 +68,10 @@ extern "C" void eeLWL_arm64(u32, u32), eeLWR_arm64(u32, u32);
 extern "C" void eeLDL_arm64(u32, u32), eeLDR_arm64(u32, u32);
 extern "C" void eeSWL_arm64(u32, u32), eeSWR_arm64(u32, u32);
 extern "C" void eeSDL_arm64(u32, u32), eeSDR_arm64(u32, u32);
+// C.67: fused-unaligned-pair slow paths (exact two-access guest-order semantics).
+extern "C" u32  eeReadU32_arm64(u32);
+extern "C" u64  eeReadU64_arm64(u32);
+extern "C" void eeWriteU32_arm64(u32, u32), eeWriteU64_arm64(u32, u64);
 extern "C" void eeCancelInstruction_arm64(void);
 extern "C" void eeEventTest_arm64(void);
 extern "C" void eeUpdateCycles_arm64(void);
@@ -1772,6 +1776,86 @@ namespace {
 		return false;
 	}
 
+	// ---- C.67: fused unaligned pairs ----
+	// The canonical MIPS unaligned idioms are two-op sequences that fully
+	// overwrite their target: LDL rt,off+7(b); LDR rt,off(b) is an unaligned
+	// 64-bit load from b+off, and LWL/LWR, SDL/SDR, SWL/SWR likewise. Each half
+	// used to cost a full helper call (address materialization + blr + the
+	// helper's masked merge) -- GT3's hot in-race block opens with two such
+	// pairs. ARM does unaligned accesses natively on normal memory, and the
+	// fastmem area lays guest pages out contiguously at their guest addresses,
+	// so the pair fuses into the same one-instruction patchable access the
+	// aligned ops use (crossing a guest page stays contiguous by construction;
+	// an unmapped/hw page faults into the stub, whose wrapper replays the exact
+	// two-access guest-order semantics). Only the canonical left-then-right
+	// order fuses; loads additionally require rt != rs (the left op would
+	// clobber the base mid-pair) and rt != 0 (the helpers' discard semantics).
+	// The vmap path never fuses: its one-page lookup cannot vouch for host
+	// contiguity across a guest page boundary.
+	struct UPair { bool load, is64; u32 rt, rs; s32 off; };
+	inline bool UnalignedPair(u32 a, u32 b, UPair* out)
+	{
+		static const bool off_ = getenv("LRPS2_NO_EE_UPAIR") != nullptr;
+		if (off_)
+			return false;
+		const u32 opa = a >> 26, opb = b >> 26;
+		const u32 rta = (a >> 16) & 31, rtb = (b >> 16) & 31;
+		const u32 rsa = (a >> 21) & 31, rsb = (b >> 21) & 31;
+		const s32 offa = (int16_t)(a & 0xffff), offb = (int16_t)(b & 0xffff);
+		if (rta != rtb || rsa != rsb)
+			return false;
+		bool load, is64;
+		if      (opa == 0x1a && opb == 0x1b) { load = true;  is64 = true;  if (offa != offb + 7) return false; }
+		else if (opa == 0x22 && opb == 0x26) { load = true;  is64 = false; if (offa != offb + 3) return false; }
+		else if (opa == 0x2c && opb == 0x2d) { load = false; is64 = true;  if (offa != offb + 7) return false; }
+		else if (opa == 0x2a && opb == 0x2e) { load = false; is64 = false; if (offa != offb + 3) return false; }
+		else return false;
+		if (load && (rta == 0 || rta == rsa))
+			return false;
+		if (load ? (eeDiag().no_load || eeDiag().no_mem) : (eeDiag().no_store || eeDiag().no_mem))
+			return false;
+		*out = {load, is64, rta, rsa, offb};
+		return true;
+	}
+
+	void EmitUnalignedPair(MacroAssembler& m, const Register& gpr, const UPair& u)
+	{
+		{ const Register a = SrcGpr(m, gpr, u.rs, x0); m.Add(w0, a.W(), u.off); }
+		if (u.load)
+		{
+			const uint64_t fn = u.is64 ? reinterpret_cast<uint64_t>(&eeReadU64_arm64)
+			                           : reinterpret_cast<uint64_t>(&eeReadU32_arm64);
+			if (FastmemOk(s_emit_pc))
+			{
+				EmitFastmemAccess(m, [&] {
+					if (u.is64) m.ldr(x0, MemOperand(vmapbase, w0, UXTW));
+					else        m.ldr(w0, MemOperand(vmapbase, w0, UXTW));
+				});
+				DeferFastmemStub(m, fn, 0, 0);
+			}
+			else { m.Mov(x16, fn); m.Blr(x16); }
+			if (!u.is64)
+				m.Sxtw(x0, w0); // LWL/LWR pairs sign-extend, exactly like LW
+			StoreGpr(m, x0, gpr, u.rt);
+		}
+		else
+		{
+			LoadGpr(m, x1, gpr, u.rt);
+			const uint64_t fn = u.is64 ? reinterpret_cast<uint64_t>(&eeWriteU64_arm64)
+			                           : reinterpret_cast<uint64_t>(&eeWriteU32_arm64);
+			if (FastmemOk(s_emit_pc))
+			{
+				EmitFastmemAccess(m, [&] {
+					if (u.is64) m.str(x1, MemOperand(vmapbase, w0, UXTW));
+					else        m.str(w1, MemOperand(vmapbase, w0, UXTW));
+				});
+				DeferFastmemStub(m, fn, 0, 0);
+			}
+			else { m.Mov(x16, fn); m.Blr(x16); }
+		}
+	}
+
+
 	bool EmitCop2Macro(MacroAssembler& m, const Register& gpr, u32 insn)
 	{
 		if (!recVUMacroIsMode0(insn))
@@ -3403,6 +3487,20 @@ namespace {
 				masm.Blr(x16);
 			}
 			s_emit_pc = p; // C.50: guest pc of the op being emitted (fastmem site bookkeeping)
+			// C.67: fuse the canonical unaligned pair into one host access. Both
+			// ops are consumed; the pair never straddles the block cap, and the
+			// second op is read from live memory exactly as EmitSimple would.
+			if (n + 2 <= kMaxInsns)
+			{
+				UPair up;
+				if (UnalignedPair(insn, memRead32(p + 4), &up))
+				{
+					EmitUnalignedPair(masm, gpr, up);
+					cyc += OpCycles(insn) + OpCycles(memRead32(p + 4));
+					p += 8; n += 2;
+					continue;
+				}
+			}
 			if (EmitSimple(masm, gpr, insn))
 			{
 				cyc += OpCycles(insn); p += 4; n++;

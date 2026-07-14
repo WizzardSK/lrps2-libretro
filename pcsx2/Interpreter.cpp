@@ -924,6 +924,66 @@ extern "C" void eeLDR_arm64(u32 addr, u32 rt)
 	if (!rt) return;
 	cpuRegs.GPR.r[rt].UD[0] = (cpuRegs.GPR.r[rt].UD[0] & s_LDR_MASK[shift]) | (mem >> SHIFT[shift]);
 }
+// ---- C.67: fused unaligned pairs ----
+// The canonical MIPS unaligned idioms -- LDL rt,off+7(b); LDR rt,off(b) and the
+// LWL/LWR, SDL/SDR, SWL/SWR equivalents -- fully overwrite rt (or the memory
+// range), so the JIT emits them as ONE host unaligned access through fastmem.
+// These wrappers are the slow path a faulting fused access lands in (hardware
+// registers / unmapped pages). They replicate the two per-op helpers above
+// EXACTLY, in the guest's left-then-right order, including the double read of
+// the SAME word when the address is aligned -- an MMIO read can have side
+// effects, and the unfused sequence performed both reads.
+extern "C" u32 eeReadU32_arm64(u32 addr) // == LWL rt,addr+3 ; LWR rt,addr (full pair)
+{
+	const u32 s    = addr & 3;
+	const u32 memL = memRead32((addr + 3) & ~3); // LWL's read
+	const u32 memR = memRead32(addr & ~3);       // LWR's read
+	if (!s)
+		return memR; // LWL's mask is 0 at shift 3: the pair degenerates to the plain word
+	return (memL << (32 - 8 * s)) | (memR >> (8 * s));
+}
+extern "C" u64 eeReadU64_arm64(u32 addr) // == LDL rt,addr+7 ; LDR rt,addr (full pair)
+{
+	const u32 s    = addr & 7;
+	const u64 memL = memRead64((addr + 7) & ~7); // LDL's read
+	const u64 memR = memRead64(addr & ~7);       // LDR's read
+	if (!s)
+		return memR;
+	return (memL << (64 - 8 * s)) | (memR >> (8 * s));
+}
+extern "C" void eeWriteU32_arm64(u32 addr, u32 val) // == SWL rt,addr+3 ; SWR rt,addr
+{
+	// SWL at addr+3 (shift (s+3)&3), then SWR at addr (shift s) -- each a
+	// read-modify-write of its aligned word, in that order, like the helpers.
+	static const u32 SWL_MASK[4]  = { 0xffffff00, 0xffff0000, 0xff000000, 0x00000000 };
+	static const u8  SWL_SHIFT[4] = { 24, 16, 8, 0 };
+	static const u32 SWR_MASK[4]  = { 0x00000000, 0x000000ff, 0x0000ffff, 0x00ffffff };
+	static const u8  SWR_SHIFT[4] = { 0, 8, 16, 24 };
+	const u32 aL = addr + 3, sL = aL & 3;
+	const u32 mL = memRead32(aL & ~3);
+	memWrite32(aL & ~3, (val >> SWL_SHIFT[sL]) | (mL & SWL_MASK[sL]));
+	const u32 sR = addr & 3;
+	const u32 mR = memRead32(addr & ~3);
+	memWrite32(addr & ~3, (val << SWR_SHIFT[sR]) | (mR & SWR_MASK[sR]));
+}
+extern "C" void eeWriteU64_arm64(u32 addr, u64 val) // == SDL rt,addr+7 ; SDR rt,addr
+{
+	static const u64 SDL_MASK[8] =
+	{	0xffffffffffffff00ULL, 0xffffffffffff0000ULL, 0xffffffffff000000ULL, 0xffffffff00000000ULL,
+		0xffffff0000000000ULL, 0xffff000000000000ULL, 0xff00000000000000ULL, 0x0000000000000000ULL };
+	static const u8  SDL_SHIFT[8] = { 56, 48, 40, 32, 24, 16, 8, 0 };
+	static const u64 SDR_MASK[8] =
+	{	0x0000000000000000ULL, 0x00000000000000ffULL, 0x000000000000ffffULL, 0x0000000000ffffffULL,
+		0x00000000ffffffffULL, 0x000000ffffffffffULL, 0x0000ffffffffffffULL, 0x00ffffffffffffffULL };
+	static const u8  SDR_SHIFT[8] = { 0, 8, 16, 24, 32, 40, 48, 56 };
+	const u32 aL = addr + 7, sL = aL & 7;
+	const u64 mL = memRead64(aL & ~7);
+	memWrite64(aL & ~7, (val >> SDL_SHIFT[sL]) | (mL & SDL_MASK[sL]));
+	const u32 sR = addr & 7;
+	const u64 mR = memRead64(addr & ~7);
+	memWrite64(addr & ~7, (val << SDR_SHIFT[sR]) | (mR & SDR_MASK[sR]));
+}
+
 extern "C" void eeSWL_arm64(u32 addr, u32 rt)
 {
 	static const u32 MASK[4]  = { 0xffffff00, 0xffff0000, 0xff000000, 0x00000000 };
