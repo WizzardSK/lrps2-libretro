@@ -305,6 +305,26 @@ __fi void TimeUpdate(u32 cClocks)
 		snd_count += 2;
 	}
 
+	// TEMP diagnostic (LRPS2_SPU_STATS): batch-size distribution -- how many
+	// samples one TimeUpdate call mixes back-to-back with no state change
+	// possible in between. Decides whether a voice-outer/sample-inner mixing
+	// order (voice state in registers across the batch) can pay.
+	{
+		static const bool st = getenv("LRPS2_SPU_STATS") != nullptr;
+		if (st && snd_count)
+		{
+			static u64 calls = 0, pairs = 0, h[8] = {};
+			const int n = snd_count / 2;
+			calls++; pairs += (u64)n;
+			h[n <= 1 ? 0 : n <= 2 ? 1 : n <= 4 ? 2 : n <= 8 ? 3 : n <= 16 ? 4 : n <= 32 ? 5 : n <= 64 ? 6 : 7]++;
+			if ((calls & 0xffff) == 0)
+				fprintf(stderr, "[spu-batch] %llu calls, avg %.2f pairs | <=1:%llu <=2:%llu <=4:%llu <=8:%llu <=16:%llu <=32:%llu <=64:%llu more:%llu\n",
+					(unsigned long long)calls, (double)pairs / calls,
+					(unsigned long long)h[0], (unsigned long long)h[1], (unsigned long long)h[2], (unsigned long long)h[3],
+					(unsigned long long)h[4], (unsigned long long)h[5], (unsigned long long)h[6], (unsigned long long)h[7]);
+		}
+	}
+
 	if (snd_count)
 		retro_audio_commit(snd_count);
 
