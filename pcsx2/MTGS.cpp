@@ -14,6 +14,7 @@
  */
 
 #include "Common.h"
+#include "arm64/SyncStats_arm64.h"
 
 #include <atomic>
 #include <cstring>
@@ -123,6 +124,11 @@ void MTGS::PostVsyncStart()
 	// the libretro topology, this WaitGS IS the frame-pacing mechanism: it
 	// blocks cpu_thread until the libretro thread (= MTGS thread) drains
 	// the ring through this VSYNC packet.
+	//
+	// (Letting the EE run 1-2 frames ahead of the GS was tried and measured: no
+	// change in wall time, because the EE is not actually waiting here -- see
+	// LRPS2_SYNC_STATS.)
+	SyncStat _s(g_sync_waitgs);
 	WaitGS(false);
 
 	// Vsyncs should always start the GS thread, regardless of how little has actually be queued.

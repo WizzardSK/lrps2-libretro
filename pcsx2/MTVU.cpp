@@ -19,6 +19,7 @@
 #include "Common.h"
 #include "Gif_Unit.h"
 #include "MTVU.h"
+#include "arm64/SyncStats_arm64.h"
 #include "VMManager.h"
 #include "Vif_Dynarec.h"
 
@@ -483,6 +484,7 @@ void Gif_MTVU_KickSema()
 
 void VU_Thread::WaitVU()
 {
+	SyncStat _s(g_sync_waitvu);
 	semaEvent.WaitForEmpty();
 }
 
