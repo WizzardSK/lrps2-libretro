@@ -12,17 +12,23 @@ Verified booting to real in-game content (Mega Man X7 gameplay, Gran Turismo 3
 intro/FMV) on a Snapdragon-class device (Adreno 618, 4K-page Linux, glibc
 RetroArch flatpak + musl test host).
 
-**A caveat worth stating up front, because it colours every number below.** The
-headless runs used for profiling do not reach VU-heavy content. Gran Turismo 3
-never leaves its opening movie on its own -- 9000 frames (150 s of emulated
-time) with Start auto-pressed still land in the intro -- and Mega Man X7, which
-does reach gameplay, is light on geometry. So in both, the MTVU thread sits at
-0.2-0.3 % of CPU while the IPU (`IPUWorker` + `yuv2rgb`, ~14 %) tops the EE
-thread: **what these runs measure is largely the video decoder, not the game.**
-The recompilers are correctness-verified against the interpreter regardless
-(the framebuffers are byte-identical), but any *performance* claim from them
-describes FMV playback. Entering real gameplay needs a save state made in
-RetroArch; the profile above a race is still to be taken.
+**Profile from a save state, not from a boot.** A headless run can only reach
+content the emulator walks to by itself, and for Gran Turismo 3 that is its
+opening movie -- 9000 frames (150 s of emulated time) with Start auto-pressed
+still land in the intro. Profiles taken that way put the IPU (`IPUWorker` +
+`yuv2rgb`, ~14 %) on top and leave the MTVU thread at 0.2 % of CPU, i.e. they
+measure the video decoder rather than the game, and they sent two optimisation
+attempts down blind alleys before that was noticed. Resuming from an in-race
+save state instead:
+
+| Thread | CPU | Inside it |
+|---|---|---|
+| EE | 39 % | 48 % in its own JIT, 44 % native C++ (SPU `Mix` 7.6 %, `memcpy` 4.4 %, event test 2.3 %), 7 % IOP JIT |
+| GS | 37 % | Vulkan renderer |
+| MTVU | 24 % | 77 % inside microVU1's generated code |
+
+No IPU at all, and the event test that looked like a 6-7 % problem is 2.3 %.
+Any performance claim here should say which of the two it came from.
 
 Overall recompiler-suite progress: roughly **~83 %** (weighted by remaining
 work; dynamic instruction coverage on the tested titles is much higher — the
