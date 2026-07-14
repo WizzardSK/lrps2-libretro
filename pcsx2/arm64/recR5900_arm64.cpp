@@ -1549,6 +1549,174 @@ namespace
 	// must be the block buffer's start so armGetCurrentCodePointer() (used for
 	// ADRP/call displacement math) computes true host addresses.
 	EEINST s_cop2AllLive; // .info set on first use
+
+} // pause the anonymous namespace: cop2flags has a global declaration
+
+// C.66: verbatim copy of x86 ix86-32/iR5900-32.cpp cop2flags() -- that TU is not
+// in the arm64 build. Returns a bitmask of the flags a COP2 macro op WRITES:
+// 1 = status, 2 = MAC, 4 = clip; 0 for non-flag ops, branches and transfers.
+// (Declared in arm64/aR5900Analysis.h.)
+int cop2flags(u32 code)
+{
+	if (code >> 26 != 022)
+		return 0; // not COP2
+	if ((code >> 25 & 1) == 0)
+		return 0; // a branch or transfer instruction
+
+	switch (code >> 2 & 15)
+	{
+		case 15:
+			switch (code >> 6 & 0x1f)
+			{
+				case 4: // ITOF*
+				case 5: // FTOI*
+				case 12: // MOVE MR32
+				case 13: // LQI SQI LQD SQD
+				case 15: // MTIR MFIR ILWR ISWR
+				case 16: // RNEXT RGET RINIT RXOR
+					return 0;
+				case 7: // MULAq, ABS, MULAi, CLIP
+					if ((code & 3) == 1) // ABS
+						return 0;
+					if ((code & 3) == 3) // CLIP
+						return 4;
+					break;
+				case 11: // SUBA, MSUBA, OPMULA, NOP
+					if ((code & 3) == 3) // NOP
+						return 0;
+					break;
+				case 14: // DIV, SQRT, RSQRT, WAITQ
+					if ((code & 3) == 3) // WAITQ
+						return 0;
+					return 1; // but different timing, ugh
+				default:
+					break;
+			}
+			break;
+		case 4: // MAXbc
+		case 5: // MINbc
+		case 12: // IADD, ISUB, IADDI
+		case 13: // IAND, IOR
+		case 14: // VCALLMS, VCALLMSR
+			return 0;
+		case 7:
+			if ((code & 1) == 1) // MAXi, MINIi
+				return 0;
+			break;
+		case 10:
+			if ((code & 3) == 3) // MAX
+				return 0;
+			break;
+		case 11:
+			if ((code & 3) == 3) // MINI
+				return 0;
+			break;
+		default:
+			break;
+	}
+	return 3;
+}
+
+namespace {
+	// ---- C.66: run-local COP2 flag liveness ----
+	// The aVU macro emitters already gate every piece of flag maintenance on
+	// g_pCurInstInfo's analysis bits (CHECK_VU_FLAGHACK is default-on), but we
+	// fed them a static "everything live" record, so every VMUL/VMADD in GT3's
+	// VU0-macro matrix code carried the full MAC+status pipeline -- fcmeq/sshr/
+	// addv/fmov plus the sticky-fold, ~40 host instructions per op, most of the
+	// hottest block's bytes. The x86 rec computes real liveness with
+	// COP2FlagHackPass over the whole block; our builder interleaves analysis
+	// and emission, so the block end isn't known up front. Instead the analysis
+	// runs over a RUN: the maximal sequence of consecutive native macro ALU ops
+	// starting at the op being emitted, capped by the block's remaining
+	// instruction budget (a run never crosses the block end). Anything else --
+	// CFC2/CTC2, transfers, stores, branches, CALLMS, a skipped op -- ends the
+	// run, and the last writer of each flag category before it commits, exactly
+	// like the x86 pass commits at reads/hazards/block end:
+	//   * status: first writer DENORMALIZEs into gprF0, dead intermediate
+	//     writers skip flag work entirely (their sticky contribution is the
+	//     documented flag-hack trade), the last writer computes + NORMALIZEs.
+	//     All writers stay live when the run is bracketed by the Tekken-style
+	//     CTC2-to-STATUS ... CFC2-from-STATUS pattern (sticky accuracy), and
+	//     DIV/SQRT/RSQRT compute unconditionally, both as in x86.
+	//   * MAC: only the last writer computes (MAC is last-op state, not sticky).
+	//   * clip: every writer computes (x86 does not track clip liveness either).
+	constexpr int kCop2RunMax = 64;
+	EEINST s_cop2Run[kCop2RunMax];
+	u32    s_cop2RunStart = 1, s_cop2RunEnd = 0; // empty
+	int    s_emit_budget  = 1; // insns the current block may still emit (set by the builder)
+	inline void Cop2RunInvalidate() { s_cop2RunStart = 1; s_cop2RunEnd = 0; }
+
+	bool Cop2MacroSkipped(u32 insn); // defined below (TEMP bisect exclusions)
+
+	inline bool Cop2NativeMacroAlu(u32 insn)
+	{
+		if ((insn >> 26) != 0x12 || !((insn >> 25) & 1))
+			return false;
+		if (((insn >> 2) & 15) == 14)
+			return false; // VCALLMS/VCALLMSR
+		if ((insn & 0x3f) >= 0x3c && ((insn & 3) | ((insn >> 4) & 0x7c)) == 0x1f)
+			return false; // VCLIP (interp-pinned, C.30-4)
+		return recVUMacroIsMode0(insn) && !Cop2MacroSkipped(insn);
+	}
+
+	void Cop2AnalyzeRun(u32 pc)
+	{
+		int n = 0;
+		u32 p = pc;
+		while (n < kCop2RunMax && n < s_emit_budget && Cop2NativeMacroAlu(memRead32(p)))
+		{
+			s_cop2Run[n].info = EEINST_COP2_SYNC_VU0 | EEINST_COP2_FINISH_VU0 |
+			                    EEINST_COP2_FLUSH_VU0_REGISTERS;
+			n++; p += 4;
+		}
+		s_cop2RunStart = pc;
+		s_cop2RunEnd   = p;
+		if (!n)
+			return;
+
+		// Tekken pattern (x86 m_cfc2_pc): CTC2 to REG_STATUS right before the
+		// run, or a CFC2 from REG_STATUS right after it -> keep every status
+		// write live so the sticky bits accumulate accurately. The peeks stay
+		// inside RAM: one word past either end of a block could leave the
+		// mapped range, and a compile-time vtlb miss is not an option.
+		const u32 np   = Norm(pc);
+		const u32 prev = (np >= 4 && InRam(np - 4)) ? memRead32(pc - 4) : 0;
+		const u32 next = InRam(Norm(p)) ? memRead32(p) : 0;
+		const auto is_status_move = [](u32 i, u32 rs) {
+			return (i >> 26) == 0x12 && ((i >> 21) & 31) == rs && ((i >> 11) & 31) == REG_STATUS_FLAG;
+		};
+		const bool all_status = is_status_move(prev, 6) || is_status_move(next, 2);
+
+		bool denormalized = false;
+		int last_status = -1, last_mac = -1;
+		for (int i = 0; i < n; i++)
+		{
+			const u32 insn = memRead32(pc + i * 4);
+			const int f = cop2flags(insn);
+			if (f & 1)
+			{
+				if (!denormalized)
+				{
+					s_cop2Run[i].info |= EEINST_COP2_DENORMALIZE_STATUS_FLAG;
+					denormalized = true;
+				}
+				// x86: DIV/SQRT/RSQRT update status unconditionally.
+				const u32 sub = (insn & 3) | ((insn >> 4) & 0x7c);
+				if (all_status || (((insn >> 21) & 31) >= 0x10 && (insn & 0x3f) >= 0x3c && sub >= 0x38 && sub <= 0x3a))
+					s_cop2Run[i].info |= EEINST_COP2_STATUS_FLAG;
+				last_status = i;
+			}
+			if (f & 2)
+				last_mac = i;
+			if (f & 4)
+				s_cop2Run[i].info |= EEINST_COP2_CLIP_FLAG;
+		}
+		if (last_status >= 0)
+			s_cop2Run[last_status].info |= EEINST_COP2_STATUS_FLAG | EEINST_COP2_NORMALIZE_STATUS_FLAG;
+		if (last_mac >= 0)
+			s_cop2Run[last_mac].info |= EEINST_COP2_MAC_FLAG;
+	}
 	// TEMP bisect (C.30-2 black-texture hunt): LRPS2_COP2M_SKIP="a-b,c,d-e"
 	// (hex funct ranges) forces the listed COP2 SPECIAL functs back to the
 	// interp call while the rest stay native.
@@ -1647,7 +1815,19 @@ namespace
 		                     EEINST_COP2_STATUS_FLAG | EEINST_COP2_MAC_FLAG | EEINST_COP2_CLIP_FLAG |
 		                     EEINST_COP2_SYNC_VU0 | EEINST_COP2_FINISH_VU0 | EEINST_COP2_FLUSH_VU0_REGISTERS;
 		EEINST* saved_inst = g_pCurInstInfo;
+		// C.66: real per-op liveness from the run analysis; the static all-live
+		// record only remains as the LRPS2_NO_COP2_LIVENESS fallback and for an
+		// op the analyzer would not include (should not happen -- the same
+		// predicate guards both).
+		static const bool no_liveness = getenv("LRPS2_NO_COP2_LIVENESS") != nullptr;
 		g_pCurInstInfo = &s_cop2AllLive;
+		if (!no_liveness)
+		{
+			if (s_emit_pc < s_cop2RunStart || s_emit_pc >= s_cop2RunEnd)
+				Cop2AnalyzeRun(s_emit_pc);
+			if (s_emit_pc >= s_cop2RunStart && s_emit_pc < s_cop2RunEnd)
+				g_pCurInstInfo = &s_cop2Run[(s_emit_pc - s_cop2RunStart) >> 2];
+		}
 		cpuRegs.code = insn; // emit-time input: the emitters' _Fs_/_Ft_/... macros read it
 
 		MacroAssembler* saved_asm = armAsm;
@@ -2912,6 +3092,7 @@ namespace
 		if (uncond)
 		{
 			s_emit_pc = bpc + 4; // delay slot
+			Cop2RunInvalidate(); s_emit_budget = 1; // C.66
 			EmitSimple(m, gpr, ds);
 			if (is_jr) StorePC(m, w20); else StorePCImm(m, tconst);
 			s_rc.FlushDirty(m, gpr); // block exit: the next block reads GPR memory
@@ -2976,6 +3157,7 @@ namespace
 		else
 		{
 			s_emit_pc = bpc + 4; // delay slot
+			Cop2RunInvalidate(); s_emit_budget = 1; // C.66
 			EmitSimple(m, gpr, ds);
 			StorePCImm(m, tconst);
 			s_rc.FlushDirty(m, gpr); // block exit (taken)
@@ -3209,8 +3391,10 @@ namespace
 			trcstep = (getenv("LRPS2_TRACE_STEP") && l && h) ? 1 : 0;
 			if (trcstep) { slo = (u32)strtoul(l, 0, 16); shi = (u32)strtoul(h, 0, 16); }
 		}
+		Cop2RunInvalidate(); // C.66: liveness never crosses a block boundary
 		while (n < kMaxInsns)
 		{
+			s_emit_budget = (int)(kMaxInsns - n); // C.66: a COP2 run may not outlive the block
 			const u32 insn = memRead32(p);
 			if (trcstep && (p & 0x1fffffff) >= slo && (p & 0x1fffffff) < shi && IsTranslatable(insn))
 			{
