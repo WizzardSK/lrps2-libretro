@@ -600,7 +600,17 @@ static void eeExecuteLoop(void)
 		GAME_LOADING,
 		GAME_RUNNING
 	};
-	ExecuteState state = RESET;
+	// The RESET stage interprets until the pc reaches the BIOS's EELOAD, which is
+	// how a cold boot walks itself to the game's entry point. Re-entering the loop
+	// with the game ALREADY running -- which is what loading a save state does,
+	// since it exits execution and comes back with the VM mid-game -- can never
+	// satisfy that condition: the pc is somewhere in the game, and it never
+	// returns to EELOAD. The loop then interprets forever and the recompiler is
+	// never reached (the JIT lives in the GAME_RUNNING stage), so a state load
+	// silently dropped the EE onto the interpreter for the rest of the session.
+	// g_GameStarted means exactly "we are past the game's entry point" and is part
+	// of the save state, so it is the right thing to resume on.
+	ExecuteState state = g_GameStarted ? GAME_RUNNING : RESET;
 
 	// This will come back as zero the first time it runs, or on instruction cancel.
 	// It will come back as nonzero when we exit execution.
