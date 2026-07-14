@@ -2791,7 +2791,17 @@ namespace
 		else return false;
 
 		const u32 ds = memRead32(bpc + 4);
-		if (!IsTranslatable(ds))
+		// C.64: a LIKELY branch executes its delay slot only when taken. The slots
+		// that were refusing translation here are BREAK -- GT3 is full of asserts
+		// shaped `beql <bad>, <expected>, panic; break` -- so the slot never runs,
+		// yet its presence used to send the branch, and with it the rest of the
+		// block, to the interpreter: 127k handoffs per 600 in-race frames on a path
+		// that never fires. Emit the not-taken path (the only one that happens)
+		// natively and hand the taken path back to the interpreter AT THE BRANCH,
+		// which then executes branch + slot exactly as before. Plain conditionals
+		// only: the COP condition forms and the linking forms keep the old bail.
+		const bool ds_interp = !IsTranslatable(ds);
+		if (ds_interp && !(likely && (two || one) && !bc0 && !bc1 && !bc2 && link < 0))
 			return false;
 
 		// TEMP diagnostic (LRPS2_JIT_STATS): confirm the likely-branch path is
@@ -2926,13 +2936,31 @@ namespace
 		const RegCache fork_state = s_rc;
 		Label not_taken;
 		m.B(&not_taken, InvertCondition(cond));
-		s_emit_pc = bpc + 4; // delay slot
-		EmitSimple(m, gpr, ds);
-		StorePCImm(m, tconst);
-		s_rc.FlushDirty(m, gpr); // block exit (taken)
-		EmitTailCycles(m, cyc_taken, true); // C.55 (bookkeeping + update, fused)
-		if (idle_skip) EmitIdleSkip();
-		EmitKnownExit(m, tconst, evt, evt_gate); // C.54
+		if (ds_interp)
+		{
+			// C.64: hand the taken path to the INTERPRETER at the branch itself --
+			// not to a JIT block at bpc, which would start with this same branch and
+			// chain straight back here. It re-executes branch + slot exactly as a
+			// normal block break does, and only the ops BEFORE the branch are
+			// accounted here (the branch's own cycles are the interpreter's).
+			StorePCImm(m, bpc);
+			EmitCycleBookkeeping(m, cyc_leading);
+			s_rc.FlushDirty(m, gpr);
+			m.Mov(x16, reinterpret_cast<uint64_t>(&eeRunBasicBlock_arm64));
+			m.Blr(x16);
+			s_rc.Reset();
+			EmitChainEpilogue(m); // continue from wherever the interpreter left pc
+		}
+		else
+		{
+			s_emit_pc = bpc + 4; // delay slot
+			EmitSimple(m, gpr, ds);
+			StorePCImm(m, tconst);
+			s_rc.FlushDirty(m, gpr); // block exit (taken)
+			EmitTailCycles(m, cyc_taken, true); // C.55 (bookkeeping + update, fused)
+			if (idle_skip) EmitIdleSkip();
+			EmitKnownExit(m, tconst, evt, evt_gate); // C.54
+		}
 		s_rc = fork_state;
 		m.Bind(&not_taken);
 		EmitCycleBookkeeping(m, cyc_nt);
