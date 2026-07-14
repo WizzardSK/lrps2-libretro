@@ -443,6 +443,27 @@ __fi void _cpuEventTest_Shared(void)
 	if ((int)(cpuRegs.nextEventCycle - nextStartCounter) > nextDeltaCounter)
 		cpuRegs.nextEventCycle = nextStartCounter + nextDeltaCounter;
 
+	// TEMP diagnostic (LRPS2_EVT_STATS): which clamp actually decides how soon we
+	// come back, and how far out it is.
+	if (evt_stats)
+	{
+		const int d = (int)(cpuRegs.nextEventCycle - cpuRegs.cycle);
+		static u64 n_slice = 0, n_delta = 0, n_cnt = 0, n_other = 0, sum_d = 0, n_d = 0;
+		static u64 h[8] = {};
+		if (cpuRegs.nextEventCycle == nextStartCounter + nextDeltaCounter) n_cnt++;
+		else if (EEsCycle >= nextIopEventDeta) n_slice++;
+		else n_delta++;
+		sum_d += (u64)(d > 0 ? d : 0); n_d++;
+		h[d <= 8 ? 0 : d <= 16 ? 1 : d <= 32 ? 2 : d <= 64 ? 3 : d <= 128 ? 4 : d <= 256 ? 5 : d <= 1024 ? 6 : 7]++;
+		if ((n_d & 0xfffff) == 0)
+			fprintf(stderr, "[evt2] clamp: counter=%llu iop-slice=%llu iop-delta=%llu | avg_next=%llu | hist<=8,16,32,64,128,256,1k,inf: %llu %llu %llu %llu %llu %llu %llu %llu\n",
+				(unsigned long long)n_cnt, (unsigned long long)n_slice, (unsigned long long)n_delta,
+				(unsigned long long)(sum_d / n_d),
+				(unsigned long long)h[0], (unsigned long long)h[1], (unsigned long long)h[2], (unsigned long long)h[3],
+				(unsigned long long)h[4], (unsigned long long)h[5], (unsigned long long)h[6], (unsigned long long)h[7]);
+		(void)n_other;
+	}
+
 	eeEventTestIsActive = false;
 }
 
