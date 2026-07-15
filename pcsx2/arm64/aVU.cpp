@@ -1535,8 +1535,7 @@ static bool mvuNeedsFPCRUpdate(microVU& mVU)
 // Uses x16/x17 scratch only (never the block-entry x0 the AB dispatcher holds).
 static void mVUemitSetHostFPCR(const void* bitmaskPtr)
 {
-	armMoveAddressToReg(RSCRATCHADDR, bitmaskPtr);          // x17 = &bitmask
-	armAsm->Ldr(RXVIXLSCRATCH, a64::MemOperand(RSCRATCHADDR)); // x16 = bitmask
+	armAsm->Ldr(RXVIXLSCRATCH, armAbsMemOperand(RSCRATCHADDR, bitmaskPtr, 8)); // x16 = bitmask
 	armAsm->Msr(a64::FPCR, RXVIXLSCRATCH);
 }
 
@@ -1580,11 +1579,9 @@ static void mVUdispatcherAB(microVU& mVU)
 
 	// Copy the mac/clip flag instances into the microVU's working storage.
 	armAsm->Ldr(vtmp.Q(), a64::MemOperand(RVUSTATE, offsetof(VURegs, micro_macflags)));
-	armMoveAddressToReg(RSCRATCHADDR, &mVU.macFlag[0]);
-	armAsm->Str(vtmp.Q(), a64::MemOperand(RSCRATCHADDR));
+	armAsm->Str(vtmp.Q(), armAbsMemOperand(RSCRATCHADDR, &mVU.macFlag[0], 16));
 	armAsm->Ldr(vtmp.Q(), a64::MemOperand(RVUSTATE, offsetof(VURegs, micro_clipflags)));
-	armMoveAddressToReg(RSCRATCHADDR, &mVU.clipFlag[0]);
-	armAsm->Str(vtmp.Q(), a64::MemOperand(RSCRATCHADDR));
+	armAsm->Str(vtmp.Q(), armAbsMemOperand(RSCRATCHADDR, &mVU.clipFlag[0], 16));
 
 	// Load the 4 status-flag instances into gprF0-gprF3 (w23-w26).
 	for (int i = 0; i < 4; i++)
@@ -1618,16 +1615,14 @@ static void mVUdispatcherCD(microVU& mVU)
 		mVUemitSetHostFPCR(isVU1 ? &EmuConfig.Cpu.VU1FPCR.bitmask : &EmuConfig.Cpu.VU0FPCR.bitmask);
 
 	// mVUrestoreRegs(): reload the PQ reg from its XGKICK backup slot.
-	armMoveAddressToReg(RSCRATCHADDR, &mVU.vecBackup[mVU_xmmPQ.GetCode()][0]);
-	armAsm->Ldr(mVU_xmmPQ.Q(), a64::MemOperand(RSCRATCHADDR));
+	armAsm->Ldr(mVU_xmmPQ.Q(), armAbsMemOperand(RSCRATCHADDR, &mVU.vecBackup[mVU_xmmPQ.GetCode()][0], 16));
 
 	armMoveAddressToReg(RVUSTATE, &::vuRegs[mVU.index]);
 	for (int i = 0; i < 4; i++)
 		armAsm->Ldr(armWRegister(mVU_F0 + i), a64::MemOperand(RVUSTATE, offsetof(VURegs, micro_statusflags) + i * 4));
 
 	// Jump to the recompiled code position to resume xgkick.
-	armMoveAddressToReg(RSCRATCHADDR, &mVU.resumePtrXG);
-	armAsm->Ldr(RSCRATCHADDR, a64::MemOperand(RSCRATCHADDR));
+	armAsm->Ldr(RSCRATCHADDR, armAbsMemOperand(RSCRATCHADDR, &mVU.resumePtrXG, 8));
 	armAsm->Br(RSCRATCHADDR);
 
 	// --- exit path ---

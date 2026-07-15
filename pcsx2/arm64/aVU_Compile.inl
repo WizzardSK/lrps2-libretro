@@ -275,10 +275,10 @@ void mVUtestCycles(microVU& mVU, microFlagCycles& mFC)
 	armAsm->Bind(&skip);
 
 	// xSUB(ptr32[&mVU.cycles], mVUcycles)
-	armMoveAddressToReg(RSCRATCHADDR, &mVU.cycles);
-	armAsm->Ldr(gprT1.W(), a64::MemOperand(RSCRATCHADDR));
+	const a64::MemOperand cycles_mem = armAbsMemOperand(RSCRATCHADDR, &mVU.cycles, 4);
+	armAsm->Ldr(gprT1.W(), cycles_mem);
 	armAsm->Sub(gprT1.W(), gprT1.W(), mVUcycles);
-	armAsm->Str(gprT1.W(), a64::MemOperand(RSCRATCHADDR));
+	armAsm->Str(gprT1.W(), cycles_mem);
 }
 
 //------------------------------------------------------------------

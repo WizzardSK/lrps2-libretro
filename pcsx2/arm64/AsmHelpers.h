@@ -102,6 +102,10 @@ void armEmitCondBranch(vixl::aarch64::Condition cond, const void* ptr);
 void armMoveAddressToReg(const vixl::aarch64::Register& reg, const void* addr);
 void armLoadPtr(const vixl::aarch64::CPURegister& reg, const void* addr);
 void armStorePtr(const vixl::aarch64::CPURegister& reg, const void* addr);
+// C.72: emit an adrp into `scratch` and return a MemOperand with the page
+// offset folded in (or a full materialization fallback). `size` = access size
+// in bytes; the folded form is used only when the offset encodes for it.
+vixl::aarch64::MemOperand armAbsMemOperand(const vixl::aarch64::Register& scratch, const void* addr, unsigned size);
 void armBeginStackFrame(bool save_fpr);
 void armEndStackFrame(bool save_fpr);
 bool armIsCalleeSavedRegister(int reg);

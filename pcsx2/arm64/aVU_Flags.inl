@@ -32,8 +32,7 @@ __fi void mVUdivSet(mV)
 			armAsm->Mov(getFlagReg(sFLAG.write), getFlagReg(sFLAG.lastWrite));
 		armAsm->And(getFlagReg(sFLAG.write), getFlagReg(sFLAG.write), 0xfff3ffff);
 		// xOR(getFlagReg(sFLAG.write), ptr32[&mVU.divFlag]);
-		armMoveAddressToReg(RSCRATCHADDR, &mVU.divFlag);
-		armAsm->Ldr(gprT1, a64::MemOperand(RSCRATCHADDR));
+		armAsm->Ldr(gprT1, armAbsMemOperand(RSCRATCHADDR, &mVU.divFlag, 4));
 		armAsm->Orr(getFlagReg(sFLAG.write), getFlagReg(sFLAG.write), gprT1);
 	}
 }
@@ -342,10 +341,10 @@ __fi void mVUsetupFlags(mV, microFlagCycles& mFC)
 			DevCon.WriteLn("mVU%d - Mac Flag", mVU.index);
 		int bMac[4];
 		sortFlag(mFC.xMac, bMac, mFC.cycles);
-		armMoveAddressToReg(RSCRATCHADDR, &mVU.macFlag[0]);
-		armAsm->Ldr(xmmT1.Q(), a64::MemOperand(RSCRATCHADDR));
+		const a64::MemOperand mac_mem = armAbsMemOperand(RSCRATCHADDR, &mVU.macFlag[0], 16);
+		armAsm->Ldr(xmmT1.Q(), mac_mem);
 		mVUshufflePS(xmmT1, xmmT1, shuffleMac);
-		armAsm->Str(xmmT1.Q(), a64::MemOperand(RSCRATCHADDR));
+		armAsm->Str(xmmT1.Q(), mac_mem);
 	}
 
 	if (doCFlagInsts && __Clip)
@@ -354,10 +353,10 @@ __fi void mVUsetupFlags(mV, microFlagCycles& mFC)
 			DevCon.WriteLn("mVU%d - Clip Flag", mVU.index);
 		int bClip[4];
 		sortFlag(mFC.xClip, bClip, mFC.cycles);
-		armMoveAddressToReg(RSCRATCHADDR, &mVU.clipFlag[0]);
-		armAsm->Ldr(xmmT2.Q(), a64::MemOperand(RSCRATCHADDR));
+		const a64::MemOperand clip_mem = armAbsMemOperand(RSCRATCHADDR, &mVU.clipFlag[0], 16);
+		armAsm->Ldr(xmmT2.Q(), clip_mem);
 		mVUshufflePS(xmmT2, xmmT2, shuffleClip);
-		armAsm->Str(xmmT2.Q(), a64::MemOperand(RSCRATCHADDR));
+		armAsm->Str(xmmT2.Q(), clip_mem);
 	}
 }
 

@@ -103,8 +103,7 @@ static inline void mvuComplexAddr(const a64::Register& baseReg, const void* p, c
 // 16-bit zero-extending absolute load (x86: xMOVZX(reg, ptr16[addr])).
 static inline void mvuLdrhZ(const a64::Register& wreg, const void* addr)
 {
-	armMoveAddressToReg(RSCRATCHADDR, addr);
-	armAsm->Ldrh(wreg.W(), a64::MemOperand(RSCRATCHADDR));
+	armAsm->Ldrh(wreg.W(), armAbsMemOperand(RSCRATCHADDR, addr, 2));
 }
 
 //------------------------------------------------------------------

@@ -360,8 +360,7 @@ template <int vuIndex> void* mVUcompileJIT(u32 startPC, uptr ptr);
 // with bit15 set is negative. (eq/ne for IBEQ/IBNE are unaffected by the extend.)
 static inline void mvuLdrsh16(const a64::Register& wreg, const void* addr)
 {
-	armMoveAddressToReg(RSCRATCHADDR, addr);
-	armAsm->Ldrsh(wreg.W(), a64::MemOperand(RSCRATCHADDR));
+	armAsm->Ldrsh(wreg.W(), armAbsMemOperand(RSCRATCHADDR, addr, 2));
 }
 // xTEST(ptr32[addr], imm) + xForwardJump32(Jcc_Zero): load, test, branch-if-zero.
 static inline void mvuTestMemBranchZero(const void* addr, u32 imm, a64::Label& tgt, const a64::Register& tmp)

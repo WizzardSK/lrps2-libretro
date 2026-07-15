@@ -39,14 +39,12 @@ static inline u32 branchAddr(const mV)
 
 static inline void mvuStr32(const void* addr, const a64::Register& wreg)
 {
-	armMoveAddressToReg(RSCRATCHADDR, addr);
-	armAsm->Str(wreg.W(), a64::MemOperand(RSCRATCHADDR));
+	armAsm->Str(wreg.W(), armAbsMemOperand(RSCRATCHADDR, addr, 4));
 }
 
 static inline void mvuLdr32(const a64::Register& wreg, const void* addr)
 {
-	armMoveAddressToReg(RSCRATCHADDR, addr);
-	armAsm->Ldr(wreg.W(), a64::MemOperand(RSCRATCHADDR));
+	armAsm->Ldr(wreg.W(), armAbsMemOperand(RSCRATCHADDR, addr, 4));
 }
 
 static inline void mvuStrImm32(const void* addr, u32 imm, const a64::Register& tmp)
@@ -57,42 +55,38 @@ static inline void mvuStrImm32(const void* addr, u32 imm, const a64::Register& t
 
 static inline void mvuStrSS(const void* addr, const a64::VRegister& vreg)
 {
-	armMoveAddressToReg(RSCRATCHADDR, addr);
-	armAsm->Str(vreg.S(), a64::MemOperand(RSCRATCHADDR));
+	armAsm->Str(vreg.S(), armAbsMemOperand(RSCRATCHADDR, addr, 4));
 }
 
 static inline void mvuLdrSS(const a64::VRegister& vreg, const void* addr)
 {
-	armMoveAddressToReg(RSCRATCHADDR, addr);
-	armAsm->Ldr(vreg.S(), a64::MemOperand(RSCRATCHADDR));
+	armAsm->Ldr(vreg.S(), armAbsMemOperand(RSCRATCHADDR, addr, 4));
 }
 
 static inline void mvuLdrQ(const a64::VRegister& vreg, const void* addr)
 {
-	armMoveAddressToReg(RSCRATCHADDR, addr);
-	armAsm->Ldr(vreg.Q(), a64::MemOperand(RSCRATCHADDR));
+	armAsm->Ldr(vreg.Q(), armAbsMemOperand(RSCRATCHADDR, addr, 16));
 }
 
 static inline void mvuStrQ(const void* addr, const a64::VRegister& vreg)
 {
-	armMoveAddressToReg(RSCRATCHADDR, addr);
-	armAsm->Str(vreg.Q(), a64::MemOperand(RSCRATCHADDR));
+	armAsm->Str(vreg.Q(), armAbsMemOperand(RSCRATCHADDR, addr, 16));
 }
 
 static inline void mvuMemAndImm32(const void* addr, u32 imm, const a64::Register& tmp)
 {
-	armMoveAddressToReg(RSCRATCHADDR, addr);
-	armAsm->Ldr(tmp.W(), a64::MemOperand(RSCRATCHADDR));
+	const a64::MemOperand m = armAbsMemOperand(RSCRATCHADDR, addr, 4);
+	armAsm->Ldr(tmp.W(), m);
 	armAsm->And(tmp.W(), tmp.W(), imm);
-	armAsm->Str(tmp.W(), a64::MemOperand(RSCRATCHADDR));
+	armAsm->Str(tmp.W(), m);
 }
 
 static inline void mvuMemOrImm32(const void* addr, u32 imm, const a64::Register& tmp)
 {
-	armMoveAddressToReg(RSCRATCHADDR, addr);
-	armAsm->Ldr(tmp.W(), a64::MemOperand(RSCRATCHADDR));
+	const a64::MemOperand m = armAbsMemOperand(RSCRATCHADDR, addr, 4);
+	armAsm->Ldr(tmp.W(), m);
 	armAsm->Orr(tmp.W(), tmp.W(), imm);
-	armAsm->Str(tmp.W(), a64::MemOperand(RSCRATCHADDR));
+	armAsm->Str(tmp.W(), m);
 }
 
 //------------------------------------------------------------------
@@ -129,8 +123,7 @@ __fi void mVUbackupRegs(microVU& mVU, bool toMemory = false, bool onlyNeeded = f
 	else
 	{
 		mVU.regAlloc->flushAll(); // Flush Regalloc
-		armMoveAddressToReg(RSCRATCHADDR, &mVU.vecBackup[mVU_xmmPQ.GetCode()][0]);
-		armAsm->Str(mVU_xmmPQ.Q(), a64::MemOperand(RSCRATCHADDR));
+		armAsm->Str(mVU_xmmPQ.Q(), armAbsMemOperand(RSCRATCHADDR, &mVU.vecBackup[mVU_xmmPQ.GetCode()][0], 16));
 	}
 }
 
@@ -149,8 +142,7 @@ __fi void mVUrestoreRegs(microVU& mVU, bool fromMemory = false, bool onlyNeeded 
 	}
 	else
 	{
-		armMoveAddressToReg(RSCRATCHADDR, &mVU.vecBackup[mVU_xmmPQ.GetCode()][0]);
-		armAsm->Ldr(mVU_xmmPQ.Q(), a64::MemOperand(RSCRATCHADDR));
+		armAsm->Ldr(mVU_xmmPQ.Q(), armAbsMemOperand(RSCRATCHADDR, &mVU.vecBackup[mVU_xmmPQ.GetCode()][0], 16));
 	}
 }
 

@@ -302,16 +302,43 @@ void armMoveAddressToReg(const vixl::aarch64::Register& reg, const void* addr)
 	}
 }
 
+// C.72: address an absolute global for a load/store of `size` bytes. When the
+// page is adrp-reachable and the page offset is size-aligned (i.e. it encodes
+// as an unsigned scaled immediate), emit just the `adrp` and fold the offset
+// into the returned MemOperand -- one instruction shorter per access than
+// armMoveAddressToReg + [scratch], and repeated accesses through the same
+// materialization (ldr+op+str patterns) reuse the one adrp. Falls back to the
+// full materialization otherwise; the fallback keeps offset 0 so it encodes
+// unconditionally (the folded form never needs a second VIXL scratch either --
+// important since `scratch` here is usually x17 from VIXL's own temp pool).
+a64::MemOperand armAbsMemOperand(const a64::Register& scratch, const void* addr, unsigned size)
+{
+	const void* current_code_ptr_page = reinterpret_cast<const void*>(
+		reinterpret_cast<uintptr_t>(armGetCurrentCodePointer()) & ~static_cast<uintptr_t>(0xFFF));
+	const void* ptr_page =
+		reinterpret_cast<const void*>(reinterpret_cast<uintptr_t>(addr) & ~static_cast<uintptr_t>(0xFFF));
+	const s64 page_displacement = GetPCDisplacement(current_code_ptr_page, ptr_page) >> 10;
+	const u32 page_offset = static_cast<u32>(reinterpret_cast<uintptr_t>(addr) & 0xFFFu);
+	if (vixl::IsInt21(page_displacement) && size && (page_offset % size) == 0)
+	{
+		{
+			a64::SingleEmissionCheckScope guard(armAsm);
+			armAsm->adrp(scratch, page_displacement);
+		}
+		return a64::MemOperand(scratch, page_offset);
+	}
+	armMoveAddressToReg(scratch, addr);
+	return a64::MemOperand(scratch);
+}
+
 void armLoadPtr(const vixl::aarch64::CPURegister& reg, const void* addr)
 {
-	armMoveAddressToReg(RSCRATCHADDR, addr);
-	armAsm->Ldr(reg, a64::MemOperand(RSCRATCHADDR));
+	armAsm->Ldr(reg, armAbsMemOperand(RSCRATCHADDR, addr, reg.GetSizeInBytes()));
 }
 
 void armStorePtr(const vixl::aarch64::CPURegister& reg, const void* addr)
 {
-	armMoveAddressToReg(RSCRATCHADDR, addr);
-	armAsm->Str(reg, a64::MemOperand(RSCRATCHADDR));
+	armAsm->Str(reg, armAbsMemOperand(RSCRATCHADDR, addr, reg.GetSizeInBytes()));
 }
 
 void armBeginStackFrame(bool save_fpr)

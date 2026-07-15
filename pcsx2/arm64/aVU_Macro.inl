@@ -136,8 +136,7 @@ static void setupMacroOp(int mode)
 			// flags already denormalized in memory — just load into gprF0 (the x86
 			// "ideally we'd keep this in a register, but 32-bit" comment doesn't apply
 			// on ARM64, but the lazy memory round-trip mirrors x86 1:1).
-			armMoveAddressToReg(RSCRATCHADDR, &::vuRegs[0].VI[REG_STATUS_FLAG].UL);
-			armAsm->Ldr(getFlagReg(0), a64::MemOperand(RSCRATCHADDR));
+			armAsm->Ldr(getFlagReg(0), armAbsMemOperand(RSCRATCHADDR, &::vuRegs[0].VI[REG_STATUS_FLAG].UL, 4));
 		}
 	}
 
@@ -175,15 +174,13 @@ static void endMacroOp(int mode)
 			// gprF0, 0) then xMOV mem,eax). gprT1 = output, gprT2 = the scratch the
 			// allocator loads gprF0 into; both are dead mVU emit temps here.
 			mVUallocSFLAGc(gprT1, gprT2, 0);
-			armMoveAddressToReg(RSCRATCHADDR, &::vuRegs[0].VI[REG_STATUS_FLAG].UL);
-			armAsm->Str(gprT1, a64::MemOperand(RSCRATCHADDR));
+			armAsm->Str(gprT1, armAbsMemOperand(RSCRATCHADDR, &::vuRegs[0].VI[REG_STATUS_FLAG].UL, 4));
 		}
 		else if (g_pCurInstInfo->info & (EEINST_COP2_STATUS_FLAG | EEINST_COP2_DENORMALIZE_STATUS_FLAG))
 		{
 			// Back up the denormalized flags for the next instruction (re-normalized
 			// before the reg is next read). x86: xMOV mem, gprF0.
-			armMoveAddressToReg(RSCRATCHADDR, &::vuRegs[0].VI[REG_STATUS_FLAG].UL);
-			armAsm->Str(getFlagReg(0), a64::MemOperand(RSCRATCHADDR));
+			armAsm->Str(getFlagReg(0), armAbsMemOperand(RSCRATCHADDR, &::vuRegs[0].VI[REG_STATUS_FLAG].UL, 4));
 		}
 	}
 
