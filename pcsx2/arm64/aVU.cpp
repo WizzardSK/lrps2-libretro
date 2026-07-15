@@ -539,6 +539,9 @@ __fi void mVUinitFirstPass(microVU& mVU, uptr pState, u8* thisPtr)
 void mVUinit(microVU& mVU, uint vuIndex)
 {
 	std::memset(&mVU.prog, 0, sizeof(mVU.prog));
+	mVU.glob = mVUglob; // C.75: x27-reachable copies of the emit constants
+	std::memcpy(mVU.sse4Min, sse4_minvals, sizeof(mVU.sse4Min));
+	std::memcpy(mVU.sse4Max, sse4_maxvals, sizeof(mVU.sse4Max));
 
 	mVU.index        =  vuIndex;
 	mVU.cop2         =  0;

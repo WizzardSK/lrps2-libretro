@@ -57,13 +57,13 @@ static void mVUclamp1(mV, const a64::VRegister& reg, const a64::VRegister& regT1
 		// wiped them (SC2 matrix MADDA under VU0 clamp mode 2 zeroed ACC.x → wrong EE-side
 		// rotation). Clamp lane0 in a scratch and merge it back, preserving the upper lanes
 		// (matches the mVUclampedArith SS fix and x86 xMIN.SS, which preserves them).
-		armAsm->Ldr(regT1.Q(), armAbsMemOperand(RSCRATCHADDR, mVUglob.maxvals, 16));
+		armAsm->Ldr(regT1.Q(), mvuAbsMem(mVU, mVU.glob.maxvals, 16));
 		if (ss)
 			armAsm->Fminnm(RQSCRATCH2.S(), reg.S(), regT1.S());
 		else
 			armAsm->Fminnm(reg.V4S(), reg.V4S(), regT1.V4S());
 
-		armAsm->Ldr(regT1.Q(), armAbsMemOperand(RSCRATCHADDR, mVUglob.minvals, 16));
+		armAsm->Ldr(regT1.Q(), mvuAbsMem(mVU, mVU.glob.minvals, 16));
 		if (ss)
 		{
 			armAsm->Fmaxnm(RQSCRATCH2.S(), RQSCRATCH2.S(), regT1.S());
@@ -83,10 +83,10 @@ static void mVUclamp2(mV, const a64::VRegister& reg, const a64::VRegister& regT1
 		const a64::VRegister regT1 = regT1in.IsNone() ? RQSCRATCH : regT1in;
 		const int i = ((xyzw == 1) || (xyzw == 2) || (xyzw == 4) || (xyzw == 8)) ? 0 : 1;
 
-		armAsm->Ldr(regT1.Q(), armAbsMemOperand(RSCRATCHADDR, &sse4_maxvals[i][0], 16));
+		armAsm->Ldr(regT1.Q(), mvuAbsMem(mVU, &mVU.sse4Max[i][0], 16));
 		armAsm->Smin(reg.V4S(), reg.V4S(), regT1.V4S());
 
-		armAsm->Ldr(regT1.Q(), armAbsMemOperand(RSCRATCHADDR, &sse4_minvals[i][0], 16));
+		armAsm->Ldr(regT1.Q(), mvuAbsMem(mVU, &mVU.sse4Min[i][0], 16));
 		armAsm->Umin(reg.V4S(), reg.V4S(), regT1.V4S());
 		return;
 	}

@@ -486,7 +486,7 @@ mVUop(mVU_ABS)
 		if (!_Ft_)
 			return;
 		const a64::VRegister Fs = mVU.regAlloc->allocReg(_Fs_, _Ft_, _X_Y_Z_W, !((_Fs_ == _Ft_) && (_X_Y_Z_W == 0xf)));
-		mvuLdrQ(mVU, RQSCRATCH, mVUglob.absclip);
+		mvuLdrQ(mVU, RQSCRATCH, mVU.glob.absclip);
 		armAsm->And(Fs.V16B(), Fs.V16B(), RQSCRATCH.V16B());
 		mVU.regAlloc->clearNeeded(Fs);
 		mVU.profiler.EmitOp(opABS);
@@ -642,15 +642,15 @@ mVUop(mVU_CLIP)
 		mVUallocCFLAGa(mVU, gprT1, cFLAG.lastWrite);
 		armAsm->Lsl(gprT1, gprT1, 6);
 
-		mvuLdrQ(mVU, RQSCRATCH, mVUglob.exponent);
+		mvuLdrQ(mVU, RQSCRATCH, mVU.glob.exponent);
 		armAsm->And(t1.V16B(), Fs.V16B(), RQSCRATCH.V16B());
 		armAsm->Eor(t2.V16B(), t2.V16B(), t2.V16B());
 		armAsm->Cmeq(t1.V4S(), t1.V4S(), t2.V4S()); // Denormal check
 		armAsm->Bic(t1.V16B(), Fs.V16B(), t1.V16B()); // If denormal, set to zero (x86 PANDN)
-		mvuLdrQ(mVU, RQSCRATCH, mVUglob.absclip);
+		mvuLdrQ(mVU, RQSCRATCH, mVU.glob.absclip);
 		armAsm->And(Ft.V16B(), Ft.V16B(), RQSCRATCH.V16B());
 
-		mvuLdrQ(mVU, RQSCRATCH, mVUglob.signbit);
+		mvuLdrQ(mVU, RQSCRATCH, mVU.glob.signbit);
 		armAsm->Eor(Fs.V16B(), t1.V16B(), RQSCRATCH.V16B()); // Negate
 		armAsm->Cmgt(t1.V4S(), t1.V4S(), Ft.V4S()); // +w, +z, +y, +x
 		armAsm->Cmgt(Fs.V4S(), Fs.V4S(), Ft.V4S()); // -w, -z, -y, -x
@@ -766,13 +766,13 @@ mVUop(mVU_MINIy)  { mVU_FMACa(mVU, recPass, 2, 4, false, opMINIy,  0);  }
 mVUop(mVU_MINIz)  { mVU_FMACa(mVU, recPass, 2, 4, false, opMINIz,  0);  }
 mVUop(mVU_MINIw)  { mVU_FMACa(mVU, recPass, 2, 4, false, opMINIw,  0);  }
 mVUop(mVU_FTOI0)  { mVU_FTOIx(mX, NULL,                  opFTOI0);      }
-mVUop(mVU_FTOI4)  { mVU_FTOIx(mX, mVUglob.FTOI_4,        opFTOI4);      }
-mVUop(mVU_FTOI12) { mVU_FTOIx(mX, mVUglob.FTOI_12,       opFTOI12);     }
-mVUop(mVU_FTOI15) { mVU_FTOIx(mX, mVUglob.FTOI_15,       opFTOI15);     }
+mVUop(mVU_FTOI4)  { mVU_FTOIx(mX, mVU.glob.FTOI_4,        opFTOI4);      }
+mVUop(mVU_FTOI12) { mVU_FTOIx(mX, mVU.glob.FTOI_12,       opFTOI12);     }
+mVUop(mVU_FTOI15) { mVU_FTOIx(mX, mVU.glob.FTOI_15,       opFTOI15);     }
 mVUop(mVU_ITOF0)  { mVU_ITOFx(mX, NULL,                  opITOF0);      }
-mVUop(mVU_ITOF4)  { mVU_ITOFx(mX, mVUglob.ITOF_4,        opITOF4);      }
-mVUop(mVU_ITOF12) { mVU_ITOFx(mX, mVUglob.ITOF_12,       opITOF12);     }
-mVUop(mVU_ITOF15) { mVU_ITOFx(mX, mVUglob.ITOF_15,       opITOF15);     }
+mVUop(mVU_ITOF4)  { mVU_ITOFx(mX, mVU.glob.ITOF_4,        opITOF4);      }
+mVUop(mVU_ITOF12) { mVU_ITOFx(mX, mVU.glob.ITOF_12,       opITOF12);     }
+mVUop(mVU_ITOF15) { mVU_ITOFx(mX, mVU.glob.ITOF_15,       opITOF15);     }
 mVUop(mVU_NOP)    { pass2 { mVU.profiler.EmitOp(opNOP); } pass3 { mVUlog("NOP"); } }
 
 #undef AND_XYZW

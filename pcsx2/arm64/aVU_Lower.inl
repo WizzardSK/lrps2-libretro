@@ -161,7 +161,7 @@ static __fi void testNeg(mV, const a64::VRegister& xmmReg, const a64::Register& 
 	a64::Label skip;
 	armAsm->B(&skip, a64::eq); // bit0 clear -> not negative
 		mvuStrImm32(mVU, &mVU.divFlag, divI, gprT2);
-		mvuLdrQ(mVU, RQSCRATCH, mVUglob.absclip);
+		mvuLdrQ(mVU, RQSCRATCH, mVU.glob.absclip);
 		armAsm->And(xmmReg.V16B(), xmmReg.V16B(), RQSCRATCH.V16B());
 	armAsm->Bind(&skip);
 }
@@ -190,9 +190,9 @@ mVUop(mVU_DIV)
 			armAsm->Bind(&bjmp);
 
 			armAsm->Eor(Fs.V16B(), Fs.V16B(), Ft.V16B());
-			mvuLdrQ(mVU, RQSCRATCH, mVUglob.signbit);
+			mvuLdrQ(mVU, RQSCRATCH, mVU.glob.signbit);
 			armAsm->And(Fs.V16B(), Fs.V16B(), RQSCRATCH.V16B());
-			mvuLdrQ(mVU, RQSCRATCH, mVUglob.maxvals);
+			mvuLdrQ(mVU, RQSCRATCH, mVU.glob.maxvals);
 			armAsm->Orr(Fs.V16B(), Fs.V16B(), RQSCRATCH.V16B()); // If division by zero, then Fs = +/- fmax
 
 			armAsm->B(&djmp);
@@ -234,7 +234,7 @@ mVUop(mVU_SQRT)
 			// Fminnm, not Fmin: x86 MIN.SS returns the second operand (fmax) when Ft
 			// is a NaN pattern (a valid huge number on the PS2); Fmin would propagate
 			// the NaN into Fsqrt and poison Q.
-			mvuLdrSS(mVU, RQSCRATCH, mVUglob.maxvals);
+			mvuLdrSS(mVU, RQSCRATCH, mVU.glob.maxvals);
 			armAsm->Fminnm(Ft.S(), Ft.S(), RQSCRATCH.S());
 		}
 		armAsm->Fsqrt(Ft.S(), Ft.S());
@@ -279,9 +279,9 @@ mVUop(mVU_RSQRT)
 				mvuStrImm32(mVU, &mVU.divFlag, divD, gprT1); // Zero divide flag (only when not 0/0)
 			armAsm->Bind(&cjmp);
 
-			mvuLdrQ(mVU, RQSCRATCH, mVUglob.signbit);
+			mvuLdrQ(mVU, RQSCRATCH, mVU.glob.signbit);
 			armAsm->And(Fs.V16B(), Fs.V16B(), RQSCRATCH.V16B());
-			mvuLdrQ(mVU, RQSCRATCH, mVUglob.maxvals);
+			mvuLdrQ(mVU, RQSCRATCH, mVU.glob.maxvals);
 			armAsm->Orr(Fs.V16B(), Fs.V16B(), RQSCRATCH.V16B()); // Fs = +/-Max
 
 			armAsm->B(&djmp);
@@ -324,17 +324,17 @@ mVUop(mVU_RSQRT)
 static __fi void mVU_EATAN_(mV, const a64::VRegister& PQ, const a64::VRegister& Fs, const a64::VRegister& t1, const a64::VRegister& t2)
 {
 	armAsm->Ins(PQ.V4S(), 0, Fs.V4S(), 0);
-	mvuLdrSS(mVU, RQSCRATCH, mVUglob.T1);
+	mvuLdrSS(mVU, RQSCRATCH, mVU.glob.T1);
 	mVUscalarMulKeep(PQ, PQ, RQSCRATCH); // keep Q lanes (see aVU_IR.h)
 	armAsm->Mov(t2.V16B(), Fs.V16B());
-	EATANhelper(mVUglob.T2);
-	EATANhelper(mVUglob.T3);
-	EATANhelper(mVUglob.T4);
-	EATANhelper(mVUglob.T5);
-	EATANhelper(mVUglob.T6);
-	EATANhelper(mVUglob.T7);
-	EATANhelper(mVUglob.T8);
-	mvuLdrSS(mVU, RQSCRATCH, mVUglob.Pi4);
+	EATANhelper(mVU.glob.T2);
+	EATANhelper(mVU.glob.T3);
+	EATANhelper(mVU.glob.T4);
+	EATANhelper(mVU.glob.T5);
+	EATANhelper(mVU.glob.T6);
+	EATANhelper(mVU.glob.T7);
+	EATANhelper(mVU.glob.T8);
+	mvuLdrSS(mVU, RQSCRATCH, mVU.glob.Pi4);
 	mVUscalarAddKeep(PQ, PQ, RQSCRATCH); // keep Q lanes (see aVU_IR.h)
 	mVUshufflePS(PQ, PQ, mVUinfo.writeP ? 0x27 : 0xC6);
 }
@@ -357,7 +357,7 @@ mVUop(mVU_EATAN)
 		const a64::VRegister t2 = mVU.regAlloc->allocReg();
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip xmmPQ to get Valid P instance
 		armAsm->Ins(mVU_xmmPQ.V4S(), 0, Fs.V4S(), 0);
-		mvuLdrSS(mVU, RQSCRATCH, mVUglob.one);
+		mvuLdrSS(mVU, RQSCRATCH, mVU.glob.one);
 		armAsm->Fsub(Fs.S(), Fs.S(), RQSCRATCH.S());
 		mVUscalarAddKeep(mVU_xmmPQ, mVU_xmmPQ, RQSCRATCH); // keep Q lanes (see aVU_IR.h)
 		SSE_DIVSS(mVU, Fs, mVU_xmmPQ);
@@ -459,26 +459,26 @@ mVUop(mVU_EEXP)
 		const a64::VRegister t2 = mVU.regAlloc->allocReg();
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip xmmPQ to get Valid P instance
 		armAsm->Ins(mVU_xmmPQ.V4S(), 0, Fs.V4S(), 0);
-		mvuLdrSS(mVU, RQSCRATCH, mVUglob.E1);
+		mvuLdrSS(mVU, RQSCRATCH, mVU.glob.E1);
 		mVUscalarMulKeep(mVU_xmmPQ, mVU_xmmPQ, RQSCRATCH); // keep Q lanes (see aVU_IR.h)
-		mvuLdrSS(mVU, RQSCRATCH, mVUglob.one);
+		mvuLdrSS(mVU, RQSCRATCH, mVU.glob.one);
 		mVUscalarAddKeep(mVU_xmmPQ, mVU_xmmPQ, RQSCRATCH); // keep Q lanes (see aVU_IR.h)
 		armAsm->Mov(t1.V16B(), Fs.V16B());
 		SSE_MULSS(mVU, t1, Fs);
 		armAsm->Mov(t2.V16B(), t1.V16B());
-		mvuLdrSS(mVU, RQSCRATCH, mVUglob.E2);
+		mvuLdrSS(mVU, RQSCRATCH, mVU.glob.E2);
 		armAsm->Fmul(t1.S(), t1.S(), RQSCRATCH.S());
 		SSE_ADDSS(mVU, mVU_xmmPQ, t1);
-		eexpHelper(mVUglob.E3);
-		eexpHelper(mVUglob.E4);
-		eexpHelper(mVUglob.E5);
+		eexpHelper(mVU.glob.E3);
+		eexpHelper(mVU.glob.E4);
+		eexpHelper(mVU.glob.E5);
 		SSE_MULSS(mVU, t2, Fs);
-		mvuLdrSS(mVU, RQSCRATCH, mVUglob.E6);
+		mvuLdrSS(mVU, RQSCRATCH, mVU.glob.E6);
 		armAsm->Fmul(t2.S(), t2.S(), RQSCRATCH.S());
 		SSE_ADDSS(mVU, mVU_xmmPQ, t2);
 		SSE_MULSS(mVU, mVU_xmmPQ, mVU_xmmPQ);
 		SSE_MULSS(mVU, mVU_xmmPQ, mVU_xmmPQ);
-		mvuLdrSS(mVU, t2, mVUglob.one);
+		mvuLdrSS(mVU, t2, mVU.glob.one);
 		SSE_DIVSS(mVU, t2, mVU_xmmPQ);
 		armAsm->Ins(mVU_xmmPQ.V4S(), 0, t2.V4S(), 0);
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip back
@@ -541,7 +541,7 @@ mVUop(mVU_ERCPR)
 		const a64::VRegister Fs = mVU.regAlloc->allocReg(_Fs_, 0, (1 << (3 - _Fsf_)));
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip xmmPQ to get Valid P instance
 		armAsm->Ins(mVU_xmmPQ.V4S(), 0, Fs.V4S(), 0);
-		mvuLdrSS(mVU, Fs, mVUglob.one);
+		mvuLdrSS(mVU, Fs, mVU.glob.one);
 		SSE_DIVSS(mVU, Fs, mVU_xmmPQ);
 		armAsm->Ins(mVU_xmmPQ.V4S(), 0, Fs.V4S(), 0);
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip back
@@ -568,7 +568,7 @@ mVUop(mVU_ERLENG)
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip xmmPQ to get Valid P instance
 		mVU_sumXYZ(mVU, mVU_xmmPQ, Fs);
 		mVUscalarSqrtKeep(mVU_xmmPQ, mVU_xmmPQ); // keep Q lanes (see aVU_IR.h)
-		mvuLdrSS(mVU, Fs, mVUglob.one);
+		mvuLdrSS(mVU, Fs, mVU.glob.one);
 		SSE_DIVSS(mVU, Fs, mVU_xmmPQ);
 		armAsm->Ins(mVU_xmmPQ.V4S(), 0, Fs.V4S(), 0);
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip back
@@ -594,7 +594,7 @@ mVUop(mVU_ERSADD)
 		const a64::VRegister Fs = mVU.regAlloc->allocReg(_Fs_, 0, _X_Y_Z_W);
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip xmmPQ to get Valid P instance
 		mVU_sumXYZ(mVU, mVU_xmmPQ, Fs);
-		mvuLdrSS(mVU, Fs, mVUglob.one);
+		mvuLdrSS(mVU, Fs, mVU.glob.one);
 		SSE_DIVSS(mVU, Fs, mVU_xmmPQ);
 		armAsm->Ins(mVU_xmmPQ.V4S(), 0, Fs.V4S(), 0);
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip back
@@ -619,10 +619,10 @@ mVUop(mVU_ERSQRT)
 	{
 		const a64::VRegister Fs = mVU.regAlloc->allocReg(_Fs_, 0, (1 << (3 - _Fsf_)));
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip xmmPQ to get Valid P instance
-		mvuLdrQ(mVU, RQSCRATCH, mVUglob.absclip);
+		mvuLdrQ(mVU, RQSCRATCH, mVU.glob.absclip);
 		armAsm->And(Fs.V16B(), Fs.V16B(), RQSCRATCH.V16B());
 		mVUscalarSqrtKeep(mVU_xmmPQ, Fs); // keep Q lanes (see aVU_IR.h)
-		mvuLdrSS(mVU, Fs, mVUglob.one);
+		mvuLdrSS(mVU, Fs, mVU.glob.one);
 		SSE_DIVSS(mVU, Fs, mVU_xmmPQ);
 		armAsm->Ins(mVU_xmmPQ.V4S(), 0, Fs.V4S(), 0);
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip back
@@ -677,22 +677,22 @@ mVUop(mVU_ESIN)
 		armAsm->Mov(t1.V16B(), Fs.V16B()); // t1 = X^2
 		SSE_MULSS(mVU, Fs, mVU_xmmPQ); // fs = X^3
 		armAsm->Mov(t2.V16B(), Fs.V16B()); // t2 = X^3
-		mvuLdrSS(mVU, RQSCRATCH, mVUglob.S2);
+		mvuLdrSS(mVU, RQSCRATCH, mVU.glob.S2);
 		armAsm->Fmul(Fs.S(), Fs.S(), RQSCRATCH.S()); // fs = s2 * X^3
 		SSE_ADDSS(mVU, mVU_xmmPQ, Fs); // pq = X + s2 * X^3
 
 		SSE_MULSS(mVU, t2, t1);    // t2 = X^3 * X^2
-		mvuLdrSS(mVU, RQSCRATCH, mVUglob.S3);
+		mvuLdrSS(mVU, RQSCRATCH, mVU.glob.S3);
 		armAsm->Fmul(Fs.S(), t2.S(), RQSCRATCH.S()); // ps = s3 * X^5
 		SSE_ADDSS(mVU, mVU_xmmPQ, Fs); // pq = X + s2 * X^3 + s3 * X^5
 
 		SSE_MULSS(mVU, t2, t1);    // t2 = X^5 * X^2
-		mvuLdrSS(mVU, RQSCRATCH, mVUglob.S4);
+		mvuLdrSS(mVU, RQSCRATCH, mVU.glob.S4);
 		armAsm->Fmul(Fs.S(), t2.S(), RQSCRATCH.S()); // fs = s4 * X^7
 		SSE_ADDSS(mVU, mVU_xmmPQ, Fs); // pq = X + s2 * X^3 + s3 * X^5 + s4 * X^7
 
 		SSE_MULSS(mVU, t2, t1);    // t2 = X^7 * X^2
-		mvuLdrSS(mVU, RQSCRATCH, mVUglob.S5);
+		mvuLdrSS(mVU, RQSCRATCH, mVU.glob.S5);
 		armAsm->Fmul(t2.S(), t2.S(), RQSCRATCH.S()); // t2 = s5 * X^9
 		SSE_ADDSS(mVU, mVU_xmmPQ, t2); // pq = X + s2 * X^3 + s3 * X^5 + s4 * X^7 + s5 * X^9
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip back
@@ -719,7 +719,7 @@ mVUop(mVU_ESQRT)
 	{
 		const a64::VRegister Fs = mVU.regAlloc->allocReg(_Fs_, 0, (1 << (3 - _Fsf_)));
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip xmmPQ to get Valid P instance
-		mvuLdrQ(mVU, RQSCRATCH, mVUglob.absclip);
+		mvuLdrQ(mVU, RQSCRATCH, mVU.glob.absclip);
 		armAsm->And(Fs.V16B(), Fs.V16B(), RQSCRATCH.V16B());
 		mVUscalarSqrtKeep(mVU_xmmPQ, Fs); // keep Q lanes (see aVU_IR.h)
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip back
