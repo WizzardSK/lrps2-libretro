@@ -49,9 +49,10 @@ namespace
 	size_t s_code_pos = 0;
 	bool   s_ok       = false;
 
-	// end = Norm(one past the last byte covered by NATIVE code). The interpreter
-	// tail of a partial block reads live memory, so only [Norm(pc), end) needs
-	// SMC invalidation; end == Norm(pc) for blocks with no native lead.
+	// end = Norm(one past the last byte covered by NATIVE code), plus the
+	// breaker word for interpreter-tail blocks (C.70): the tail itself reads
+	// live memory, but the DECISION to hand off was made from the breaker word's
+	// compile-time value, so a write to it must also invalidate the block.
 	struct BlockRec { BlockFn fn; u32 end; };
 	std::unordered_map<u32, BlockRec>         s_blocks;
 	std::unordered_map<u32, std::vector<u32>> s_page;
@@ -178,6 +179,19 @@ namespace
 		s_irc.dirty[s] = true;
 	}
 
+	// C.68: ADDI/ADD/SUB (psxADDI/psxADD/psxSUB drop the integer-overflow trap
+	// and are byte-for-byte the U forms -- same call as EE C.42) and RFE (pure
+	// Status bit shuffle, R3000AOpcodeTables.cpp psxRFE; re-enabling IEc has no
+	// immediate side effect in the interpreter either, pending interrupts wait
+	// for the next event test). Checked in BOTH EmitSimple and IsTranslatable
+	// so block building and delay-slot inlining stay consistent.
+	// LRPS2_NO_IOP_C68=1 pins all four back to the interpreter.
+	inline bool C68Enabled()
+	{
+		static const bool on = getenv("LRPS2_NO_IOP_C68") == nullptr;
+		return on;
+	}
+
 	// Translate one side-effect-light instruction (ALU + aligned load/store) to
 	// native AArch64. Returns false (emitting nothing) for control flow and
 	// anything not covered. gpr (x19) is callee-saved so it survives mem helpers.
@@ -200,7 +214,9 @@ namespace
 					case 0x04: if (rd) { LoadGpr(m, w0, gpr, rt); LoadGpr(m, w1, gpr, rs); m.Lsl(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
 					case 0x06: if (rd) { LoadGpr(m, w0, gpr, rt); LoadGpr(m, w1, gpr, rs); m.Lsr(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
 					case 0x07: if (rd) { LoadGpr(m, w0, gpr, rt); LoadGpr(m, w1, gpr, rs); m.Asr(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
+					case 0x20: if (!C68Enabled()) return false; [[fallthrough]]; // ADD == ADDU (C.68)
 					case 0x21: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Add(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
+					case 0x22: if (!C68Enabled()) return false; [[fallthrough]]; // SUB == SUBU (C.68)
 					case 0x23: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Sub(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
 					case 0x24: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.And(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
 					case 0x25: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Orr(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
@@ -254,6 +270,7 @@ namespace
 					}
 					default: return false;
 				}
+			case 0x08: if (!C68Enabled()) return false; [[fallthrough]]; // ADDI == ADDIU (C.68)
 			case 0x09: if (rt) { LoadGpr(m, w0, gpr, rs); m.Add(w0, w0, simm); StoreGpr(m, w0, gpr, rt); } return true;
 			case 0x0a: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, (u32)simm); m.Cmp(w0, w1); m.Cset(w0, lt); StoreGpr(m, w0, gpr, rt); } return true;
 			case 0x0b: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, (u32)simm); m.Cmp(w0, w1); m.Cset(w0, lo); StoreGpr(m, w0, gpr, rt); } return true;
@@ -402,7 +419,19 @@ namespace
 					m.Str(w0, MemOperand(gpr, 136 + rd * 4));
 					return true;
 				}
-				return false; // RFE etc.
+				// C.68: RFE. psxCOP0 dispatches on the rs field alone (psxCP0[16]
+				// = psxRFE for any funct), so match the same way:
+				// Status = (Status & ~0xf) | ((Status & 0x3c) >> 2), Status = CP0.r[12].
+				if (rs_field == 0x10 && C68Enabled())
+				{
+					m.Ldr(w0, MemOperand(gpr, 136 + 12 * 4));
+					m.And(w1, w0, 0x3c);
+					m.And(w0, w0, 0xfffffff0);
+					m.Orr(w0, w0, Operand(w1, LSR, 2));
+					m.Str(w0, MemOperand(gpr, 136 + 12 * 4));
+					return true;
+				}
+				return false;
 			}
 			default: return false;
 		}
@@ -423,16 +452,20 @@ namespace
 				case 0x10: case 0x11: case 0x12: case 0x13: // C.33 HI/LO moves
 				case 0x18: case 0x19: case 0x1a: case 0x1b: // C.33 mult/div
 					return true;
+				case 0x20: case 0x22: return C68Enabled(); // C.68 ADD/SUB (no trap)
 				default: return false;
 			}
 		}
-		if (op == 0x10) // C.34 COP0: only the plain moves, not RFE
+		if (op == 0x10) // C.34 COP0 moves + C.68 RFE
 		{
 			const u32 rs_field = (insn >> 21) & 31;
+			if (rs_field == 0x10)
+				return C68Enabled();
 			return rs_field == 0x00 || rs_field == 0x02 || rs_field == 0x04 || rs_field == 0x06;
 		}
 		switch (op)
 		{
+			case 0x08: return C68Enabled(); // C.68 ADDI (no trap)
 			case 0x09: case 0x0a: case 0x0b: case 0x0c: case 0x0d: case 0x0e: case 0x0f:
 			case 0x20: case 0x21: case 0x23: case 0x24: case 0x25:
 			case 0x28: case 0x29: case 0x2b:
@@ -711,13 +744,30 @@ namespace
 
 		u32 p = pc;
 		int n = 0;
-		bool done = false;
+		bool done = false, branch_end = false;
 		while (n < kMaxInsns)
 		{
 			const u32 insn = iopMemRead32(p);
 			if (EmitSimple(masm, gpr, insn)) { p += 4; n++; continue; }
-			if (EmitBranch(masm, gpr, p, insn, n)) { done = true; break; } // emits bookkeeping + pc + epilogue
+			if (EmitBranch(masm, gpr, p, insn, n)) { done = branch_end = true; break; } // emits bookkeeping + pc + epilogue
 			break; // unsupported -> interpreter handles the rest of the block
+		}
+
+		// C.69: block ended only because n hit kMaxInsns with every op translated
+		// and no branch yet (n == kMaxInsns <=> cap: a break always leaves
+		// n <= kMaxInsns-1 since the body only runs while n < kMaxInsns). Mirror
+		// the EE's C.44 cap-chain: end the block cleanly at p and chain, instead
+		// of handing a fully-translatable tail to the interpreter (LW/ADDIU
+		// sitting at position 64 were the residual IOP handoff breakers).
+		static const bool cap_chain = getenv("LRPS2_NO_IOP_CAP_CHAIN") == nullptr;
+		if (!done && n == kMaxInsns && cap_chain)
+		{
+			masm.Mov(w0, p);
+			StorePC(masm, w0);
+			EmitCycleBookkeeping(masm, n);
+			s_irc.FlushDirty(masm, gpr);
+			EmitEpilogue(masm);
+			done = true;
 		}
 
 		if (!done)
@@ -744,7 +794,15 @@ namespace
 		BlockFn fn = reinterpret_cast<BlockFn>(start);
 		// Native code covers the leading run; a translated branch also bakes the
 		// branch + delay slot (p still points at the branch instruction there).
-		const u32 ns = Norm(pc), ne = Norm(done ? p + 8 : p);
+		// A cap-chained block (C.69) covers exactly [pc, p) -- no branch baked.
+		const u32 ns = Norm(pc), ne = Norm(branch_end ? p + 8 : p);
+		// C.70: an interpreter-tail block's shape is decided by what the breaker
+		// word held at COMPILE time. If the guest later rewrites that word (IRX
+		// module load landing over what was data), the block must recompile to
+		// pick up the now-translatable code -- so cover the breaker word too.
+		// (MMX7: a block at 0x16480 compiled before the module loaded kept
+		// re-handing `lw ra` to the interpreter forever.)
+		const u32 cov = (!done && InRam(ne)) ? ne + 4 : ne;
 
 		// TEMP tooling (C.46): LRPS2_DUMP_HOST_IOP=0x<guest pc> writes the emitted
 		// host code and the guest source words for offline disassembly.
@@ -773,14 +831,14 @@ namespace
 					ns, sz, (ne > ns) ? (ne - ns) >> 2 : 0);
 			}
 		}
-		s_blocks.emplace(pc, BlockRec{fn, ne});
+		s_blocks.emplace(pc, BlockRec{fn, cov});
 		if (InRam(ns)) s_lut[ns >> 2] = fn;
-		if (ne > ns)
+		if (cov > ns)
 		{
-			for (u32 pg = ns >> kPageShift; pg <= (ne - 1) >> kPageShift; pg++)
+			for (u32 pg = ns >> kPageShift; pg <= (cov - 1) >> kPageShift; pg++)
 				s_page[pg].push_back(pc);
-			if (InRam(ne - 1))
-				CoverRange(ns, ne);
+			if (InRam(cov - 1))
+				CoverRange(ns, cov);
 		}
 		return fn;
 	}
