@@ -23,9 +23,9 @@ save state instead:
 
 | Thread | CPU | Inside it |
 |---|---|---|
-| EE | 39 % | 48 % in its own JIT, 44 % native C++ (SPU `Mix` 7.6 %, `memcpy` 4.4 %, event test 2.3 %), 7 % IOP JIT |
+| EE | 41 % | 50 % in its own JIT, 43 % native C++ (SPU `Mix` 8.9 %, `memcpy` 4.0 %, event test 2.1 %), 7 % IOP JIT |
 | GS | 37 % | Vulkan renderer |
-| MTVU | 24 % | 77 % inside microVU1's generated code |
+| MTVU | 23 % | 75 % inside microVU1's generated code |
 
 No IPU at all, and the event test that looked like a 6-7 % problem is 2.3 %.
 Any performance claim here should say which of the two it came from.
@@ -54,8 +54,21 @@ Three findings that came out of getting that profile:
   and dependency chains, so further emitted-code polishing has a low ceiling.
   These changes are kept for coverage, interpreter-fidelity, code density and
   x86 parity, not for speed.
+* **The remaining native-C++ "plumbing" on the EE thread is protocol cost, not
+  waste.** Single-level caller attribution for leaf symbols
+  (`LRPS2_PROF_LR=memcpy,memcmp,__aarch64_` -- the SIGPROF handler records LR
+  next to PC, and for a leaf function LR is the caller) pins it down: `memcpy`
+  (4 %) is 59 % the MTGS ring write (`WRITERING_DMA`) and 31 % the MTVU ring
+  write (`VU_Thread::VifUnpack`); the outlined atomics (2.2 %) are 84 % the
+  `WorkSema::NotifyOfWork` fetch_add, one per VIF unpack packet; `memcmp`
+  (1.2 %) is entirely the C.60 block-revalidation check. The WorkSema RMW in
+  particular must stay: an RMW always observes the latest state, which is what
+  makes the sleep/wake handshake sound -- the tempting load-then-skip variant
+  can read a stale RUNNING_N while the worker is going to sleep and miss the
+  wakeup. What is left on the table here is structural (batching VIF unpack
+  packets into fewer MTVU ring writes, an SPU worker thread), not local.
 
-Overall recompiler-suite progress: roughly **~87 %** (weighted by remaining
+Overall recompiler-suite progress: roughly **~88 %** (weighted by remaining
 work; dynamic instruction coverage on the tested titles is much higher — the
 vast majority of EE+IOP instructions already execute natively, and the
 remaining interpreter handoffs are mostly untranslatable exceptions). Opcode
@@ -72,11 +85,11 @@ Native ALU, loads/stores incl. LQ/SQ (inline vtlb fast path) + unaligned family,
 
 Native ALU incl. the trapping forms ADDI/ADD/SUB (this interpreter drops the overflow trap, so they are the U ops — same call the EE made in C.42) and RFE (pure Status bit shuffle) (C.68, `LRPS2_NO_IOP_C68=1` restores the interpreter), aligned + unaligned (LWL/LWR/SWL/SWR) loads/stores, branches + delay slots, block linking, MULT/DIV + HI/LO moves, COP0 moves (MFC0/CFC0/MTC0/CTC0), write-back GPR register cache (w22–w27, `LRPS2_NO_IOP_REGCACHE=1` to disable), inline RAM fastmem for loads (`LRPS2_NO_IOP_FASTMEM=1` to disable; the remaining helper-call traffic is genuine HW-register polling), event tests gated on `cycle >= iopNextEventCycle` in branch tails (`LRPS2_NO_IOP_EVTGATE=1` to disable); J native (only the module-import stub form `j ...; li $zero, fn` stays interpreted for the HLE hook — and that hook's resolution is cached per stub pc (C.71): the up-to-0x2000-byte backward magic scan, the `std::string` heap allocation and the library-name compare chain ran on EVERY stub execution, millions of times a minute; now a hit revalidates its inputs with three RAM reads (`LRPS2_NO_IOP_JSTUB_CACHE=1` restores the uncached path — `iopMemReadString` left the profile, ~1.5-2 % of the EE thread). A straight-line run longer than the block cap chains to the next block instead of handing its fully-translatable tail to the interpreter (C.69, the EE's C.44 rule; `LRPS2_NO_IOP_CAP_CHAIN=1` to disable), and an interpreter-tail block also covers its breaker word for SMC invalidation, so code loaded OVER what was data at compile time (IRX module loads) recompiles instead of re-handing off forever (C.70 — one stale MMX7 block was re-interpreting `lw ra` thousands of times a run). **Handoff coverage is closed:** `LRPS2_IOP_HANDOFF_STATS=1` (histogram of interpreted ops, EE-style) shows exactly two breaker classes left on both test titles — the J import stub (HLE hook, by design) and SYSCALL (exception, interpreter forever); GTE/COP2 is PS1-only and never fires. The kernel idle spin (`j <self>` + nop) is fast-forwarded to the next event or the end of the cycle budget rather than emulated an iteration at a time (C.47, `LRPS2_NO_IOP_IDLE=1` to disable) — it was 18 % of all JIT time; psxRegs fields go through the x19 base (C.46)
 
-### VU1 recompiler — ~65 %
+### VU1 recompiler — ~70 %
 
 **microVU1 (armsx2 aVU transplant) is the default provider**: native AArch64 VU codegen, MVU_DIFF-verified register-exact against the interpreter on both test titles, byte-identical framebuffers through 12000-frame runs. Instant-VU1 and MTVU are back to default-on with it. **In-race profile facts (GT3 save state)**: EE never waits on MTVU (SyncStats 0.00 s) so VU1 speed does not gate wall time; mvu1 is ~75 % of the MTVU thread and FLAT (150 blocks, hottest 5.6 % of JIT) — no per-block target exists, only systematic emitter quality. First such passes done: C.72 folds the page offset of absolute-address accesses (flag spills, clamp constants) into the load/store instead of a separate `add` after `adrp` (`armAbsMemOperand`), and C.73 replaces the naive copy+4×Ins `mVUshufflePS` permute with the cheap NEON form where one exists (Dup/Rev64/Ext/identity; 2-lane swaps insert only the moved lanes) — and C.74 pins `&mVU` in x27 (`RVUMVU`, micro mode only — macro mode's x27 belongs to the EE rec) with the hot per-op scalars moved ahead of the ~290KB `prog` member so they encode as scaled immediates, while `&mVU.regs()` fields ride the existing x19 — and C.75 embeds copies of the emit-constant tables (clamp bounds, FTOI/ITOF scales, EFU polynomials) in `microVU` itself so the per-clamp constant loads are one `[x27 + imm]` instruction — the hottest block dropped 1776 → 1292 host bytes (−27 %), adrp count 54 → 9, and the register-exact MVU_DIFF shadow run from the in-race save state produces a byte-identical divergence log to the pre-C.72 baseline (the 9 logged programs are the known pre-existing interp-vs-microVU last-bit FP differences). LRPS2_PROF now attributes mvu0/mvu1 samples per guest block and `LRPS2_DUMP_HOST_MVU=0x<pc>` dumps a block's host code. Fallbacks: `LRPS2_VU1REC_PAIR=1` (interp-pair rec), `LRPS2_NO_VU1REC=1` (interpreter; both restore conservative non-instant/opt-in-MTVU behavior)
 
-### VU0 / COP2 — ~75 %
+### VU0 / COP2 — ~77 %
 
 **microVU0 runs VU0 micro programs** (VCALLMS) natively; **COP2 macro ALU ops emit native NEON directly into EE JIT blocks** (aVU_Macro single-op emitters) with **real flag liveness** (C.66): the analysis runs over a run of consecutive macro ALU ops, capped at the block end, and only the last writer of each flag category computes it -- the same flag-hack the x86 rec ships by default (its `COP2FlagHackPass`, here run-local because this builder interleaves analysis with emission). Dead intermediate MAC/status pipelines (~40 host instructions per op) vanish: the hottest in-race GT3 block, VU0-macro matrix code, dropped 3068 -> 2004 host bytes. Wall-time flat (OoO absorbed the ALU); the win is code size, I-cache and x86 parity. `LRPS2_NO_COP2_LIVENESS=1` restores all-live; BC2 branches native; **the COP2 transfers (QMFC2/CFC2/QMTC2/CTC2) are native too** (C.58) -- the interlock bit is known at compile time, so the `_vu0FinishMicro`/`_vu0WaitMicro` call is only emitted when set, and CFC2's REG_R quirk (writes UL[0], leaves UL[1]) is reproduced exactly. CTC2 to FBRST/CMSAR1 (VU reset / VU1 microprogram kick) and CALLMS/CALLMSR stay on the interpreter call, faithful to x86. `LRPS2_NO_VU0REC=1` / `LRPS2_NO_EE_COP2MACRO=1` / `LRPS2_NO_EE_COP2XFER=1` fall back
 
@@ -158,6 +171,13 @@ Tracing/logging:
 | `LRPS2_JIT_STATS=1` | JIT compile statistics (e.g. likely-branch counts) |
 | `LRPS2_SMC_STATS=1` | Per-page write-protect/clear counts (which pages ping-pong between code and data) |
 | `LRPS2_EVT_STATS=1` | EE event-test rate: entries, how many run the IOP or the interrupt scan, and which clamp set `nextEventCycle` |
+| `LRPS2_IOP_HANDOFF_STATS=1` (+`LRPS2_IOP_HANDOFF_PC=<key>`) | IOP-side interpreted-op histogram + first-op breaker table (+ pinpoint the pcs behind one breaker key) |
+| `LRPS2_PROF=1` (+`_HZ`, `_MAX`) | In-tree sampling profiler: per-thread CPU-time SIGPROF sampling, bucketed by JIT code cache, symbolized against `.symtab`, with per-guest-block hot lists |
+| `LRPS2_PROF_LR=sub1,sub2` | Caller attribution for leaf symbols (memcpy/memcmp/`__aarch64_*`): samples matching a substring get their LR symbolized into a per-thread caller histogram |
+| `LRPS2_SYNC_STATS=1` | Wall-clock blocking at the EE↔GS/MTVU sync points (who actually waits on whom) |
+| `LRPS2_SPU_STATS=1` / `LRPS2_SPU_MUTE=1` | SPU voice-shape statistics / mute the mixer to re-measure its wall-time ceiling |
+| `LRPS2_DUMP_HOST=<pc>` / `LRPS2_DUMP_HOST_IOP=<pc>` / `LRPS2_DUMP_HOST_MVU=<pc>` | Write a compiled block's host code (+ guest words) for offline `objdump -D -b binary -m aarch64` |
+| `MVU_DIFF=1` | microVU1-vs-interpreter register-exact shadow differential (needs instant VU1 — even an empty `LRPS2_NO_VU1_INSTANT=` disables it and poisons the log) |
 
 ## Measured and rejected
 
