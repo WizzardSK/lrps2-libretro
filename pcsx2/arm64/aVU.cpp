@@ -1554,8 +1554,11 @@ static void mVUdispatcherAB(microVU& mVU)
 	if (mvuNeedsFPCRUpdate(mVU))
 		mVUemitSetHostFPCR(isVU1 ? &EmuConfig.Cpu.VU1FPCR.bitmask : &EmuConfig.Cpu.VU0FPCR.bitmask);
 
-	// All VF/VI/flag loads address off RVUSTATE = &vuRegs[index].
+	// All VF/VI/flag loads address off RVUSTATE = &vuRegs[index]; mVU's own
+	// fields (flag instances, cycles, branch state) address off RVUMVU = &mVU
+	// (C.74). Both are callee-saved and survive helper C calls and block chains.
 	armMoveAddressToReg(RVUSTATE, &::vuRegs[mVU.index]);
+	armMoveAddressToReg(RVUMVU, &mVU);
 
 	// Build the PQ latency register (v24). Final lane layout matches the x86 rec:
 	//   VU0: [Q, pending_q, P, P]   VU1: [Q, pending_q, P, pending_p]
@@ -1579,9 +1582,9 @@ static void mVUdispatcherAB(microVU& mVU)
 
 	// Copy the mac/clip flag instances into the microVU's working storage.
 	armAsm->Ldr(vtmp.Q(), a64::MemOperand(RVUSTATE, offsetof(VURegs, micro_macflags)));
-	armAsm->Str(vtmp.Q(), armAbsMemOperand(RSCRATCHADDR, &mVU.macFlag[0], 16));
+	armAsm->Str(vtmp.Q(), mvuAbsMem(mVU, &mVU.macFlag[0], 16));
 	armAsm->Ldr(vtmp.Q(), a64::MemOperand(RVUSTATE, offsetof(VURegs, micro_clipflags)));
-	armAsm->Str(vtmp.Q(), armAbsMemOperand(RSCRATCHADDR, &mVU.clipFlag[0], 16));
+	armAsm->Str(vtmp.Q(), mvuAbsMem(mVU, &mVU.clipFlag[0], 16));
 
 	// Load the 4 status-flag instances into gprF0-gprF3 (w23-w26).
 	for (int i = 0; i < 4; i++)
@@ -1610,12 +1613,15 @@ static void mVUdispatcherCD(microVU& mVU)
 
 	armBeginStackFrame(true);
 
+	// C.74: pin &mVU before anything below (or in the resumed block) uses it.
+	armMoveAddressToReg(RVUMVU, &mVU);
+
 	// Load VU's FPCR state.
 	if (mvuNeedsFPCRUpdate(mVU))
 		mVUemitSetHostFPCR(isVU1 ? &EmuConfig.Cpu.VU1FPCR.bitmask : &EmuConfig.Cpu.VU0FPCR.bitmask);
 
 	// mVUrestoreRegs(): reload the PQ reg from its XGKICK backup slot.
-	armAsm->Ldr(mVU_xmmPQ.Q(), armAbsMemOperand(RSCRATCHADDR, &mVU.vecBackup[mVU_xmmPQ.GetCode()][0], 16));
+	armAsm->Ldr(mVU_xmmPQ.Q(), mvuAbsMem(mVU, &mVU.vecBackup[mVU_xmmPQ.GetCode()][0], 16));
 
 	armMoveAddressToReg(RVUSTATE, &::vuRegs[mVU.index]);
 	for (int i = 0; i < 4; i++)
@@ -2000,7 +2006,7 @@ static_assert(alignof(microBlock) == 16, "microBlock must stay 16-byte aligned")
 	mVUallocSFLAGa(gprT1, 1);
 	mVUallocSFLAGb(gprT1, 1);
 	mVUallocSFLAGc(gprT1, gprT2, 1);
-	mVUallocSFLAGd(&mVU.divFlag, gprT1, gprT2, getFlagReg(0));
+	mVUallocSFLAGd(mVU, &mVU.divFlag, gprT1, gprT2, getFlagReg(0));
 	mVUallocMFLAGa(mVU, gprT1, 1);
 	mVUallocMFLAGb(mVU, gprT1, 1);
 	mVUallocCFLAGa(mVU, gprT1, 1);

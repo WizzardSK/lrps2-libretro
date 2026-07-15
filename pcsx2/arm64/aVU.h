@@ -324,6 +324,23 @@ struct microVU
 	u32 progMemMask;  // VU Micro Memory Size (in u32's)
 	u32 cacheSize;    // VU Cache Size
 
+	// C.74: the hot per-op scalars live BEFORE the ~290KB `prog` member so they
+	// sit in the first KB of the struct, inside the unsigned scaled-immediate
+	// window of the pinned x27 (&mVU) base -- see mvuAbsMem. (The x86 rec keeps
+	// them after prog; with absolute addressing the layout never mattered.)
+	u32 code;         // Contains the current Instruction
+	u32 divFlag;      // 1 instance of I/D flags
+	u32 VIbackup;     // Holds a backup of a VI reg if modified before a branch
+	u32 VIxgkick;     // Holds a backup of a VI reg used for xgkick-delays
+	u32 branch;       // Holds branch compare result (IBxx) OR Holds address to Jump to (JALR/JR)
+	u32 badBranch;    // For Branches in Branch Delay Slots, holds Address the first Branch went to + 8
+	u32 evilBranch;   // For Branches in Branch Delay Slots, holds Address to Jump to
+	u32 evilevilBranch;// For Branches in Branch Delay Slots (chained), holds Address to Jump to
+	u32 p;            // Holds current P instance index
+	u32 q;            // Holds current Q instance index
+	u32 totalCycles;  // Total Cycles that mVU is expected to run for
+	s32 cycles;       // Cycles Counter
+
 	microProgManager               prog;     // Micro Program Data
 	microProfiler                  profiler; // Opcode Profiler
 	std::unique_ptr<microRegAlloc> regAlloc; // Reg Alloc Class
@@ -338,18 +355,6 @@ struct microVU
 	u8* waitMTVU;     // Ptr to function to save registers/sync VU1 thread
 	u8* copyPLState;  // Ptr to function to copy pipeline state into microVU
 	u8* resumePtrXG;  // Ptr to recompiled code position to resume xgkick
-	u32 code;         // Contains the current Instruction
-	u32 divFlag;      // 1 instance of I/D flags
-	u32 VIbackup;     // Holds a backup of a VI reg if modified before a branch
-	u32 VIxgkick;     // Holds a backup of a VI reg used for xgkick-delays
-	u32 branch;       // Holds branch compare result (IBxx) OR Holds address to Jump to (JALR/JR)
-	u32 badBranch;    // For Branches in Branch Delay Slots, holds Address the first Branch went to + 8
-	u32 evilBranch;   // For Branches in Branch Delay Slots, holds Address to Jump to
-	u32 evilevilBranch;// For Branches in Branch Delay Slots (chained), holds Address to Jump to
-	u32 p;            // Holds current P instance index
-	u32 q;            // Holds current Q instance index
-	u32 totalCycles;  // Total Cycles that mVU is expected to run for
-	s32 cycles;       // Cycles Counter
 
 	VURegs& regs() const { return ::vuRegs[index]; }
 	void* textPtr() const { return (index && THREAD_VU1) ? (void*)&regs().VF[9] : (void*)&cpuRegs.GPR.r[9]; }

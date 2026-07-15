@@ -91,7 +91,7 @@ static void setupMacroOp(int mode)
 	// [127:32]) — bit-identical to x86 xMOVSSZX(xmmPQ, mem). The *q emitters read Q via
 	// getQreg(.., mVUinfo.readQ); readQ == 0 here (info memset above), so lane 0 is correct.
 	if (mode & 0x01) // Q-Reg will be Read
-		mvuLdrSS(mVU_xmmPQ, &::vuRegs[0].VI[REG_Q].UL);
+		mvuLdrSS(microVU0, mVU_xmmPQ, &::vuRegs[0].VI[REG_Q].UL);
 
 	// M5.4 CLIP (x86 setupMacroOp 42-46). Tell the emitter to write the clip flag: with
 	// write/lastWrite == 0xff (>= 4) mVUallocCFLAGa/b take the memory-backed "macroVU"
@@ -129,14 +129,14 @@ static void setupMacroOp(int mode)
 		{
 			// flags are normalized in memory — denormalize into gprF0 before the op
 			// (mVUallocSFLAGd destroys reg/tmp1/tmp2; tmp1/tmp2 = the mVU emit scratch).
-			mVUallocSFLAGd(&::vuRegs[0].VI[REG_STATUS_FLAG].UL, getFlagReg(0), gprT1, gprT2);
+			mVUallocSFLAGd(microVU0, &::vuRegs[0].VI[REG_STATUS_FLAG].UL, getFlagReg(0), gprT1, gprT2);
 		}
 		else
 		{
 			// flags already denormalized in memory — just load into gprF0 (the x86
 			// "ideally we'd keep this in a register, but 32-bit" comment doesn't apply
 			// on ARM64, but the lazy memory round-trip mirrors x86 1:1).
-			armAsm->Ldr(getFlagReg(0), armAbsMemOperand(RSCRATCHADDR, &::vuRegs[0].VI[REG_STATUS_FLAG].UL, 4));
+			armAsm->Ldr(getFlagReg(0), mvuAbsMem(microVU0, &::vuRegs[0].VI[REG_STATUS_FLAG].UL, 4));
 		}
 	}
 
@@ -153,7 +153,7 @@ static void endMacroOp(int mode)
 	// bit-identical to x86 xMOVSS(mem, xmmPQ). Absolute-addressed (RSCRATCHADDR), so it is
 	// order-independent of x19; v24 is outside the VF pool, so flushAll below won't touch it.
 	if (mode & 0x02) // Q-Reg was Written To
-		mvuStrSS(&::vuRegs[0].VI[REG_Q].UL, mVU_xmmPQ);
+		mvuStrSS(microVU0, &::vuRegs[0].VI[REG_Q].UL, mVU_xmmPQ);
 
 	// flushAll() is the memory-backed equivalent of x86's flushPartialForCOP2():
 	// write every cached VF/VI back to vuRegs[0] (the next op reads from memory)
@@ -174,13 +174,13 @@ static void endMacroOp(int mode)
 			// gprF0, 0) then xMOV mem,eax). gprT1 = output, gprT2 = the scratch the
 			// allocator loads gprF0 into; both are dead mVU emit temps here.
 			mVUallocSFLAGc(gprT1, gprT2, 0);
-			armAsm->Str(gprT1, armAbsMemOperand(RSCRATCHADDR, &::vuRegs[0].VI[REG_STATUS_FLAG].UL, 4));
+			armAsm->Str(gprT1, mvuAbsMem(microVU0, &::vuRegs[0].VI[REG_STATUS_FLAG].UL, 4));
 		}
 		else if (g_pCurInstInfo->info & (EEINST_COP2_STATUS_FLAG | EEINST_COP2_DENORMALIZE_STATUS_FLAG))
 		{
 			// Back up the denormalized flags for the next instruction (re-normalized
 			// before the reg is next read). x86: xMOV mem, gprF0.
-			armAsm->Str(getFlagReg(0), armAbsMemOperand(RSCRATCHADDR, &::vuRegs[0].VI[REG_STATUS_FLAG].UL, 4));
+			armAsm->Str(getFlagReg(0), mvuAbsMem(microVU0, &::vuRegs[0].VI[REG_STATUS_FLAG].UL, 4));
 		}
 	}
 

@@ -59,8 +59,8 @@ void doIbit(mV)
 		mVU.regAlloc->clearRegVF(33);
 		if (EmuConfig.Gamefixes.IbitHack)
 		{
-			mvuLdr32(gprT1, &curI);
-			mvuStr32(&mVU.getVI(REG_I), gprT1);
+			mvuLdr32(mVU, gprT1, &curI);
+			mvuStr32(mVU, &mVU.getVI(REG_I), gprT1);
 		}
 		else
 		{
@@ -73,7 +73,7 @@ void doIbit(mV)
 			else
 				tempI = curI;
 
-			mvuStrImm32(&mVU.getVI(REG_I), tempI, gprT1);
+			mvuStrImm32(mVU, &mVU.getVI(REG_I), tempI, gprT1);
 		}
 		incPC(1);
 	}
@@ -180,15 +180,15 @@ void mVUDoDBit(microVU& mVU, microFlagCycles* mFC)
 {
 	a64::Label eJMP;
 	if (mVU.index && THREAD_VU1)
-		mvuLdr32(gprT1, &vu1Thread.vuFBRST);
+		mvuLdr32(mVU, gprT1, &vu1Thread.vuFBRST);
 	else
-		mvuLdr32(gprT1, &VU0.VI[REG_FBRST].UL);
+		mvuLdr32(mVU, gprT1, &VU0.VI[REG_FBRST].UL);
 	armAsm->Tst(gprT1, (isVU1 ? 0x400 : 0x4));
 	armAsm->B(&eJMP, a64::eq);
 	if (!isVU1 || !THREAD_VU1)
 	{
-		mvuMemOrImm32(&VU0.VI[REG_VPU_STAT].UL, (isVU1 ? 0x200 : 0x2), gprT1);
-		mvuMemOrImm32(&mVU.regs().flags, VUFLAG_INTCINTERRUPT, gprT1);
+		mvuMemOrImm32(mVU, &VU0.VI[REG_VPU_STAT].UL, (isVU1 ? 0x200 : 0x2), gprT1);
+		mvuMemOrImm32(mVU, &mVU.regs().flags, VUFLAG_INTCINTERRUPT, gprT1);
 	}
 	incPC(1);
 	mVUDTendProgram(mVU, mFC, 1);
@@ -200,15 +200,15 @@ void mVUDoTBit(microVU& mVU, microFlagCycles* mFC)
 {
 	a64::Label eJMP;
 	if (mVU.index && THREAD_VU1)
-		mvuLdr32(gprT1, &vu1Thread.vuFBRST);
+		mvuLdr32(mVU, gprT1, &vu1Thread.vuFBRST);
 	else
-		mvuLdr32(gprT1, &VU0.VI[REG_FBRST].UL);
+		mvuLdr32(mVU, gprT1, &VU0.VI[REG_FBRST].UL);
 	armAsm->Tst(gprT1, (isVU1 ? 0x800 : 0x8));
 	armAsm->B(&eJMP, a64::eq);
 	if (!isVU1 || !THREAD_VU1)
 	{
-		mvuMemOrImm32(&VU0.VI[REG_VPU_STAT].UL, (isVU1 ? 0x400 : 0x4), gprT1);
-		mvuMemOrImm32(&mVU.regs().flags, VUFLAG_INTCINTERRUPT, gprT1);
+		mvuMemOrImm32(mVU, &VU0.VI[REG_VPU_STAT].UL, (isVU1 ? 0x400 : 0x4), gprT1);
+		mvuMemOrImm32(mVU, &mVU.regs().flags, VUFLAG_INTCINTERRUPT, gprT1);
 	}
 	incPC(1);
 	mVUDTendProgram(mVU, mFC, 1);
@@ -256,7 +256,7 @@ void mVUtestCycles(microVU& mVU, microFlagCycles& mFC)
 		}
 	}
 
-	mvuLdr32(gprT1, &mVU.cycles);
+	mvuLdr32(mVU, gprT1, &mVU.cycles);
 	if (EmuConfig.Gamefixes.VUSyncHack)
 		armAsm->Subs(gprT1.W(), gprT1.W(), mVUcycles); // Running behind, make sure we have time to run the block
 	else
@@ -269,13 +269,13 @@ void mVUtestCycles(microVU& mVU, microFlagCycles& mFC)
 	armEmitCall(mVU.copyPLState);
 
 	if (EmuConfig.Gamefixes.VUSyncHack || EmuConfig.Gamefixes.FullVU0SyncHack)
-		mvuStrImm32(&mVU.regs().nextBlockCycles, mVUcycles, gprT1);
+		mvuStrImm32(mVU, &mVU.regs().nextBlockCycles, mVUcycles, gprT1);
 	mVUendProgram(mVU, &mFC, 0);
 
 	armAsm->Bind(&skip);
 
 	// xSUB(ptr32[&mVU.cycles], mVUcycles)
-	const a64::MemOperand cycles_mem = armAbsMemOperand(RSCRATCHADDR, &mVU.cycles, 4);
+	const a64::MemOperand cycles_mem = mvuAbsMem(mVU, &mVU.cycles, 4);
 	armAsm->Ldr(gprT1.W(), cycles_mem);
 	armAsm->Sub(gprT1.W(), gprT1.W(), mVUcycles);
 	armAsm->Str(gprT1.W(), cycles_mem);
@@ -566,7 +566,7 @@ void* mVUcompile(microVU& mVU, u32 startPC, uptr pState)
 		} // handleBadOp currently just prints a warning
 		if (mVUup.mBit)
 		{
-			mvuMemOrImm32(&mVU.regs().flags, VUFLAG_MFLAGSET, gprT1);
+			mvuMemOrImm32(mVU, &mVU.regs().flags, VUFLAG_MFLAGSET, gprT1);
 		}
 
 		if (isVU1 && mVUlow.kickcycles && CHECK_XGKICKHACK)
@@ -609,12 +609,12 @@ void* mVUcompile(microVU& mVU, u32 startPC, uptr pState)
 				u32* lpS = (u32*)&mVU.prog.lpState;
 				for (size_t i = 0; i < (sizeof(microRegInfo) - 4) / 4; i++, lpS++, cpS++)
 				{
-					mvuStrImm32(lpS, cpS[0], gprT1);
+					mvuStrImm32(mVU, lpS, cpS[0], gprT1);
 				}
 				incPC(2);
 				mVUsetupRange(mVU, xPC, false);
 				if (EmuConfig.Gamefixes.VUSyncHack || EmuConfig.Gamefixes.FullVU0SyncHack)
-					mvuStrImm32(&mVU.regs().nextBlockCycles, 0, gprT1);
+					mvuStrImm32(mVU, &mVU.regs().nextBlockCycles, 0, gprT1);
 				mVUendProgram(mVU, &mFC, 0);
 				normBranchCompile(mVU, xPC);
 				incPC(-2);

@@ -51,7 +51,7 @@ alignas(16) static const u32 mVUmovemaskBit[4] = {1, 2, 4, 8};
 static void mVUmovemask(const a64::Register& dst, const a64::VRegister& src)
 {
 	armAsm->Sshr(RQSCRATCH.V4S(), src.V4S(), 31); // lane -> 0xFFFFFFFF if sign set, else 0
-	mvuLdrQ(RQSCRATCH2, mVUmovemaskBit);
+	armAsm->Ldr(RQSCRATCH2.Q(), armAbsMemOperand(RSCRATCHADDR, mVUmovemaskBit, 16));
 	armAsm->And(RQSCRATCH.V16B(), RQSCRATCH.V16B(), RQSCRATCH2.V16B());
 	armAsm->Addv(RQSCRATCH.S(), RQSCRATCH.V4S());
 	armAsm->Fmov(dst.W(), RQSCRATCH.S());
@@ -113,9 +113,9 @@ static void mVUupdateFlags(mV, const a64::VRegister& reg, const a64::VRegister& 
 	{
 		a64::Label oJMP;
 		// Calculate overflow
-		mvuLdrQ(RQSCRATCH, &mVU_sse4_compvals[1][0]);
+		mvuLdrQ(mVU, RQSCRATCH, &mVU_sse4_compvals[1][0]);
 		armAsm->And(regT1.V16B(), regT2.V16B(), RQSCRATCH.V16B()); // Remove sign flags (we don't care)
-		mvuLdrQ(RQSCRATCH, &mVU_sse4_compvals[0][0]);
+		mvuLdrQ(mVU, RQSCRATCH, &mVU_sse4_compvals[0][0]);
 		armAsm->Fcmge(regT1.V4S(), regT1.V4S(), RQSCRATCH.V4S());  // Compare if T1 >= FLT_MAX
 		mVUmovemask(gprT2, regT1);                                 // Grab sign bits for equal results
 		armAsm->And(gprT2, gprT2, AND_XYZW); // Grab "Is FLT_MAX" bits from the previous calculation
@@ -486,7 +486,7 @@ mVUop(mVU_ABS)
 		if (!_Ft_)
 			return;
 		const a64::VRegister Fs = mVU.regAlloc->allocReg(_Fs_, _Ft_, _X_Y_Z_W, !((_Fs_ == _Ft_) && (_X_Y_Z_W == 0xf)));
-		mvuLdrQ(RQSCRATCH, mVUglob.absclip);
+		mvuLdrQ(mVU, RQSCRATCH, mVUglob.absclip);
 		armAsm->And(Fs.V16B(), Fs.V16B(), RQSCRATCH.V16B());
 		mVU.regAlloc->clearNeeded(Fs);
 		mVU.profiler.EmitOp(opABS);
@@ -572,7 +572,7 @@ static void mVU_FTOIx(mP, const float* addr, microOpcode opEnum)
 		// sign-saturated value and insert it on the unordered (NaN) lanes.
 		if (addr)
 		{
-			mvuLdrQ(RQSCRATCH, addr);
+			mvuLdrQ(mVU, RQSCRATCH, addr);
 			armAsm->Fmul(Fs.V4S(), Fs.V4S(), RQSCRATCH.V4S());
 		}
 		armAsm->Fcmeq(t1.V4S(), Fs.V4S(), Fs.V4S());           // ~0 on non-NaN lanes
@@ -606,7 +606,7 @@ static void mVU_ITOFx(mP, const float* addr, microOpcode opEnum)
 		armAsm->Scvtf(Fs.V4S(), Fs.V4S());
 		if (addr)
 		{
-			mvuLdrQ(RQSCRATCH, addr);
+			mvuLdrQ(mVU, RQSCRATCH, addr);
 			armAsm->Fmul(Fs.V4S(), Fs.V4S(), RQSCRATCH.V4S());
 		}
 		//mVUclamp2(Fs, xmmT1, 15); // Clamp (not sure if this is needed)
@@ -642,22 +642,22 @@ mVUop(mVU_CLIP)
 		mVUallocCFLAGa(mVU, gprT1, cFLAG.lastWrite);
 		armAsm->Lsl(gprT1, gprT1, 6);
 
-		mvuLdrQ(RQSCRATCH, mVUglob.exponent);
+		mvuLdrQ(mVU, RQSCRATCH, mVUglob.exponent);
 		armAsm->And(t1.V16B(), Fs.V16B(), RQSCRATCH.V16B());
 		armAsm->Eor(t2.V16B(), t2.V16B(), t2.V16B());
 		armAsm->Cmeq(t1.V4S(), t1.V4S(), t2.V4S()); // Denormal check
 		armAsm->Bic(t1.V16B(), Fs.V16B(), t1.V16B()); // If denormal, set to zero (x86 PANDN)
-		mvuLdrQ(RQSCRATCH, mVUglob.absclip);
+		mvuLdrQ(mVU, RQSCRATCH, mVUglob.absclip);
 		armAsm->And(Ft.V16B(), Ft.V16B(), RQSCRATCH.V16B());
 
-		mvuLdrQ(RQSCRATCH, mVUglob.signbit);
+		mvuLdrQ(mVU, RQSCRATCH, mVUglob.signbit);
 		armAsm->Eor(Fs.V16B(), t1.V16B(), RQSCRATCH.V16B()); // Negate
 		armAsm->Cmgt(t1.V4S(), t1.V4S(), Ft.V4S()); // +w, +z, +y, +x
 		armAsm->Cmgt(Fs.V4S(), Fs.V4S(), Ft.V4S()); // -w, -z, -y, -x
 
-		mvuLdrQ(RQSCRATCH, mVU_clipLoHalf);
+		mvuLdrQ(mVU, RQSCRATCH, mVU_clipLoHalf);
 		armAsm->Bit(Fs.V16B(), t1.V16B(), RQSCRATCH.V16B()); // Squish: lo16<-t1, hi16<-Fs
-		mvuLdrQ(RQSCRATCH, mVU_clipWeights);
+		mvuLdrQ(mVU, RQSCRATCH, mVU_clipWeights);
 		armAsm->And(Fs.V16B(), Fs.V16B(), RQSCRATCH.V16B()); // each halfword -> its weight or 0
 		armAsm->Addv(Fs.H(), Fs.V8H());                      // horizontal sum -> 8-bit mask
 		armAsm->Umov(gprT2.W(), Fs.V8H(), 0);

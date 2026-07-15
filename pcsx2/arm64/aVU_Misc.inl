@@ -37,53 +37,53 @@ static inline u32 branchAddr(const mV)
 // so the value regs passed in must never be x16/x17 (callers use w9/w10 or the
 // flag GPRs / NEON scratch).
 
-static inline void mvuStr32(const void* addr, const a64::Register& wreg)
+static inline void mvuStr32(microVU& mVU, const void* addr, const a64::Register& wreg)
 {
-	armAsm->Str(wreg.W(), armAbsMemOperand(RSCRATCHADDR, addr, 4));
+	armAsm->Str(wreg.W(), mvuAbsMem(mVU, addr, 4));
 }
 
-static inline void mvuLdr32(const a64::Register& wreg, const void* addr)
+static inline void mvuLdr32(microVU& mVU, const a64::Register& wreg, const void* addr)
 {
-	armAsm->Ldr(wreg.W(), armAbsMemOperand(RSCRATCHADDR, addr, 4));
+	armAsm->Ldr(wreg.W(), mvuAbsMem(mVU, addr, 4));
 }
 
-static inline void mvuStrImm32(const void* addr, u32 imm, const a64::Register& tmp)
+static inline void mvuStrImm32(microVU& mVU, const void* addr, u32 imm, const a64::Register& tmp)
 {
 	armAsm->Mov(tmp.W(), imm);
-	mvuStr32(addr, tmp);
+	mvuStr32(mVU, addr, tmp);
 }
 
-static inline void mvuStrSS(const void* addr, const a64::VRegister& vreg)
+static inline void mvuStrSS(microVU& mVU, const void* addr, const a64::VRegister& vreg)
 {
-	armAsm->Str(vreg.S(), armAbsMemOperand(RSCRATCHADDR, addr, 4));
+	armAsm->Str(vreg.S(), mvuAbsMem(mVU, addr, 4));
 }
 
-static inline void mvuLdrSS(const a64::VRegister& vreg, const void* addr)
+static inline void mvuLdrSS(microVU& mVU, const a64::VRegister& vreg, const void* addr)
 {
-	armAsm->Ldr(vreg.S(), armAbsMemOperand(RSCRATCHADDR, addr, 4));
+	armAsm->Ldr(vreg.S(), mvuAbsMem(mVU, addr, 4));
 }
 
-static inline void mvuLdrQ(const a64::VRegister& vreg, const void* addr)
+static inline void mvuLdrQ(microVU& mVU, const a64::VRegister& vreg, const void* addr)
 {
-	armAsm->Ldr(vreg.Q(), armAbsMemOperand(RSCRATCHADDR, addr, 16));
+	armAsm->Ldr(vreg.Q(), mvuAbsMem(mVU, addr, 16));
 }
 
-static inline void mvuStrQ(const void* addr, const a64::VRegister& vreg)
+static inline void mvuStrQ(microVU& mVU, const void* addr, const a64::VRegister& vreg)
 {
-	armAsm->Str(vreg.Q(), armAbsMemOperand(RSCRATCHADDR, addr, 16));
+	armAsm->Str(vreg.Q(), mvuAbsMem(mVU, addr, 16));
 }
 
-static inline void mvuMemAndImm32(const void* addr, u32 imm, const a64::Register& tmp)
+static inline void mvuMemAndImm32(microVU& mVU, const void* addr, u32 imm, const a64::Register& tmp)
 {
-	const a64::MemOperand m = armAbsMemOperand(RSCRATCHADDR, addr, 4);
+	const a64::MemOperand m = mvuAbsMem(mVU, addr, 4);
 	armAsm->Ldr(tmp.W(), m);
 	armAsm->And(tmp.W(), tmp.W(), imm);
 	armAsm->Str(tmp.W(), m);
 }
 
-static inline void mvuMemOrImm32(const void* addr, u32 imm, const a64::Register& tmp)
+static inline void mvuMemOrImm32(microVU& mVU, const void* addr, u32 imm, const a64::Register& tmp)
 {
-	const a64::MemOperand m = armAbsMemOperand(RSCRATCHADDR, addr, 4);
+	const a64::MemOperand m = mvuAbsMem(mVU, addr, 4);
 	armAsm->Ldr(tmp.W(), m);
 	armAsm->Orr(tmp.W(), tmp.W(), imm);
 	armAsm->Str(tmp.W(), m);
@@ -123,7 +123,7 @@ __fi void mVUbackupRegs(microVU& mVU, bool toMemory = false, bool onlyNeeded = f
 	else
 	{
 		mVU.regAlloc->flushAll(); // Flush Regalloc
-		armAsm->Str(mVU_xmmPQ.Q(), armAbsMemOperand(RSCRATCHADDR, &mVU.vecBackup[mVU_xmmPQ.GetCode()][0], 16));
+		armAsm->Str(mVU_xmmPQ.Q(), mvuAbsMem(mVU, &mVU.vecBackup[mVU_xmmPQ.GetCode()][0], 16));
 	}
 }
 
@@ -142,7 +142,7 @@ __fi void mVUrestoreRegs(microVU& mVU, bool fromMemory = false, bool onlyNeeded 
 	}
 	else
 	{
-		armAsm->Ldr(mVU_xmmPQ.Q(), armAbsMemOperand(RSCRATCHADDR, &mVU.vecBackup[mVU_xmmPQ.GetCode()][0], 16));
+		armAsm->Ldr(mVU_xmmPQ.Q(), mvuAbsMem(mVU, &mVU.vecBackup[mVU_xmmPQ.GetCode()][0], 16));
 	}
 }
 
@@ -271,9 +271,9 @@ static void MIN_MAX_SS(mV, const a64::VRegister& to, const a64::VRegister& from,
 	armAsm->Ins(to.V4S(), 2, from.V4S(), 0);
 	armAsm->Ins(to.V4S(), 3, from.V4S(), 0);
 
-	mvuLdrQ(RQSCRATCH, mVU_MIN_MAX_1);
+	mvuLdrQ(mVU, RQSCRATCH, mVU_MIN_MAX_1);
 	armAsm->And(to.V16B(), to.V16B(), RQSCRATCH.V16B());
-	mvuLdrQ(RQSCRATCH, mVU_MIN_MAX_2);
+	mvuLdrQ(mVU, RQSCRATCH, mVU_MIN_MAX_2);
 	armAsm->Orr(to.V16B(), to.V16B(), RQSCRATCH.V16B());
 
 	mVUshufflePS(t1, to, 0xee); // t1 = { to2, to3, to2, to3 }
@@ -303,12 +303,12 @@ static void ADD_SS_TriAceHack(mV, const a64::VRegister& to, const a64::VRegister
 	armAsm->B(&case_end1, a64::lt);
 
 	// case_pos_big:
-	mvuLdrQ(RQSCRATCH, mVU_ADD_SS);
+	mvuLdrQ(mVU, RQSCRATCH, mVU_ADD_SS);
 	armAsm->And(to.V16B(), to.V16B(), RQSCRATCH.V16B());
 	armAsm->B(&case_end2);
 
 	armAsm->Bind(&case_neg_big);
-	mvuLdrQ(RQSCRATCH, mVU_ADD_SS);
+	mvuLdrQ(mVU, RQSCRATCH, mVU_ADD_SS);
 	armAsm->And(from.V16B(), from.V16B(), RQSCRATCH.V16B());
 
 	armAsm->Bind(&case_end1);

@@ -62,6 +62,34 @@ static constexpr int mVU_F0 = 23, mVU_F1 = 24, mVU_F2 = 25, mVU_F3 = 26;
 
 #define RVUSTATE a64::x19 // base ptr = &vuRegs[index]
 #define RVUADDR a64::x17  // transient address scratch
+// C.74: &mVU, pinned by the micro-mode dispatchers (AB and CD prologues) for the
+// life of the JIT session. NOT valid in macro (COP2) mode -- there x27 belongs to
+// the EE rec's GPR cache -- so mvuAbsMem gates on !mVU.cop2 and macro emission
+// falls back to adrp-folded absolute addressing. Outside the VI allocator's
+// tracked pool (w0..w26), callee-saved, so helper C calls preserve it.
+#define RVUMVU a64::x27   // base ptr = &mVU (micro mode only)
+
+// C.74: pick the cheapest addressing for a VU-state global. Priority:
+//   1. &mVU.* field within the scaled-immediate window of the pinned x27
+//      (micro mode only -- macro mode's x27 belongs to the EE rec; the hot
+//      scalars were moved ahead of `prog` in the struct so they qualify);
+//   2. VURegs field of the CURRENT VU addressed off RVUSTATE (x19), which is
+//      &mVU.regs() during BOTH micro blocks and a macro run;
+//   3. adrp-folded absolute access (C.72) for everything else (other-VU regs,
+//      mVUglob clamp constants, heap pointers).
+// The emit-time gate reads compile-time state (mVU.cop2), matching what the
+// registers will hold when the emitted code runs.
+static inline a64::MemOperand mvuAbsMem(microVU& mVU, const void* addr, unsigned size)
+{
+	const uintptr_t moff = reinterpret_cast<uintptr_t>(addr) - reinterpret_cast<uintptr_t>(&mVU);
+	if (!mVU.cop2 && moff < sizeof(microVU) && (moff % size) == 0 && (moff / size) <= 0xFFFu)
+		return a64::MemOperand(RVUMVU, static_cast<int64_t>(moff));
+	const uintptr_t roff = reinterpret_cast<uintptr_t>(addr) - reinterpret_cast<uintptr_t>(&mVU.regs());
+	if (roff < sizeof(VURegs) && (roff % size) == 0 && (roff / size) <= 0xFFFu)
+		return a64::MemOperand(RVUSTATE, static_cast<int64_t>(roff));
+	return armAbsMemOperand(RSCRATCHADDR, addr, size);
+}
+
 
 // Named host registers for the emit layer (x86: microVU_Misc.h #defines gprT1..
 // /gprF0..). VIXL predefined W-register objects matching the index constants

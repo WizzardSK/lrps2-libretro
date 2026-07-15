@@ -85,9 +85,9 @@ __ri void mVUallocSFLAGc(const a64::Register& reg, const a64::Register& regT, in
 
 // Denormalizes Status Flag; destroys reg/tmp1/tmp2 (x86: mVUallocSFLAGd, whose
 // eax/ecx/edx defaults are the macro-mode path we drop — callers pass regs).
-__ri void mVUallocSFLAGd(u32* memAddr, const a64::Register& reg, const a64::Register& tmp1, const a64::Register& tmp2)
+__ri void mVUallocSFLAGd(microVU& mVU, u32* memAddr, const a64::Register& reg, const a64::Register& tmp1, const a64::Register& tmp2)
 {
-	armAsm->Ldr(tmp2, armAbsMemOperand(RSCRATCHADDR, memAddr, 4));
+	armAsm->Ldr(tmp2, mvuAbsMem(mVU, memAddr, 4));
 	armAsm->Mov(reg, tmp2);
 	armAsm->Lsr(reg, reg, 3);
 	armAsm->And(reg, reg, 0x18);
@@ -104,31 +104,31 @@ __ri void mVUallocSFLAGd(u32* memAddr, const a64::Register& reg, const a64::Regi
 
 __fi void mVUallocMFLAGa(mV, const a64::Register& reg, int fInstance)
 {
-	armAsm->Ldrh(reg, armAbsMemOperand(RSCRATCHADDR, &mVU.macFlag[fInstance], 2)); // zero-extending 16-bit load (xMOVZX)
+	armAsm->Ldrh(reg, mvuAbsMem(mVU, &mVU.macFlag[fInstance], 2)); // zero-extending 16-bit load (xMOVZX)
 }
 
 __fi void mVUallocMFLAGb(mV, const a64::Register& reg, int fInstance)
 {
 	if (fInstance < 4)
-		armAsm->Str(reg, armAbsMemOperand(RSCRATCHADDR, &mVU.macFlag[fInstance], 4));         // microVU
+		armAsm->Str(reg, mvuAbsMem(mVU, &mVU.macFlag[fInstance], 4));         // microVU
 	else
-		armAsm->Str(reg, armAbsMemOperand(RSCRATCHADDR, &mVU.regs().VI[REG_MAC_FLAG].UL, 4)); // macroVU
+		armAsm->Str(reg, mvuAbsMem(mVU, &mVU.regs().VI[REG_MAC_FLAG].UL, 4)); // macroVU
 }
 
 __fi void mVUallocCFLAGa(mV, const a64::Register& reg, int fInstance)
 {
 	if (fInstance < 4)
-		armAsm->Ldr(reg, armAbsMemOperand(RSCRATCHADDR, &mVU.clipFlag[fInstance], 4));        // microVU
+		armAsm->Ldr(reg, mvuAbsMem(mVU, &mVU.clipFlag[fInstance], 4));        // microVU
 	else
-		armAsm->Ldr(reg, armAbsMemOperand(RSCRATCHADDR, &mVU.regs().VI[REG_CLIP_FLAG].UL, 4)); // macroVU
+		armAsm->Ldr(reg, mvuAbsMem(mVU, &mVU.regs().VI[REG_CLIP_FLAG].UL, 4)); // macroVU
 }
 
 __fi void mVUallocCFLAGb(mV, const a64::Register& reg, int fInstance)
 {
 	if (fInstance < 4)
-		armAsm->Str(reg, armAbsMemOperand(RSCRATCHADDR, &mVU.clipFlag[fInstance], 4));        // microVU
+		armAsm->Str(reg, mvuAbsMem(mVU, &mVU.clipFlag[fInstance], 4));        // microVU
 	else
-		armAsm->Str(reg, armAbsMemOperand(RSCRATCHADDR, &mVU.regs().VI[REG_CLIP_FLAG].UL, 4)); // macroVU
+		armAsm->Str(reg, mvuAbsMem(mVU, &mVU.regs().VI[REG_CLIP_FLAG].UL, 4)); // macroVU
 }
 
 //------------------------------------------------------------------
