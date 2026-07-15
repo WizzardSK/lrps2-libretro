@@ -52,6 +52,7 @@ namespace ArmProf
 		// the profile toward whatever ran last).
 		size_t                   s_cap = 0;
 		uintptr_t*               s_pc = nullptr;
+		uintptr_t*               s_lr = nullptr;
 		uint8_t*                 s_slot = nullptr;
 		std::atomic<size_t>      s_n{0};
 		std::atomic<size_t>      s_dropped{0};
@@ -86,6 +87,7 @@ namespace ArmProf
 				return;
 			}
 			s_pc[i] = static_cast<uintptr_t>(uc->uc_mcontext.pc);
+			s_lr[i] = static_cast<uintptr_t>(uc->uc_mcontext.regs[30]);
 			s_slot[i] = static_cast<uint8_t>(slot);
 		}
 
@@ -99,8 +101,9 @@ namespace ArmProf
 			const char* cap_env = getenv("LRPS2_PROF_MAX");
 			s_cap = cap_env ? strtoul(cap_env, nullptr, 0) : (4u << 20);
 			s_pc = static_cast<uintptr_t*>(calloc(s_cap, sizeof(uintptr_t)));
+			s_lr = static_cast<uintptr_t*>(calloc(s_cap, sizeof(uintptr_t)));
 			s_slot = static_cast<uint8_t*>(calloc(s_cap, 1));
-			if (!s_pc || !s_slot)
+			if (!s_pc || !s_lr || !s_slot)
 			{
 				s_cap = 0;
 				return;
@@ -393,6 +396,104 @@ namespace ArmProf
 		}
 	} // namespace
 
+	// Resolve a native (non-JIT) host pc to a demangled symbol name; JIT pcs
+	// resolve to their region name in brackets.
+	static std::string NativeSymFor(uintptr_t pc)
+	{
+		if (const char* r = RegionOf(pc))
+			return std::string("[") + r + "]";
+		Dl_info info;
+		std::string sym;
+		if (dladdr(reinterpret_cast<void*>(pc), &info))
+		{
+			if (info.dli_sname)
+			{
+				sym = Demangle(info.dli_sname);
+			}
+			else if (info.dli_fname)
+			{
+				sym = Demangle(SymbolFor(
+					info.dli_fname, reinterpret_cast<uintptr_t>(info.dli_fbase), pc));
+				if (sym.empty())
+				{
+					const char* slash = strrchr(info.dli_fname, '/');
+					sym = std::string("[") + (slash ? slash + 1 : info.dli_fname) + "]";
+				}
+			}
+		}
+		if (sym.empty())
+			sym = "??";
+		return sym;
+	}
+
+	// C.76 tooling: single-level caller attribution for LEAF plumbing symbols
+	// (memcpy, memcmp, the __aarch64_* atomic helpers). Those never call
+	// anything, so the sampled LR is the return address into the caller.
+	// LRPS2_PROF_LR=sub1,sub2,... selects symbols by substring; per matching
+	// sample the LR is symbolized and a per-thread caller histogram printed.
+	static void ReportLrCallers(size_t n, int nthreads)
+	{
+		const char* want = getenv("LRPS2_PROF_LR");
+		if (!want || !*want)
+			return;
+		std::vector<std::string> subs;
+		{
+			std::string acc;
+			for (const char* c = want;; c++)
+			{
+				if (*c == ',' || !*c)
+				{
+					if (!acc.empty()) subs.push_back(acc);
+					acc.clear();
+					if (!*c) break;
+				}
+				else
+					acc += *c;
+			}
+		}
+		// [thread][substring] -> caller histogram
+		std::vector<std::vector<std::unordered_map<std::string, size_t>>> hist(
+			nthreads, std::vector<std::unordered_map<std::string, size_t>>(subs.size()));
+		std::vector<std::vector<size_t>> totals(nthreads, std::vector<size_t>(subs.size(), 0));
+		std::unordered_map<uintptr_t, std::string> symcache;
+		for (size_t i = 0; i < n; i++)
+		{
+			const int slot = s_slot[i];
+			if (slot >= nthreads)
+				continue;
+			auto pit = symcache.find(s_pc[i]);
+			if (pit == symcache.end())
+				pit = symcache.emplace(s_pc[i], NativeSymFor(s_pc[i])).first;
+			for (size_t k = 0; k < subs.size(); k++)
+			{
+				if (pit->second.find(subs[k]) == std::string::npos)
+					continue;
+				auto lit = symcache.find(s_lr[i]);
+				if (lit == symcache.end())
+					lit = symcache.emplace(s_lr[i], NativeSymFor(s_lr[i])).first;
+				hist[slot][k][lit->second]++;
+				totals[slot][k]++;
+				break;
+			}
+		}
+		for (int t = 0; t < nthreads; t++)
+		{
+			for (size_t k = 0; k < subs.size(); k++)
+			{
+				if (!totals[t][k])
+					continue;
+				fprintf(stderr, "\n[prof] callers of '%s' on %s (%zu samples):\n",
+					subs[k].c_str(), s_thread_name[t], totals[t][k]);
+				std::vector<std::pair<std::string, size_t>> v(hist[t][k].begin(), hist[t][k].end());
+				std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+				const size_t show = std::min<size_t>(v.size(), 12);
+				for (size_t i = 0; i < show; i++)
+					fprintf(stderr, "[prof]   %6.2f%%  %8zu  %s\n",
+						100.0 * (double)v[i].second / (double)totals[t][k], v[i].second, v[i].first.c_str());
+			}
+		}
+	}
+
 	void Report()
 	{
 		static bool reported = false;
@@ -518,6 +619,7 @@ namespace ArmProf
 
 			ReportHotBlocks(jit_pcs[t], s_thread_name[t]);
 		}
+		ReportLrCallers(n, nthreads);
 		fprintf(stderr, "\n");
 	}
 } // namespace ArmProf
