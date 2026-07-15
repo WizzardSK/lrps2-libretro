@@ -93,9 +93,50 @@ static const a64::VRegister xEmptyReg;
 // into a scratch (q29) and Ins each selected lane. Safe when dst == src.
 static inline void mVUshufflePS(const a64::VRegister& dst, const a64::VRegister& src, u8 imm)
 {
+	// C.73: the naive form is copy + 4 Ins (5 instructions) for EVERY permute.
+	// Most microVU shuffles are broadcasts, 64-bit-half moves, rotations or
+	// 2-lane swaps -- pick the cheap NEON form when one exists, and in the
+	// general case insert only the lanes that actually move (the PQ shuffles
+	// 0xe1/0xb4/0xC6/0x27 are 2-lane swaps: 5 -> 3 instructions).
+	const int l[4] = {imm & 3, (imm >> 2) & 3, (imm >> 4) & 3, (imm >> 6) & 3};
+	if (l[0] == l[1] && l[1] == l[2] && l[2] == l[3]) // broadcast
+	{
+		armAsm->Dup(dst.V4S(), src.V4S(), l[0]);
+		return;
+	}
+	switch (imm)
+	{
+		case 0xE4: // identity
+			if (dst.GetCode() != src.GetCode())
+				armAsm->Mov(dst.V16B(), src.V16B());
+			return;
+		case 0x44: armAsm->Dup(dst.V2D(), src.V2D(), 0); return;   // [0,1,0,1]
+		case 0xEE: armAsm->Dup(dst.V2D(), src.V2D(), 1); return;   // [2,3,2,3]
+		case 0xB1: armAsm->Rev64(dst.V4S(), src.V4S()); return;    // [1,0,3,2]
+		case 0x4E: armAsm->Ext(dst.V16B(), src.V16B(), src.V16B(), 8); return;  // [2,3,0,1]
+		case 0x39: armAsm->Ext(dst.V16B(), src.V16B(), src.V16B(), 4); return;  // [1,2,3,0]
+		case 0x93: armAsm->Ext(dst.V16B(), src.V16B(), src.V16B(), 12); return; // [3,0,1,2]
+		case 0x1B: // full reverse [3,2,1,0]
+			armAsm->Rev64(dst.V4S(), src.V4S());
+			armAsm->Ext(dst.V16B(), dst.V16B(), dst.V16B(), 8);
+			return;
+		default:
+			break;
+	}
+	if (dst.GetCode() != src.GetCode())
+	{
+		// src is a distinct register and stays intact: copy, then patch the
+		// moved lanes straight from src -- no scratch needed.
+		armAsm->Mov(dst.V16B(), src.V16B());
+		for (int i = 0; i < 4; i++)
+			if (l[i] != i)
+				armAsm->Ins(dst.V4S(), i, src.V4S(), l[i]);
+		return;
+	}
 	armAsm->Mov(RQSCRATCH3.V16B(), src.V16B());
 	for (int i = 0; i < 4; i++)
-		armAsm->Ins(dst.V4S(), i, RQSCRATCH3.V4S(), (imm >> (2 * i)) & 3);
+		if (l[i] != i)
+			armAsm->Ins(dst.V4S(), i, RQSCRATCH3.V4S(), l[i]);
 }
 
 // Lane0-preserving scalar FP ops on the PQ latency reg (mVU_xmmPQ). AArch64 scalar
