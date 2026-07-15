@@ -700,6 +700,39 @@ perf_and_return:
 			Perf::vu0.RegisterPC(thisPtr, static_cast<u32>(armGetCurrentCodePointer() - thisPtr), startPC);
 	}
 
+	// Per-block attribution for LRPS2_PROF hot-block reports (no-op unless
+	// profiling). Nested mVUcompile calls note themselves first with a later
+	// start address, and the sample matcher prefers the innermost covering
+	// note, so recursion attributes correctly; an outer block's host_bytes
+	// figure includes its nested blocks' code.
+	ArmProf::NoteBlock(mVU.index ? "mvu1" : "mvu0", thisPtr,
+		static_cast<size_t>(armGetCurrentCodePointer() - thisPtr), startPC);
+
+	// TEMP tooling: LRPS2_DUMP_HOST_MVU=0x<vu pc> writes this block's emitted
+	// host code and its guest micro words for offline disassembly (same idea
+	// as LRPS2_DUMP_HOST / LRPS2_DUMP_HOST_IOP on the EE/IOP side).
+	if (const char* want = getenv("LRPS2_DUMP_HOST_MVU"))
+	{
+		if ((u32)strtoul(want, nullptr, 0) == startPC)
+		{
+			char path[128];
+			snprintf(path, sizeof(path), "/tmp/mvu%ublk_%08x.host.bin", mVU.index, startPC);
+			if (FILE* f = fopen(path, "wb"))
+			{
+				fwrite(thisPtr, 1, (size_t)(armGetCurrentCodePointer() - thisPtr), f);
+				fclose(f);
+			}
+			snprintf(path, sizeof(path), "/tmp/mvu%ublk_%08x.guest.bin", mVU.index, startPC);
+			if (FILE* f = fopen(path, "wb"))
+			{
+				fwrite(mVU.regs().Micro + startPC, 1, 1024, f);
+				fclose(f);
+			}
+			fprintf(stderr, "[dump-mvu%u] guest 0x%08x: %zu host bytes\n",
+				mVU.index, startPC, (size_t)(armGetCurrentCodePointer() - thisPtr));
+		}
+	}
+
 	return thisPtr;
 }
 
