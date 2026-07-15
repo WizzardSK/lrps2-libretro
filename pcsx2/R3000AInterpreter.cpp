@@ -124,9 +124,9 @@ void psxBNE()   // Branch if Rs != Rt
 *********************************************************/
 void psxJ(void)
 {
-	// check for iop module import table magic
+	// check for iop module import table magic (C.71: cached resolution)
 	u32 delayslot = iopMemRead32(psxRegs.pc);
-	if (delayslot >> 16 == 0x2400 && R3000A::irxImportExec(R3000A::irxImportTableAddr(psxRegs.pc), delayslot & 0xffff))
+	if (delayslot >> 16 == 0x2400 && R3000A::irxImportExecCached(psxRegs.pc, delayslot & 0xffff))
 		return;
 
 	doBranch(_JumpTarget_);
