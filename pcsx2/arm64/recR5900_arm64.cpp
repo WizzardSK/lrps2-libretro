@@ -52,6 +52,8 @@ extern void _vu0WaitMicro();
 
 bool recVUMacroIsMode0(u32 op);   // aVU_Macro.inl (classify COP2 SPECIAL ALU)
 bool recVUMacroEmitMode0(u32 op); // aVU_Macro.inl (emit via microVU0 single-op emitters)
+extern bool g_cop2MacroFirst;     // aVU_Macro.inl (C.78: run-hoisted macro bracket --
+extern bool g_cop2MacroLast;      //   first op materializes x19/x27, last op restores x19)
 
 using namespace vixl::aarch64;
 
@@ -1544,6 +1546,34 @@ namespace
 		s_rc.Reset();
 	}
 
+	// C.78: adrp+pageoff fold for absolute data addresses -- the EE-rec twin of
+	// AsmHelpers' armAbsMemOperand, which reads the armAsm thread-locals and is
+	// only valid during the COP2-macro assembler handoff. Blocks are emitted in
+	// place (masm is constructed over s_code + s_code_pos), so the current host
+	// address is the buffer start plus the cursor. Falls back to the full
+	// materialization when the page displacement does not encode or the page
+	// offset is not size-aligned. LRPS2_NO_COP2_ABSFOLD=1 restores the old
+	// mov+movk chains at the COP2 sites.
+	bool AbsFoldOk() { static const bool on = getenv("LRPS2_NO_COP2_ABSFOLD") == nullptr; return on; }
+	MemOperand AbsMem(MacroAssembler& m, const Register& scratch, const void* addr, unsigned size)
+	{
+		const uintptr_t cur = reinterpret_cast<uintptr_t>(m.GetBuffer()->GetStartAddress<u8*>()) +
+		                      m.GetBuffer()->GetCursorOffset();
+		const s64 page_disp = (static_cast<s64>(reinterpret_cast<uintptr_t>(addr) & ~uintptr_t(0xFFF)) -
+		                       static_cast<s64>(cur & ~uintptr_t(0xFFF))) >> 12;
+		const u32 page_off = static_cast<u32>(reinterpret_cast<uintptr_t>(addr) & 0xFFFu);
+		if (AbsFoldOk() && vixl::IsInt21(page_disp) && size && (page_off % size) == 0)
+		{
+			{
+				vixl::aarch64::SingleEmissionCheckScope guard(&m);
+				m.adrp(scratch, page_disp);
+			}
+			return MemOperand(scratch, page_off);
+		}
+		m.Mov(scratch, reinterpret_cast<uint64_t>(addr));
+		return MemOperand(scratch);
+	}
+
 	// C.30-2: native COP2 macro emission. The vendored aVU_Macro emitters gate
 	// flag maintenance on g_pCurInstInfo's M1 analysis bits; we run no analysis
 	// pass, so a static "everything live" record keeps every gate conservative
@@ -1659,8 +1689,20 @@ namespace {
 			return false;
 		if (((insn >> 2) & 15) == 14)
 			return false; // VCALLMS/VCALLMSR
-		if ((insn & 0x3f) >= 0x3c && ((insn & 3) | ((insn >> 4) & 0x7c)) == 0x1f)
+		const u32 sub = (insn & 3) | ((insn >> 4) & 0x7c);
+		if ((insn & 0x3f) >= 0x3c && sub == 0x1f)
 			return false; // VCLIP (interp-pinned, C.30-4)
+		// C.78: VNOP/VWAITQ have EMPTY emitters (recVNOP/recVWAITQ are {}), so
+		// they never call setupMacroOp/endMacroOp. A run-hoisted bracket whose
+		// LAST op is one of them never emits the x19 restore -- the rest of the
+		// block then runs with x19 still pointing at vuRegs[0] (GT3's VU0 -> GS
+		// upload loop ends `...VSQI, VSQI, VNOP, VNOP`: the following branch
+		// read its GPRs from VF registers and stored pc into VI space -- instant
+		// wedge). Keep them out of runs entirely; they still emit through the
+		// per-op path (first = last = true), where no bracket means no restore
+		// is needed.
+		if ((insn & 0x3f) >= 0x3c && (sub == 0x2f || sub == 0x3b))
+			return false; // VNOP/VWAITQ (bracket-less empty emitters)
 		return recVUMacroIsMode0(insn) && !Cop2MacroSkipped(insn);
 	}
 
@@ -1856,12 +1898,32 @@ namespace {
 	}
 
 
+	// C.78: compile-time state of the run-hoisted macro bracket: true while the
+	// emitted code has x19 == &vuRegs[0] (and x27 == &microVU0) left over from
+	// a previous macro op of the same run whose endMacroOp skipped the restore.
+	bool s_x19HeldVu = false;
+
+	// C.78: force-close a held bracket -- repoint x19 back at cpuRegs so the
+	// code emitted next (interp call, block tail) sees the EE base again. Cold
+	// path: only reachable if an op inside an analyzed run refuses native
+	// emission, which the shared predicate (Cop2NativeMacroAlu vs the gates
+	// below) is supposed to rule out. Invalidate the run so the next macro op
+	// re-analyzes and re-opens a fresh bracket (with its VU0 sync).
+	void Cop2CloseHold(MacroAssembler& m, const Register& gpr)
+	{
+		if (!s_x19HeldVu)
+			return;
+		m.Mov(gpr, reinterpret_cast<uint64_t>(&cpuRegs));
+		s_x19HeldVu = false;
+		Cop2RunInvalidate();
+	}
+
 	bool EmitCop2Macro(MacroAssembler& m, const Register& gpr, u32 insn)
 	{
 		if (!recVUMacroIsMode0(insn))
-			return false; // CALLMS/CALLMSR/unknown -> C.29-1 interp call
+			{ Cop2CloseHold(m, gpr); return false; } // CALLMS/CALLMSR/unknown -> C.29-1 interp call
 		if (Cop2MacroSkipped(insn))
-			return false; // TEMP bisect exclusion -> interp call
+			{ Cop2CloseHold(m, gpr); return false; } // TEMP bisect exclusion -> interp call
 		// VCLIP stays on the interpreter call PERMANENTLY (C.30-4 root cause,
 		// GT3 black road): the interpreter's macro path keeps the live clip
 		// shift register in VU->clipflag and commits it to VI[REG_CLIP_FLAG]
@@ -1873,27 +1935,7 @@ namespace {
 		// to replicate the delayed commit (VI = old clipflag; clipflag = new)
 		// -- not worth it for an op this rare next to the ALU stream.
 		if ((insn & 0x3f) >= 0x3c && ((insn & 3) | ((insn >> 4) & 0x7c)) == 0x1f)
-			return false;
-
-		// The macro emitters clobber gprF0 (w23 -- one of OUR cache slots) and
-		// run their own VI-GPR allocator (macro mode excludes x19-x26; x27 is
-		// untracked but our cache is dead after this anyway): retire the guest
-		// GPR cache exactly like an interp-call would.
-		s_rc.FlushDirty(m, gpr);
-		s_rc.Reset();
-
-		// Conservative VU0 sync (their aR5900 does this analysis-driven): a
-		// macro op reads/writes VU0 state, so any in-flight VU0 microprogram
-		// must finish first. The interpreter ops self-sync the same way.
-		{
-			Label vu0_idle;
-			m.Mov(x10, reinterpret_cast<uint64_t>(&vuRegs[0].VI[REG_VPU_STAT].UL));
-			m.Ldr(w0, MemOperand(x10));
-			m.Tbz(w0, 0, &vu0_idle); // VPU_STAT bit0 = VU0 running
-			m.Mov(x16, reinterpret_cast<uint64_t>(&_vu0FinishMicro));
-			m.Blr(x16);
-			m.Bind(&vu0_idle);
-		}
+			{ Cop2CloseHold(m, gpr); return false; }
 
 		s_cop2AllLive.info = EEINST_COP2_DENORMALIZE_STATUS_FLAG | EEINST_COP2_NORMALIZE_STATUS_FLAG |
 		                     EEINST_COP2_STATUS_FLAG | EEINST_COP2_MAC_FLAG | EEINST_COP2_CLIP_FLAG |
@@ -1902,15 +1944,56 @@ namespace {
 		// C.66: real per-op liveness from the run analysis; the static all-live
 		// record only remains as the LRPS2_NO_COP2_LIVENESS fallback and for an
 		// op the analyzer would not include (should not happen -- the same
-		// predicate guards both).
+		// predicate guards both). C.78: the analysis moved ahead of the VU0
+		// sync + cache retire so the run boundaries can gate them too.
 		static const bool no_liveness = getenv("LRPS2_NO_COP2_LIVENESS") != nullptr;
+		static const bool no_runhoist = getenv("LRPS2_NO_COP2_RUNHOIST") != nullptr;
 		g_pCurInstInfo = &s_cop2AllLive;
+		bool in_run = false;
 		if (!no_liveness)
 		{
 			if (s_emit_pc < s_cop2RunStart || s_emit_pc >= s_cop2RunEnd)
 				Cop2AnalyzeRun(s_emit_pc);
 			if (s_emit_pc >= s_cop2RunStart && s_emit_pc < s_cop2RunEnd)
+			{
 				g_pCurInstInfo = &s_cop2Run[(s_emit_pc - s_cop2RunStart) >> 2];
+				in_run = true;
+			}
+		}
+		// C.78: hoist the per-op bracket overhead to once per run. First op of
+		// a run: VU0 sync + x19/x27 materialization (setupMacroOp reads
+		// g_cop2MacroFirst); ops after it skip both -- between the ops of a run
+		// nothing else is emitted, no event test runs (events fire at block
+		// tails), and no run op can start a VU0 microprogram (CALLMS and CTC2
+		// CMSAR1 are excluded from runs by the analyzer), so VU0 stays idle and
+		// x19/x27 stay valid for the run's whole emitted extent. The last op
+		// restores x19 in endMacroOp (g_cop2MacroLast).
+		const bool hoist = in_run && !no_runhoist;
+		const bool first = !hoist || !s_x19HeldVu;
+		const bool last  = !hoist || (s_emit_pc + 4 >= s_cop2RunEnd);
+		g_cop2MacroFirst = first;
+		g_cop2MacroLast  = last;
+
+		// The macro emitters clobber gprF0 (w23 -- one of OUR cache slots) and
+		// run their own VI-GPR allocator (macro mode excludes x19-x26; x27 is
+		// untracked but our cache is dead after this anyway): retire the guest
+		// GPR cache exactly like an interp-call would. Mid-run this emits
+		// nothing (the first op already retired it and nothing refilled it).
+		s_rc.FlushDirty(m, gpr);
+		s_rc.Reset();
+
+		// Conservative VU0 sync (their aR5900 does this analysis-driven): a
+		// macro op reads/writes VU0 state, so any in-flight VU0 microprogram
+		// must finish first. The interpreter ops self-sync the same way.
+		// C.78: once per run (see above).
+		if (first)
+		{
+			Label vu0_idle;
+			m.Ldr(w0, AbsMem(m, x10, &vuRegs[0].VI[REG_VPU_STAT].UL, 4)); // C.78: adrp fold
+			m.Tbz(w0, 0, &vu0_idle); // VPU_STAT bit0 = VU0 running
+			m.Mov(x16, reinterpret_cast<uint64_t>(&_vu0FinishMicro));
+			m.Blr(x16);
+			m.Bind(&vu0_idle);
 		}
 		cpuRegs.code = insn; // emit-time input: the emitters' _Fs_/_Ft_/... macros read it
 
@@ -1940,6 +2023,14 @@ namespace {
 		armAsmPtr = saved_ptr;
 		armAsmCapacity = saved_cap;
 		g_pCurInstInfo = saved_inst;
+		// C.78: a non-last run op skipped its endMacroOp restore -- record that
+		// the emitted stream is mid-bracket. A dispatch miss (should not happen
+		// after recVUMacroIsMode0) emits nothing, so a bracket held from a
+		// previous op must be closed before the interp-call fallback.
+		if (ok)
+			s_x19HeldVu = hoist && !last;
+		else
+			Cop2CloseHold(m, gpr);
 		return ok;
 	}
 
@@ -1992,8 +2083,6 @@ namespace {
 		const u32 fs = (insn >> 11) & 31; // rd slot
 		const bool interlock = (insn & 1) != 0;
 
-		const uint64_t vu0vf = reinterpret_cast<uint64_t>(&vuRegs[0].VF[0]);
-		const uint64_t vu0vi = reinterpret_cast<uint64_t>(&vuRegs[0].VI[0]);
 		const bool is_read = (rs == 0x01 || rs == 0x02); // QMFC2 / CFC2
 
 		m.Mov(x16, reinterpret_cast<uint64_t>(&vu0Sync));
@@ -2009,8 +2098,7 @@ namespace {
 		{
 			case 0x01: // QMFC2 rt, fs: GPR[rt].UQ = VF[fs].UQ
 				if (!rt) return true;
-				m.Mov(x10, vu0vf + fs * sizeof(vuRegs[0].VF[0]));
-				m.Ldr(q0, MemOperand(x10));
+				m.Ldr(q0, AbsMem(m, x10, &vuRegs[0].VF[fs], 16)); // C.78: adrp fold
 				m.Str(q0, MemOperand(gpr, rt * 16));
 				s_rc.Invalidate(rt); // 128-bit write bypasses StoreGpr
 				return true;
@@ -2019,15 +2107,13 @@ namespace {
 				if (!fs) return true;
 				s_rc.FlushReg(m, gpr, rt); // the 128-bit source is read from memory
 				m.Ldr(q0, MemOperand(gpr, rt * 16));
-				m.Mov(x10, vu0vf + fs * sizeof(vuRegs[0].VF[0]));
-				m.Str(q0, MemOperand(x10));
+				m.Str(q0, AbsMem(m, x10, &vuRegs[0].VF[fs], 16)); // C.78: adrp fold
 				return true;
 
 			case 0x02: // CFC2 rt, fs
 			{
 				if (!rt) return true;
-				m.Mov(x10, vu0vi + fs * sizeof(vuRegs[0].VI[0]));
-				m.Ldr(w0, MemOperand(x10));
+				m.Ldr(w0, AbsMem(m, x10, &vuRegs[0].VI[fs], 4)); // C.78: adrp fold
 				s_rc.FlushReg(m, gpr, rt); // read-modify-write of GPR memory below
 				if (fs == REG_R)
 				{
@@ -2053,16 +2139,16 @@ namespace {
 				if (fs == REG_MAC_FLAG || fs == REG_TPC || fs == REG_VPU_STAT)
 					return true; // read-only: the syncs above are the whole op
 				const Register src = SrcGpr(m, gpr, rt, x0);
-				m.Mov(x10, vu0vi + fs * sizeof(vuRegs[0].VI[0]));
+				const MemOperand vi = AbsMem(m, x10, &vuRegs[0].VI[fs], 4); // C.78: adrp fold
 				if (fs == REG_R)
 				{
 					m.And(w1, src.W(), 0x7fffff);
 					m.Orr(w1, w1, 0x3f800000);
-					m.Str(w1, MemOperand(x10));
+					m.Str(w1, vi);
 				}
 				else
 				{
-					m.Str(src.W(), MemOperand(x10));
+					m.Str(src.W(), vi);
 				}
 				return true;
 			}
@@ -3535,6 +3621,7 @@ namespace {
 			if (trcstep) { slo = (u32)strtoul(l, 0, 16); shi = (u32)strtoul(h, 0, 16); }
 		}
 		Cop2RunInvalidate(); // C.66: liveness never crosses a block boundary
+		s_x19HeldVu = false; // C.78: a bracket never outlives its block (every run's last op closes it)
 		while (n < kMaxInsns)
 		{
 			s_emit_budget = (int)(kMaxInsns - n); // C.66: a COP2 run may not outlive the block

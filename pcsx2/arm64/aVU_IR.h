@@ -63,26 +63,36 @@ static constexpr int mVU_F0 = 23, mVU_F1 = 24, mVU_F2 = 25, mVU_F3 = 26;
 #define RVUSTATE a64::x19 // base ptr = &vuRegs[index]
 #define RVUADDR a64::x17  // transient address scratch
 // C.74: &mVU, pinned by the micro-mode dispatchers (AB and CD prologues) for the
-// life of the JIT session. NOT valid in macro (COP2) mode -- there x27 belongs to
-// the EE rec's GPR cache -- so mvuAbsMem gates on !mVU.cop2 and macro emission
-// falls back to adrp-folded absolute addressing. Outside the VI allocator's
+// life of the JIT session. C.78: valid in macro (COP2) mode too -- x27 is an EE
+// GPR cache slot there, but the cache is retired+reset before every macro op,
+// so setupMacroOp materializes &microVU0 into it for the duration of the
+// setup..end bracket (hoisted to once per macro run) and the EE cache simply
+// refills the slot when it next allocates it. Outside the VI allocator's
 // tracked pool (w0..w26), callee-saved, so helper C calls preserve it.
-#define RVUMVU a64::x27   // base ptr = &mVU (micro mode only)
+#define RVUMVU a64::x27   // base ptr = &mVU
+
+// C.78: kill switch for the macro-mode x27 base (mvuAbsMem gate + the
+// setupMacroOp materialization must agree, so both read this).
+static inline bool mvuMacroX27()
+{
+	static const bool on = getenv("LRPS2_NO_COP2_MX27") == nullptr;
+	return on;
+}
 
 // C.74: pick the cheapest addressing for a VU-state global. Priority:
 //   1. &mVU.* field within the scaled-immediate window of the pinned x27
-//      (micro mode only -- macro mode's x27 belongs to the EE rec; the hot
-//      scalars were moved ahead of `prog` in the struct so they qualify);
+//      (micro mode always; macro mode since C.78 -- the hot scalars were
+//      moved ahead of `prog` in the struct so they qualify);
 //   2. VURegs field of the CURRENT VU addressed off RVUSTATE (x19), which is
 //      &mVU.regs() during BOTH micro blocks and a macro run;
 //   3. adrp-folded absolute access (C.72) for everything else (other-VU regs,
-//      mVUglob clamp constants, heap pointers).
+//      heap pointers).
 // The emit-time gate reads compile-time state (mVU.cop2), matching what the
 // registers will hold when the emitted code runs.
 static inline a64::MemOperand mvuAbsMem(microVU& mVU, const void* addr, unsigned size)
 {
 	const uintptr_t moff = reinterpret_cast<uintptr_t>(addr) - reinterpret_cast<uintptr_t>(&mVU);
-	if (!mVU.cop2 && moff < sizeof(microVU) && (moff % size) == 0 && (moff / size) <= 0xFFFu)
+	if ((!mVU.cop2 || mvuMacroX27()) && moff < sizeof(microVU) && (moff % size) == 0 && (moff / size) <= 0xFFFu)
 		return a64::MemOperand(RVUMVU, static_cast<int64_t>(moff));
 	const uintptr_t roff = reinterpret_cast<uintptr_t>(addr) - reinterpret_cast<uintptr_t>(&mVU.regs());
 	if (roff < sizeof(VURegs) && (roff % size) == 0 && (roff / size) <= 0xFFFu)

@@ -61,13 +61,33 @@
 // Macro op setup / teardown (mode-0 subset of x86 setupMacroOp/endMacroOp)
 //------------------------------------------------------------------
 
+// C.78: run-hoisting of the macro bracket's base registers. The EE rec knows
+// (from its C.66 run analysis) whether the op being emitted is the first/last
+// of a run of consecutive native macro ALU ops, and sets these before calling
+// recVUMacroEmitMode0. Between the ops of a run nothing else is emitted, so
+// x19 (&vuRegs[0]) and x27 (&microVU0) stay valid across the whole run: only
+// the first op materializes them and only the last op restores x19 (x27 needs
+// no restore -- it is an EE cache slot and the cache refills it on next use).
+// Default true/true = the old per-op bracket (also what the EE rec sets when
+// liveness/run info is unavailable or LRPS2_NO_COP2_RUNHOIST=1).
+bool g_cop2MacroFirst = true;
+bool g_cop2MacroLast  = true;
+
 static void setupMacroOp(int mode)
 {
 	// Repoint the VU-state base register (RVUSTATE = x19) from &cpuRegs to
-	// &vuRegs[0] for the duration of this op; endMacroOp restores it. The mVU
-	// emitters address all VF/VI/ACC/I through x19, so this is what makes the
-	// thread-mode allocator operate on VU0 state from inside the EE rec.
-	armMoveAddressToReg(RVUSTATE, &::vuRegs[0]);
+	// &vuRegs[0] for the duration of this op (C.78: of this RUN); endMacroOp
+	// restores it. The mVU emitters address all VF/VI/ACC/I through x19, so
+	// this is what makes the thread-mode allocator operate on VU0 state from
+	// inside the EE rec. C.78: x27 = &microVU0 alongside it, so mvuAbsMem can
+	// reach the mVU scalars and the C.75 embedded constant tables in one
+	// instruction in macro mode too.
+	if (g_cop2MacroFirst)
+	{
+		armMoveAddressToReg(RVUSTATE, &::vuRegs[0]);
+		if (mvuMacroX27())
+			armMoveAddressToReg(RVUMVU, &microVU0);
+	}
 
 	// Enter COP2/macro mode BEFORE reset() so the allocator's reset() sees cop2 == 1
 	// and excludes the EE rec's pinned GPRs (x20/x21/x22) from the VI GPR pool — see
@@ -190,7 +210,10 @@ static void endMacroOp(int mode)
 	// Restore the EE rec's base register for the rest of the block. RVUSTATE and the
 	// EE rec's RESTATEPTR are the same physical register (x19); this TU only knows it
 	// as RVUSTATE (aR5900.h isn't included here), so point x19 back at &cpuRegs.
-	armMoveAddressToReg(RVUSTATE, &cpuRegs);
+	// C.78: only at the end of the macro run -- mid-run the next op re-enters
+	// setupMacroOp immediately and would just repoint it back.
+	if (g_cop2MacroLast)
+		armMoveAddressToReg(RVUSTATE, &cpuRegs);
 	pxAssert(mode == 0x0 || mode == 0x100 || mode == 0x104 || mode == 0x108 ||
 	         mode == 0x110 || mode == 0x111 || mode == 0x112);
 }
