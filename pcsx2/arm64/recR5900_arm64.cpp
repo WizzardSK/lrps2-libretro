@@ -3272,6 +3272,65 @@ namespace {
 		return true;
 	}
 
+	// C.77: ERET, the interrupt/exception return (COP0 CO space, funct 0x18),
+	// was the single biggest remaining interpreter handoff: every interrupt
+	// return broke its block (196k breakers per 600 in-race GT3 frames, 59% of
+	// all remaining breakers, dragging the handler tails through the
+	// interpreter with them). It is a branch with NO delay slot: pc <-
+	// ErrorEPC/EPC selected by Status.ERL, that bit (ERL, else EXL) clears,
+	// and nextEventCycle pulls to within 4 cycles -- COP0.cpp's ERET does the
+	// pull BEFORE the branch flushes cpuBlockCycles into cpuRegs.cycle, so the
+	// pull here reads the PRE-flush cycle to match the interpreter handoff
+	// exactly. Then the usual taken-branch tail: fused cycle flush, gated
+	// event test (this test is where an interrupt left pending while EXL
+	// masked it fires -- pc must already hold the return address), chain off
+	// cpuRegs.pc like JR. TLBR/TLBWI/TLBP and the rest of the CO space stay
+	// interpreter handoffs (rare, TLB state machine). intSetBranch() is
+	// interpreter-loop bookkeeping and has no JIT equivalent to mirror.
+	bool EmitEret(MacroAssembler& m, const Register& gpr, u32 insn, int cyc_leading)
+	{
+		static const bool no_eret = getenv("LRPS2_NO_EE_ERET") != nullptr;
+		if (no_eret) return false;
+		if ((insn >> 26) != 0x10 || ((insn >> 21) & 31) != 0x10 || (insn & 0x3f) != 0x18)
+			return false;
+		s_rc.pinned = 0; // new op: previous op's Register handles are dead
+		m.Ldr(w0, RegsField(&cpuRegs.CP0.n.Status));
+		m.Ldr(w1, RegsField(&cpuRegs.CP0.n.ErrorEPC));
+		m.Ldr(w2, RegsField(&cpuRegs.CP0.n.EPC));
+		m.Tst(w0, 1u << 2); // Status.ERL
+		m.Csel(w1, w1, w2, ne); // pc = ERL ? ErrorEPC : EPC
+		StorePC(m, w1);
+		m.Bic(w2, w0, 1u << 2); // Status & ~ERL
+		m.Bic(w3, w0, 1u << 1); // Status & ~EXL
+		m.Csel(w0, w2, w3, ne);
+		m.Str(w0, RegsField(&cpuRegs.CP0.n.Status));
+		// if ((int)(nextEventCycle - cycle) > 4) nextEventCycle = cycle + 4
+		Label no_pull;
+		m.Ldr(w0, RegsField(&cpuRegs.cycle));
+		m.Ldr(w1, RegsField(&cpuRegs.nextEventCycle));
+		m.Sub(w2, w1, w0);
+		m.Cmp(w2, 4);
+		m.B(&no_pull, le);
+		m.Add(w0, w0, 4);
+		m.Str(w0, RegsField(&cpuRegs.nextEventCycle));
+		m.Bind(&no_pull);
+		s_rc.FlushDirty(m, gpr); // block exit: the next block reads GPR memory
+		// NO cycle flush and NO event test here -- mirror the interpreter
+		// handoff this replaces exactly: eeRunBasicBlock_arm64 is a plain
+		// `do execI while (!branch2)` loop, and ERET (unlike the branch ops,
+		// which go through intDoBranch) only sets pc and the branch flags, so
+		// the old path returned to the chain with cpuBlockCycles carrying the
+		// eret's cycles and cpuRegs.cycle still stale; the NEXT block's tail
+		// does the flush and its (C.35-gated) event test, and the pulled
+		// nextEventCycle makes that gate fire within a few cycles. Doing the
+		// flush + an event test here instead looks more faithful but shifts
+		// interrupt delivery by one block boundary, which snapped MMX7's FMV
+		// to a different frame phase (109232045 vs the 111415017 golden).
+		EmitCycleBookkeeping(m, cyc_leading + OpCycles(insn));
+		EmitChainEpilogue(m); // continue from EPC (the event test runs at the next tail)
+		return true;
+	}
+
 	// Register a block on its source pages (dedup: revive cycles re-push after
 	// eeJitClear erased only the WRITTEN page's list -- a spanning block's entry
 	// on the other page survives) and write-protect them so ANY host write
@@ -3523,6 +3582,9 @@ namespace {
 				continue;
 			}
 			if (EmitBranch(masm, gpr, p, insn, cyc)) { done = true; branch_end = true; break; } // emits bookkeeping + pc + eventtest + chain epilogue
+			// C.77: ERET ends the block with no delay slot -- advance p past it so
+			// page coverage (ne = Norm(p)) includes the eret word itself.
+			if (EmitEret(masm, gpr, insn, cyc)) { p += 4; n++; done = true; break; }
 			break; // unsupported -> interpreter finishes the basic block
 		}
 
