@@ -148,6 +148,7 @@ namespace
 	inline bool NoEeAdd()   { static const bool v = getenv("LRPS2_NO_EE_ADD")   != nullptr; return v; }
 	inline bool NoEePlzcw() { static const bool v = getenv("LRPS2_NO_EE_PLZCW") != nullptr; return v; }
 	inline bool NoEePrevh() { static const bool v = getenv("LRPS2_NO_EE_PREVH") != nullptr; return v; }
+	inline bool NoEeMmiHl() { static const bool v = getenv("LRPS2_NO_EE_MMIHL") != nullptr; return v; } // C.79
 
 	inline bool PageIsManual(u32 pg)
 	{
@@ -1328,13 +1329,74 @@ namespace
 		s_rc.Invalidate(rd); // 128-bit write bypasses StoreGpr
 	}
 
+	// HI/LO live right after the 32 128-bit GPRs: HI at byte offset 32*16, LO
+	// at 32*16+16. Both are full 128-bit (cpuRegisters: GPR_reg HI, LO).
+	constexpr u32 kHI = 32 * 16;
+	constexpr u32 kLO = kHI + 16;
+
+	// C.79: the remaining EE MMI ops that actually break blocks in-race (GT3):
+	// PPAC5 (per-word RGB1555 pack) and the full-128-bit HI/LO moves PMFHI/PMFLO
+	// (rd <- HI/LO) and PMTHI/PMTLO (HI/LO <- rs). HI/LO are 128-bit and live at
+	// kHI/kLO right after the 32 GPRs (see EmitMulDiv). All bit-exact, no side
+	// effects. PMFHL/PMTHL stay with the interpreter -- they never fire in the
+	// reference games, so a native path couldn't be golden-verified.
+	enum { HL_NONE, HL_PMFHI, HL_PMFLO, HL_PMTHI, HL_PMTLO, HL_PPAC5 };
+	int MmiHiLoAction(u32 insn)
+	{
+		if (NoEeMmiHl()) return HL_NONE;
+		const u32 funct = insn & 0x3f, sub = (insn >> 6) & 0x1f;
+		if (funct == 0x09) { if (sub == 0x08) return HL_PMFHI; if (sub == 0x09) return HL_PMFLO; } // MMI2
+		if (funct == 0x29) { if (sub == 0x08) return HL_PMTHI; if (sub == 0x09) return HL_PMTLO; } // MMI3
+		if (funct == 0x08 && sub == 0x1f) return HL_PPAC5;                                         // MMI0
+		return HL_NONE;
+	}
+
+	void EmitMmiHiLo(MacroAssembler& m, const Register& gpr, u32 insn)
+	{
+		const int act = MmiHiLoAction(insn);
+		const u32 rd = (insn >> 11) & 31, rs = (insn >> 21) & 31, rt = (insn >> 16) & 31;
+		switch (act)
+		{
+			case HL_PMFHI: case HL_PMFLO: // rd = HI / LO (full 128 bits)
+				if (!rd) return;
+				m.Ldr(q0, MemOperand(gpr, act == HL_PMFHI ? kHI : kLO));
+				m.Str(q0, MemOperand(gpr, rd * 16));
+				s_rc.Invalidate(rd); // 128-bit write bypasses StoreGpr
+				return;
+
+			case HL_PMTHI: case HL_PMTLO: // HI / LO = rs (full 128 bits)
+				s_rc.FlushReg(m, gpr, rs); // rs low half may be dirty in the cache
+				LoadQ(m, q0, gpr, rs);     // rs (r0 reads as zero)
+				m.Str(q0, MemOperand(gpr, act == HL_PMTHI ? kHI : kLO));
+				return;
+
+			case HL_PPAC5: // rd.UL[n] = RGB1555 pack of rt.UL[n], for each of the 4 words
+			{
+				if (!rd) return;
+				s_rc.FlushReg(m, gpr, rt);
+				LoadQ(m, q1, gpr, rt); // rt -> v1
+				// Field masks, splat across the 4 words (matches the interpreter's
+				// shifts/masks exactly: 0x1f, 0x3e0, 0x7c00, 0x8000).
+				m.Movi(v4.V4S(), 0x1f);
+				m.Shl(v5.V4S(), v4.V4S(), 5);   // 0x3e0
+				m.Shl(v6.V4S(), v4.V4S(), 10);  // 0x7c00
+				m.Movi(v7.V4S(), 0x80, LSL, 8); // 0x8000
+				m.Ushr(v0.V4S(), v1.V4S(), 3);  m.And(v0.V16B(), v0.V16B(), v4.V16B());
+				m.Ushr(v2.V4S(), v1.V4S(), 6);  m.And(v2.V16B(), v2.V16B(), v5.V16B()); m.Orr(v0.V16B(), v0.V16B(), v2.V16B());
+				m.Ushr(v2.V4S(), v1.V4S(), 9);  m.And(v2.V16B(), v2.V16B(), v6.V16B()); m.Orr(v0.V16B(), v0.V16B(), v2.V16B());
+				m.Ushr(v2.V4S(), v1.V4S(), 16); m.And(v2.V16B(), v2.V16B(), v7.V16B()); m.Orr(v0.V16B(), v0.V16B(), v2.V16B());
+				m.Str(q0, MemOperand(gpr, rd * 16));
+				s_rc.Invalidate(rd);
+				return;
+			}
+		}
+	}
+
 	// ---- Integer mult/div + HI/LO moves (opcode 0x00) ----
 	// All bit-exact, side-effect-free integer ops on the low 32 bits, with the
 	// 64-bit HI/LO results stored sign-extended, matching the interpreter exactly
-	// (R5900OpcodeImpl.cpp MULT/MULTU/DIV/DIVU). HI/LO live right after the 32
-	// 128-bit GPRs: HI at byte offset 32*16, LO at 32*16+16 (low 64 bits used).
-	constexpr u32 kHI = 32 * 16;
-	constexpr u32 kLO = kHI + 16;
+	// (R5900OpcodeImpl.cpp MULT/MULTU/DIV/DIVU). HI/LO layout: see kHI/kLO above
+	// (the mult/div path uses only their low 64 bits).
 
 	// Load the low 32 bits of a GPR into a w-register (r0 reads as zero).
 	inline void LoadW(MacroAssembler& m, const Register& wd, const Register& gpr, u32 idx)
@@ -2618,6 +2680,7 @@ namespace {
 					return true;
 				}
 				if (MmiSupported(insn)) { EmitMmi(m, gpr, insn); return true; }
+				if (MmiHiLoAction(insn)) { EmitMmiHiLo(m, gpr, insn); return true; } // C.79
 				// PCPYH: broadcast halfword 0 of each 64-bit half of rt across
 				// that half. Scalar: (u16)half * 0x0001000100010001.
 				if (IsPcpyh(insn))
@@ -2968,7 +3031,7 @@ namespace {
 			if (f == 0x04)             // PLZCW (C.63)
 				return !eeDiag().no_mmi && !NoEePlzcw();
 			return !eeDiag().no_mmi &&
-				(MmiSupported(insn) || IsPcpyh(insn) ||
+				(MmiSupported(insn) || MmiHiLoAction(insn) || IsPcpyh(insn) || // C.79
 				 (IsQfsrv(insn) && !eeDiag().no_interpcall && !icDiag().no_qfsrv));
 		}
 		if (op == 0x01) // REGIMM: MTSAB/MTSAH only (branches handled elsewhere)
