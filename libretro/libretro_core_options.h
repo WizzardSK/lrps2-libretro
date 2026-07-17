@@ -592,23 +592,6 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
-      "pcsx2_frameskip",
-      "Emulation > Frameskip (audio-driven)",
-      "Frameskip (audio-driven)",
-      "Skip rendering video frames when the frontend's audio buffer is about to underrun, to keep sound continuous on hardware that can't sustain full speed. 'auto' skips only when needed; the number caps how many frames may be skipped in a row. Only helps when video/GPU is the bottleneck (e.g. with upscaling); heavy CPU-bound scenes are limited by emulation speed regardless.",
-      NULL,
-      "emulation",
-      {
-         { "disabled", NULL },
-         { "auto", NULL },
-         { "1", NULL },
-         { "2", NULL },
-         { "3", NULL },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
-   {
       "pcsx2_game_enhancements_hint",
       "Emulation > Game Enhancements hint (Restart)",
       "Game Enhancements hint (Restart)",

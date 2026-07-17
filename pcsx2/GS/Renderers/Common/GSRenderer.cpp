@@ -303,14 +303,6 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 
 	m_disp_fb_sprite_blits     = 0;
 
-	// Audio-driven frameskip (libretro): drop this frame's present when the
-	// frontend flagged an imminent audio underrun. Consumes the request set on
-	// the libretro thread in retro_run. Same path as SkipDuplicateFrames below,
-	// so RetroArch gets a duped frame and audio delivery is unaffected.
-	extern std::atomic<bool> g_gs_frameskip_request;
-	if (g_gs_frameskip_request.exchange(false, std::memory_order_relaxed))
-		skip_frame = true;
-
 	if (GSConfig.SkipDuplicateFrames)
 	{
 		switch (PerformanceMetrics::GetInternalFPSMethod())
