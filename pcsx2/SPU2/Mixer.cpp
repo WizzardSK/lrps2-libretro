@@ -66,7 +66,7 @@ static void __forceinline IncrementNextA(V_Voice& vc)
 		for (int i = 0; i < 2; i++)
 		{
 			if (Cores[i].IRQEnable && (vc.NextA == Cores[i].IRQA))
-				has_to_call_irq[i] = true;
+				{ if (g_spuSyncOn) g_spuSync.irq_mix++; has_to_call_irq[i] = true; }
 		}
 	}
 
@@ -120,7 +120,7 @@ static __forceinline s32 GetNextDataBuffered(V_Core& thiscore, V_Voice& vc, uint
 		if (has_irq_armed)
 			for (int i = 0; i < 2; i++)
 				if (Cores[i].IRQEnable && Cores[i].IRQA == (vc.NextA & 0xFFFF8))
-					has_to_call_irq[i] = true;
+					{ if (g_spuSyncOn) g_spuSync.irq_mix++; has_to_call_irq[i] = true; }
 
 		s16* memptr = GetMemPtr(vc.NextA & 0xFFFF8);
 		vc.LoopFlags = *memptr >> 8; // grab loop flags from the upper byte.
@@ -177,7 +177,7 @@ static __forceinline void GetNextDataDummy(V_Core& thiscore, V_Voice& vc, uint v
 		if (has_irq_armed)
 			for (int i = 0; i < 2; i++)
 				if (Cores[i].IRQEnable && Cores[i].IRQA == (vc.NextA & 0xFFFF8))
-					has_to_call_irq[i] = true;
+					{ if (g_spuSyncOn) g_spuSync.irq_mix++; has_to_call_irq[i] = true; }
 
 		vc.LoopFlags = *GetMemPtr(vc.NextA & 0xFFFF8) >> 8; // grab loop flags from the upper byte.
 
@@ -285,7 +285,7 @@ static __forceinline void spu2M_WriteFast(u32 addr, s16 value)
 		for (int i = 0; i < 2; i++)
 		{
 			if (Cores[i].IRQEnable && Cores[i].IRQA == addr)
-				has_to_call_irq[i] = true;
+				{ if (g_spuSyncOn) g_spuSync.irq_mix++; has_to_call_irq[i] = true; }
 		}
 	}
 	*GetMemPtr(addr) = value;

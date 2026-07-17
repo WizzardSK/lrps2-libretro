@@ -325,6 +325,23 @@ __fi void TimeUpdate(u32 cClocks)
 		}
 	}
 
+	// TEMP diagnostic (LRPS2_SPU_SYNC_STATS): tick counts + the armed-IRQ
+	// fraction (has_irq_armed is stable across this call's whole batch).
+	if (g_spuSyncOn)
+	{
+		const unsigned long long n = snd_count / 2;
+		g_spuSync.timeupd++;
+		g_spuSync.ticks += n;
+		if (has_irq_armed)
+			g_spuSync.ticks_armed += n;
+		static unsigned long long next_dump = 2000000;
+		if (g_spuSync.ticks >= next_dump)
+		{
+			next_dump += 2000000;
+			g_spuSync.Dump("2M");
+		}
+	}
+
 	if (snd_count)
 		retro_audio_commit(snd_count);
 
@@ -609,6 +626,7 @@ void V_Core::WriteRegPS1(u32 mem, u16 value)
 				Cores[0].ActiveTSA = Cores[0].TSA;
 				if (Cores[0].IRQEnable && (Cores[0].IRQA <= Cores[0].ActiveTSA))
 				{
+					if (g_spuSyncOn) g_spuSync.irq_reg++;
 					has_to_call_irq[0] = true;
 					spu2Irq();
 				}
@@ -945,7 +963,7 @@ static void RegWrite_Core(u16 value)
 			for (int i = 0; i < 2; i++)
 			{
 				if (Cores[i].IRQEnable && (Cores[i].IRQA == thiscore.ActiveTSA))
-					has_to_call_irq[i] = true;
+					{ if (g_spuSyncOn) g_spuSync.irq_reg++; has_to_call_irq[i] = true; }
 			}
 			thiscore.DmaWrite(value);
 			break;

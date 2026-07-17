@@ -17,6 +17,7 @@
 #include "USB/USB.h"
 #include "IopHw.h"
 #include "IopDma.h"
+#include "SPU2/spu2.h" // LRPS2_SPU_SYNC_STATS counters
 #include "Common.h"
 #include "R3000A.h"
 
@@ -49,6 +50,7 @@ void fwIrq(void)
 
 void spu2Irq(void)
 {
+	if (g_spuSyncOn) g_spuSync.irqs++; // LRPS2_SPU_SYNC_STATS (SPU2/spu2.h)
 	iopIntcIrq(9);
 }
 
