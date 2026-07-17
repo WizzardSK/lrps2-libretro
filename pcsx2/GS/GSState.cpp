@@ -3343,7 +3343,7 @@ __forceinline void GSState::VertexKick(u32 skip, u32& maxcount)
 				break;
 		}
 
-#ifdef _M_ARM64
+#if defined(_M_ARM64) || defined(__aarch64__)
 		// mask() is slow on ARM, so just pull the bits out instead, thankfully we only care about the first 4 bytes.
 		skip |= (static_cast<u64>(test.extract64<0>()) & UINT64_C(0x8080808080808080)) != 0;
 #else

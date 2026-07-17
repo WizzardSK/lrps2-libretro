@@ -371,6 +371,21 @@ set(pcsx2GSSourcesUnshared
 	GS/Renderers/SW/GSSetupPrimCodeGenerator.all.cpp
 )
 
+# The software rasterizer JITs scanlines with x86 xbyak (GS*CodeGenerator) and
+# has no arm64 backend here, so drop the whole SW renderer on aarch64; the HW
+# renderer and paraLLEl-GS cover it (GS.cpp gates the SW path on ARCH_ARM64).
+if(NOT _M_X86)
+	list(REMOVE_ITEM pcsx2GSSourcesUnshared
+		GS/Renderers/SW/GSDrawScanline.cpp
+		GS/Renderers/SW/GSDrawScanlineCodeGenerator.cpp
+		GS/Renderers/SW/GSDrawScanlineCodeGenerator.all.cpp
+		GS/Renderers/SW/GSRasterizer.cpp
+		GS/Renderers/SW/GSRendererSW.cpp
+		GS/Renderers/SW/GSSetupPrimCodeGenerator.cpp
+		GS/Renderers/SW/GSSetupPrimCodeGenerator.all.cpp
+	)
+endif()
+
 set(pcsx2GSSources
 	GS/GS.cpp
 	GS/GSClut.cpp
@@ -565,7 +580,11 @@ set(pcsx2IPUHeaders
 	IPU/yuv2rgb.h
 )
 
-if(DISABLE_ADVANCE_SIMD)
+# The multi-ISA tier build (sse4/avx/avx2 unshared libs) is x86-only: it bakes
+# x86 SIMD feature flags into per-tier copies. On aarch64 there is a single NEON
+# tier, so fall through to the else() branch and compile the unshared GS/IPU/SPU2
+# sources once (mirrors the modern PCSX2/ARMSX2 layout).
+if(DISABLE_ADVANCE_SIMD AND _M_X86)
 	target_compile_definitions(PCSX2 PUBLIC MULTI_ISA_SHARED_COMPILATION)
 	if(USE_GCC)
 		target_link_options(PCSX2_FLAGS INTERFACE -Wno-odr)
@@ -742,6 +761,30 @@ set(pcsx2USBHeaders
 )
 set(pcsx2ZipToolsSources)
 set(pcsx2ZipToolsHeaders)
+
+# aarch64 (arm64 port, Phase B): drop the x86 recompiler sources (EE/IOP/VU
+# dynarec, recVTLB, SSE VIF unpack). They have no arm64 backend yet and the
+# interpreters are used instead; a hardware renderer (paraLLEl-GS) avoids the
+# x86 GS SW rasterizer codegen. Emptied here so the lists below expand to
+# nothing on aarch64 while x86_64 is unaffected.
+if(NOT _M_X86)
+	# CpuState.cpp lives under x86/ but only defines the EE/IOP/FPU register
+	# state (cpuRegs/psxRegs/fpuRegs) that the interpreter needs too, so keep it.
+	# Everything else here is the x86 recompiler; arm64 provides its own
+	# recompilers (recR3000A/recR5900/recVU1) plus the NEON VIF unpack dynarec
+	# transplanted from ARMSX2 (C.19: AsmHelpers + Vif_UnpackNEON +
+	# Vif_Dynarec_arm64, replacing the former RecStubs.cpp reference routing).
+	set(pcsx2x86Sources x86/CpuState.cpp arm64/recR3000A_arm64.cpp arm64/recR5900_arm64.cpp arm64/recVU1_arm64.cpp arm64/aVU.cpp
+		arm64/AsmHelpers.cpp arm64/Vif_UnpackNEON.cpp arm64/Vif_Dynarec_arm64.cpp
+		arm64/Profiler_arm64.cpp
+		arm64/SyncStats_arm64.cpp
+		arm64/SyncStats_arm64.h)
+	set(pcsx2x86Headers)
+	# VIXL is the AArch64 code emitter, the foundation for the arm64 recompiler
+	# (Phase C). Wire it through the flags interface (like parallel-gs/glad above)
+	# so its PUBLIC include dir and static lib reach both PCSX2 and PCSX2_LTO.
+	target_link_libraries(PCSX2_FLAGS INTERFACE vixl)
+endif()
 
 # These ones benefit a lot from LTO
 set(pcsx2LTOSources

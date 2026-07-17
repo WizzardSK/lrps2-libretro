@@ -91,7 +91,7 @@ __forceinline static u128 r128_to_u128(r128 val)
 	return ret;
 }
 
-#elif defined(_M_ARM64)
+#elif (defined(_M_ARM64) || defined(__aarch64__))
 
 using r128 = uint32x4_t;
 

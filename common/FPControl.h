@@ -101,7 +101,7 @@ struct FPControlRegister
 	__fi constexpr bool operator==(const FPControlRegister& rhs) const { return bitmask == rhs.bitmask; }
 	__fi constexpr bool operator!=(const FPControlRegister& rhs) const { return bitmask != rhs.bitmask; }
 
-#elif defined(_M_ARM64)
+#elif (defined(_M_ARM64) || defined(__aarch64__))
 	u64 bitmask;
 
 	static constexpr u64 FZ_BIT = (0x1ULL << 24);

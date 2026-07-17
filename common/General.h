@@ -66,7 +66,7 @@ namespace HostSys
 	void RemovePageFaultHandler(PageFaultHandler handler);
 
 	/// JIT write protect for Apple Silicon. Needs to be called prior to writing to any RWX pages.
-#if !defined(__APPLE__) || !defined(_M_ARM64)
+#if !defined(__APPLE__) || !(defined(_M_ARM64) || defined(__aarch64__))
 	// clang-format -off
 	__fi static void BeginCodeWrite() {}
 	__fi static void EndCodeWrite() {}

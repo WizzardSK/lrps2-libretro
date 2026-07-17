@@ -66,7 +66,7 @@ static void __forceinline IncrementNextA(V_Voice& vc)
 		for (int i = 0; i < 2; i++)
 		{
 			if (Cores[i].IRQEnable && (vc.NextA == Cores[i].IRQA))
-				has_to_call_irq[i] = true;
+				{ if (g_spuSyncOn) g_spuSync.irq_mix++; has_to_call_irq[i] = true; }
 		}
 	}
 
@@ -120,7 +120,7 @@ static __forceinline s32 GetNextDataBuffered(V_Core& thiscore, V_Voice& vc, uint
 		if (has_irq_armed)
 			for (int i = 0; i < 2; i++)
 				if (Cores[i].IRQEnable && Cores[i].IRQA == (vc.NextA & 0xFFFF8))
-					has_to_call_irq[i] = true;
+					{ if (g_spuSyncOn) g_spuSync.irq_mix++; has_to_call_irq[i] = true; }
 
 		s16* memptr = GetMemPtr(vc.NextA & 0xFFFF8);
 		vc.LoopFlags = *memptr >> 8; // grab loop flags from the upper byte.
@@ -177,7 +177,7 @@ static __forceinline void GetNextDataDummy(V_Core& thiscore, V_Voice& vc, uint v
 		if (has_irq_armed)
 			for (int i = 0; i < 2; i++)
 				if (Cores[i].IRQEnable && Cores[i].IRQA == (vc.NextA & 0xFFFF8))
-					has_to_call_irq[i] = true;
+					{ if (g_spuSyncOn) g_spuSync.irq_mix++; has_to_call_irq[i] = true; }
 
 		vc.LoopFlags = *GetMemPtr(vc.NextA & 0xFFFF8) >> 8; // grab loop flags from the upper byte.
 
@@ -285,7 +285,7 @@ static __forceinline void spu2M_WriteFast(u32 addr, s16 value)
 		for (int i = 0; i < 2; i++)
 		{
 			if (Cores[i].IRQEnable && Cores[i].IRQA == addr)
-				has_to_call_irq[i] = true;
+				{ if (g_spuSyncOn) g_spuSync.irq_mix++; has_to_call_irq[i] = true; }
 		}
 	}
 	*GetMemPtr(addr) = value;
@@ -414,12 +414,57 @@ static __forceinline StereoOut32 MixVoice(V_Core& thiscore, V_Voice& vc, uint co
 	return voiceOut;
 }
 
+// TEMP diagnostic (LRPS2_SPU_STATS): shape of the per-sample voice work -- how
+// many of the 48 voices are actually producing sound, how many are stopped (and
+// still walked for IRQ/ENDX tracking), and how many use the rarer features.
+static struct SpuStats {
+	bool on = getenv("LRPS2_SPU_STATS") != nullptr;
+	u64 samples = 0, active = 0, stopped = 0, noise = 0, modulated = 0, volslide = 0;
+	u64 phase[5] = {}, silent_release = 0, silent_sustain = 0, static_sustain = 0;
+} s_spu_stats;
+
+struct SpuStatsReport {
+	~SpuStatsReport() {
+		auto& t = s_spu_stats;
+		if (!t.on || !t.samples) return;
+		fprintf(stderr, "[spu] %llu samples: avg active %.1f, stopped %.1f / 48; noise %.2f, modulated %.2f, volslide %.2f per sample\n",
+			(unsigned long long)t.samples, (double)t.active / t.samples, (double)t.stopped / t.samples,
+			(double)t.noise / t.samples, (double)t.modulated / t.samples, (double)t.volslide / t.samples);
+		fprintf(stderr, "[spu] phases/sample: attack %.1f decay %.1f sustain %.1f release %.1f | silent: rel@0 %.1f sus@0 %.1f | static sustain (Step==0) %.1f\n",
+			(double)t.phase[1] / t.samples, (double)t.phase[2] / t.samples,
+			(double)t.phase[3] / t.samples, (double)t.phase[4] / t.samples,
+			(double)t.silent_release / t.samples, (double)t.silent_sustain / t.samples,
+			(double)t.static_sustain / t.samples);
+	}
+};
+static SpuStatsReport s_spu_stats_report;
+
 static __forceinline void MixCoreVoices(VoiceMixSet& dest, const uint coreidx)
 {
 	V_Core& thiscore(Cores[coreidx]);
 
+	if (s_spu_stats.on && coreidx == 0)
+		s_spu_stats.samples++;
+
 	for (uint voiceidx = 0; voiceidx < SPU2_NUM_VOICES; ++voiceidx)
 	{
+		if (s_spu_stats.on)
+		{
+			V_Voice& v = thiscore.Voices[voiceidx];
+			if (v.ADSR.Phase == PHASE_STOPPED) s_spu_stats.stopped++;
+			else
+			{
+				s_spu_stats.active++;
+				if (v.ADSR.Phase <= 4) s_spu_stats.phase[v.ADSR.Phase]++;
+				if (v.ADSR.Phase == PHASE_SUSTAIN && v.ADSR.CachedPhases[PHASE_SUSTAIN].Step == 0)
+					s_spu_stats.static_sustain++;
+				if (v.ADSR.Value == 0 && v.ADSR.Phase == PHASE_RELEASE) s_spu_stats.silent_release++;
+				if (v.ADSR.Value == 0 && v.ADSR.Phase == PHASE_SUSTAIN) s_spu_stats.silent_sustain++;
+				if (v.Noise) s_spu_stats.noise++;
+				if (v.Modulated && voiceidx) s_spu_stats.modulated++;
+				if (v.Volume.Left.Enable || v.Volume.Right.Enable) s_spu_stats.volslide++;
+			}
+		}
 		// Prefetch next voice's hot cache lines while processing this one.
 		// Voices are 192-byte aligned (3 cache lines); CL0 = ADSR, CL1 = pitch/volume.
 		const char* next = reinterpret_cast<const char*>(&thiscore.Voices[voiceidx + 1]);
@@ -527,6 +572,11 @@ __fi
 #endif
 void Mix(short *out_left, short *out_right)
 {
+	// TEMP measurement (LRPS2_SPU_MUTE): skip ALL voice mixing and emit silence.
+	// Deliberately incorrect (no ENDX/IRQ/ADSR progression) -- exists only to put
+	// an upper bound on what any SPU optimisation could gain on the EE thread.
+	static const bool mute = getenv("LRPS2_SPU_MUTE") != nullptr;
+	if (mute) { *out_left = 0; *out_right = 0; return; }
 	StereoOut32 Out;
 	StereoOut32 empty;
 	StereoOut32 Ext;

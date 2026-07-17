@@ -388,6 +388,8 @@ __fi void vif1Interrupt(void)
 	if (vif1.queued_program)
 		vifExecQueue(1);
 	g_vif1Cycles             = 0;
+	if (THREAD_VU1)
+		vu1Thread.KickPending(); // C.80: DMA done -- flush any deferred unpack notify
 	hwDmacIrq(DMAC_VIF1);
 	cpuRegs.dmastall        &= ~(1 << DMAC_VIF1);
 }

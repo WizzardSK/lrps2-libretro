@@ -19,15 +19,32 @@
 #include "Common.h"
 #include "Gif_Unit.h"
 #include "MTVU.h"
+#include "arm64/SyncStats_arm64.h"
 #include "VMManager.h"
 #include "Vif_Dynarec.h"
 
 #include "../common/Threading.h"
+#include "arm64/Profiler_arm64.h"
 
 VU_Thread vu1Thread;
 
 // Rounds up a size in bytes for size in u32's
 static __fi u32 SIZE_U32(u32 x) { return (x + 3) >> 2; }
+
+// C.80 lazy-kick state (see the comment block above VU_Thread::KickStart).
+// EE-thread-only, per the class contract (all producers run on the EE thread).
+static bool s_kickPending = false;
+static bool LazyKick() { static const bool on = getenv("LRPS2_NO_VIF_LAZYKICK") == nullptr; return on; }
+// TEMP diagnostic (LRPS2_MTVU_STATS=1): unpacks deferred vs notifies issued.
+static u64 s_statUnpacks = 0, s_statKicks = 0;
+static bool MtvuStatsOn() { static const bool on = getenv("LRPS2_MTVU_STATS") != nullptr; return on; }
+namespace { struct MtvuStatsDumper { ~MtvuStatsDumper() {
+	if (MtvuStatsOn())
+		fprintf(stderr, "[mtvu-stats] unpacks %llu, notifies %llu (saved %llu = %.1f%%)\n",
+			(unsigned long long)s_statUnpacks, (unsigned long long)s_statKicks,
+			(unsigned long long)(s_statUnpacks > s_statKicks ? s_statUnpacks - s_statKicks : 0),
+			s_statUnpacks ? 100.0 * (double)(s_statUnpacks - s_statKicks) / (double)s_statUnpacks : 0.0);
+} } s_mtvuStatsDumper; }
 
 enum MTVU_EVENT
 {
@@ -115,7 +132,10 @@ void VU_Thread::Close()
 		return;
 
 	m_shutdown_flag.store(true, std::memory_order_release);
-	semaEvent.NotifyOfWorkIfRunning();
+	// C.80: full notify -- there may be a deferred unpack notify pending, and
+	// the IfRunning state-peek could also race the worker's RUNNING->SLEEPING
+	// transition and miss the shutdown wakeup (see Threading.h).
+	KickStart();
 	m_thread.Join();
 }
 
@@ -124,6 +144,7 @@ void VU_Thread::Reset()
 	size_t i;
 
 	vuCycleIdx = 0;
+	s_kickPending = false; // C.80: the ring is being cleared, nothing to notify
 	m_ato_write_pos = 0;
 	m_write_pos = 0;
 	m_ato_read_pos = 0;
@@ -137,6 +158,8 @@ void VU_Thread::Reset()
 
 void VU_Thread::ExecuteRingBuffer(void)
 {
+	ArmProf::AttachThread("MTVU");
+
 	for (;;)
 	{
 		semaEvent.WaitForWork();
@@ -158,7 +181,36 @@ void VU_Thread::ExecuteRingBuffer(void)
 					if (addr != -1)
 						vuRegs[1].VI[REG_TPC].UL = addr & 0x7FF;
 					CpuVU1->SetStartPC(vuRegs[1].VI[REG_TPC].UL << 3);
+					// The EE-side vu1ExecMicro intentionally CLEARS VPU_STAT's VU1
+					// busy bit in MTVU mode ("pretend the VU finished instantly").
+					// The x86 microVU worker doesn't care, but the VU1 INTERPRETER's
+					// Execute loop breaks immediately when the busy bit is clear --
+					// the worker then executes ZERO instructions, produces no XGKICK
+					// output, and every MTVU GS packet arrives empty (GT3's VU1-drawn
+					// FMV went black). Set busy for the duration of the program like
+					// the non-MTVU path does; the interpreter's E-bit end clears it.
+					// ONLY for the interp-style providers (InterpVU1 / the C.14
+					// interp-pair rec): microVU1 never re-clears VPU_STAT itself --
+					// it signals program end via mtvuInterrupts VUEBit -- so this
+					// worker-side set would STICK, the game would wait forever for
+					// VU1 idle, and kicks stop after a handful of programs (C.28-3:
+					// GT3 FMV black again, 4 progs then stall).
+					if (CpuVU1 != &CpuMicroVU1)
+						vuRegs[0].VI[REG_VPU_STAT].UL |= 0x0100;
 					CpuVU1->Execute(vu1RunCycles);
+					// TEMP diagnostic (LRPS2_MTVU_LOG): count worker-side VU1 programs
+					// and the GS-packet bytes they produced.
+					{
+						static int log_on = -1; static u64 n = 0, bytes = 0;
+						if (log_on < 0) log_on = getenv("LRPS2_MTVU_LOG") ? 1 : 0;
+						if (log_on)
+						{
+							n++; bytes += gifUnit.gifPath[GIF_PATH_1].gsPack.size;
+							if (n <= 4 || (n & 0xf) == 0)
+								fprintf(stderr, "[mtvu-w] progs=%llu path1_bytes=%llu\n",
+									(unsigned long long)n, (unsigned long long)bytes);
+						}
+					}
 					gifUnit.gifPath[GIF_PATH_1].FinishGSPacketMTVU();
 					semaXGkick.Post(); // Tell MTGS a path1 packet is complete
 					vuCycles[vuCycleIdx].store(vuRegs[1].cycle, std::memory_order_release);
@@ -194,6 +246,12 @@ void VU_Thread::ExecuteRingBuffer(void)
 					break;
 				case MTVU_VIF_UNPACK:
 				{
+					// TEMP diagnostic (LRPS2_MTVU_LOG)
+					{
+						static int log_on = -1; static u64 n = 0;
+						if (log_on < 0) log_on = getenv("LRPS2_MTVU_LOG") ? 1 : 0;
+						if (log_on) { n++; if (n <= 4 || (n & 0x3ff) == 0) fprintf(stderr, "[mtvu-u] unpacks=%llu\n", (unsigned long long)n); }
+					}
 					u32 vif_copy_size = (uptr)&vif.StructEnd - (uptr)&vif.tag;
 					Read(&vif.tag, vif_copy_size);
 					ReadRegs(&vifRegs);
@@ -431,13 +489,58 @@ void VU_Thread::Get_MTVUChanges()
 	}
 }
 
+// C.80: lazy VIF-unpack kick. Every VifUnpack used to end in NotifyOfWork --
+// a full fetch_add RMW on the WorkSema state (the __aarch64_ldadd4_rel at
+// ~1.9 % of the EE thread in-race, C.76). But the worker discovers new data
+// via m_ato_write_pos, not the state counter: while it is RUNNING it drains
+// the ring without ever needing the notify; the notify only matters to wake
+// it from SLEEPING. So an unpack packet only *publishes* (the release store
+// stays per-packet, so an awake worker picks it up immediately) and defers
+// the notify to the next flush point:
+//   * any other MTVU command (ExecuteVU/WriteMicroMem/...) -- they all call
+//     KickStart themselves, and one NotifyOfWork covers the whole ring;
+//   * WaitVU -- MANDATORY: WaitForEmpty trusts the sema state machine, so a
+//     sleeping worker + unnotified ring would pass the wait with work still
+//     pending (silent corruption, not just a hang);
+//   * Close -- MANDATORY (shutdown wakeup);
+//   * the VIF1 DMA-end / MFIFO-end interrupt tails (KickPending below) --
+//     not needed for correctness, they just bound how long the worker can
+//     sleep on published-but-unnotified data;
+//   * WaitOnSize already KickStarts in its full-ring wait loop.
+// A spurious notify is benign (worker wakes, sees an empty ring, sleeps); a
+// missing notify before an observation point is the only hazard, and every
+// observation point above notifies. This is NOT the unsound
+// NotifyOfWorkIfRunning state-peek (see Threading.h): the deferred notify is
+// still a full RMW, only issued later.
+// EE-thread-only state: s_kickPending/LazyKick near the top of this file.
+
 void VU_Thread::KickStart()
 {
+	s_kickPending = false;
+	if (MtvuStatsOn()) s_statKicks++;
 	semaEvent.NotifyOfWork();
+}
+
+// Flush a deferred VifUnpack notify, if one is pending (see LazyKick above).
+void VU_Thread::KickPending()
+{
+	if (s_kickPending)
+		KickStart();
+}
+
+// Called from Gif_Path::CopyGSPacketData (MTVU thread) after handing MTGS a
+// partial packet, so MTGS's semaXGkick wait wakes up and drains it.
+void Gif_MTVU_KickSema()
+{
+	vu1Thread.semaXGkick.Post();
 }
 
 void VU_Thread::WaitVU()
 {
+	// C.80: WaitForEmpty trusts the sema state machine -- flush any deferred
+	// unpack notify first or it can pass with unprocessed work in the ring.
+	KickPending();
+	SyncStat _s(g_sync_waitvu);
 	semaEvent.WaitForEmpty();
 }
 
@@ -476,7 +579,11 @@ void VU_Thread::VifUnpack(vifStruct& _vif, VIFregisters& _vifRegs, const u8* dat
 	Write(size);
 	Write(data, size);
 	m_ato_write_pos.store(m_write_pos, std::memory_order_release);
-	KickStart();
+	if (MtvuStatsOn()) s_statUnpacks++;
+	if (LazyKick())
+		s_kickPending = true; // C.80: published; notify deferred to a flush point
+	else
+		KickStart();
 }
 
 void VU_Thread::WriteMicroMem(u32 vu_micro_addr, const void* data, u32 size)

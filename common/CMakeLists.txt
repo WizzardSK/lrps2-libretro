@@ -7,7 +7,6 @@ endif(NOT TOP_CMAKE_WAS_SOURCED)
 
 add_library(common)
 
-# x86emitter sources
 target_sources(common PRIVATE
 	AlignedMalloc.cpp
 	Console.cpp
@@ -18,17 +17,25 @@ target_sources(common PRIVATE
 	SettingsWrapper.cpp
 	StringUtil.cpp
 	TextureDecompress.cpp
-	emitter/avx.cpp
-	emitter/groups.cpp
-	emitter/jmp.cpp
-	emitter/legacy.cpp
-	emitter/legacy_sse.cpp
-	emitter/movs.cpp
-	emitter/simd.cpp
-	emitter/x86emitter.cpp
 	Threads.cpp
 	HostSys.cpp
 )
+
+# x86emitter sources: x86-only JIT code emitter. Excluded on aarch64, where the
+# recompilers that use it are gated out and the interpreters run instead (arm64
+# port, Phase B). There is no arm64 emitter yet (that is Phase C).
+if(_M_X86)
+	target_sources(common PRIVATE
+		emitter/avx.cpp
+		emitter/groups.cpp
+		emitter/jmp.cpp
+		emitter/legacy.cpp
+		emitter/legacy_sse.cpp
+		emitter/movs.cpp
+		emitter/simd.cpp
+		emitter/x86emitter.cpp
+	)
+endif()
 
 # x86emitter headers
 target_sources(common PRIVATE

@@ -48,6 +48,7 @@ struct nVifStruct
 
 	RecompiledCodeReserve*  recReserve;
 	u8*                     recWritePtr; // current write pos into the reserve
+	u8*                     recEndPtr;   // arm64 dynarec: end of the code region (overflow check)
 
 	HashBucket              vifBlocks;   // Vif Blocks
 

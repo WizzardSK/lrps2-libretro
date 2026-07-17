@@ -78,6 +78,11 @@ public:
 	// Get MTVU to start processing its packets if it isn't already
 	void KickStart();
 
+	// C.80: flush a deferred VifUnpack notify if one is pending (lazy kick).
+	// Called from the VIF1 DMA/MFIFO end-of-transfer tails to bound how long
+	// the worker can sleep on published-but-unnotified unpack data.
+	void KickPending();
+
 	// Waits till MTVU is done processing
 	void WaitVU();
 
