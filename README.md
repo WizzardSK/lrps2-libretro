@@ -62,11 +62,26 @@ Three findings that came out of getting that profile:
   write (`VU_Thread::VifUnpack`); the outlined atomics (2.2 %) are 84 % the
   `WorkSema::NotifyOfWork` fetch_add, one per VIF unpack packet; `memcmp`
   (1.2 %) is entirely the C.60 block-revalidation check. The WorkSema RMW in
-  particular must stay: an RMW always observes the latest state, which is what
-  makes the sleep/wake handshake sound -- the tempting load-then-skip variant
-  can read a stale RUNNING_N while the worker is going to sleep and miss the
-  wakeup. What is left on the table here is structural (batching VIF unpack
-  packets into fewer MTVU ring writes, an SPU worker thread), not local.
+  particular must stay *per notify*: an RMW always observes the latest state,
+  which is what makes the sleep/wake handshake sound -- the tempting
+  load-then-skip variant can read a stale RUNNING_N while the worker is going
+  to sleep and miss the wakeup. What C.80 does instead is issue **fewer
+  notifies**: a VIF unpack packet only publishes its ring data (the release
+  store of the write pointer stays per-packet, so an awake worker drains it
+  immediately) and defers the wakeup RMW to the next flush point -- any other
+  MTVU command (they all notify), `WaitVU` (mandatory: `WaitForEmpty` trusts
+  the sema state machine), `Close`, or the VIF1 DMA/MFIFO end-of-transfer
+  tails (latency bound). In-race GT3 that removes **82 %** of the notifies
+  (3.9M unpacks -> 0.7M notifies per 600 frames) and the fetch_add leaves the
+  EE-thread profile (2.2 % -> below threshold); wall time is flat, as with
+  every plumbing change since C.49 (`LRPS2_NO_VIF_LAZYKICK=1` restores the
+  per-packet notify, `LRPS2_MTVU_STATS=1` reports the deferred/issued counts).
+  An SPU worker thread was measured and rejected: both test titles run with an
+  SPU IRQ armed 93-98 % of all sample ticks and GT3's in-race IRQs are 100 %
+  mixer-voice IRQA crossings, discovered tick-exactly during mixing -- async
+  mixing cannot deliver them at the bit-identical IOP cycle, and the only
+  sound design (speculative mixing with rollback) is out of proportion to the
+  ~5-6 % ceiling (`LRPS2_SPU_SYNC_STATS=1` collects the evidence).
 
 Overall recompiler-suite progress: roughly **~88 %** (weighted by remaining
 work; dynamic instruction coverage on the tested titles is much higher — the
@@ -103,7 +118,7 @@ Compiled pages are write-protected; faults invalidate stale blocks (vtlb `mmap_M
 
 ### MTVU (VU1 thread)
 
-**Default-on** with microVU1 (≥3 cores; `LRPS2_NO_MTVU=1` disables). Partial-packet flush protocol prevents the continuous-microprogram livelock; with an interp-style VU1 provider MTVU stays opt-in (`LRPS2_MTVU=1`)
+**Default-on** with microVU1 (≥3 cores; `LRPS2_NO_MTVU=1` disables). Partial-packet flush protocol prevents the continuous-microprogram livelock; with an interp-style VU1 provider MTVU stays opt-in (`LRPS2_MTVU=1`). **Lazy VIF-unpack kick (C.80)**: an unpack packet publishes its ring data but defers the WorkSema wakeup RMW to the next flush point (any other MTVU command, `WaitVU`, `Close`, or the VIF1 DMA/MFIFO end-of-transfer tails) — in-race GT3 82 % of the notifies disappear (`LRPS2_NO_VIF_LAZYKICK=1` restores per-packet notify, `LRPS2_MTVU_STATS=1` reports the counts)
 
 ### GS renderer
 
@@ -177,6 +192,8 @@ Tracing/logging:
 | `LRPS2_PROF_LR=sub1,sub2` | Caller attribution for leaf symbols (memcpy/memcmp/`__aarch64_*`): samples matching a substring get their LR symbolized into a per-thread caller histogram |
 | `LRPS2_SYNC_STATS=1` | Wall-clock blocking at the EE↔GS/MTVU sync points (who actually waits on whom) |
 | `LRPS2_SPU_STATS=1` / `LRPS2_SPU_MUTE=1` | SPU voice-shape statistics / mute the mixer to re-measure its wall-time ceiling |
+| `LRPS2_SPU_SYNC_STATS=1` | SPU worker-thread feasibility: register read/write/DMA rates, armed-IRQ tick fraction, and which site (mixer/reverb/ADMA-input/DMA/register) each IRQA match came from |
+| `LRPS2_MTVU_STATS=1` | C.80 lazy-kick effect: VIF unpack packets deferred vs MTVU notifies issued |
 | `LRPS2_DUMP_HOST=<pc>` / `LRPS2_DUMP_HOST_IOP=<pc>` / `LRPS2_DUMP_HOST_MVU=<pc>` | Write a compiled block's host code (+ guest words) for offline `objdump -D -b binary -m aarch64` |
 | `MVU_DIFF=1` | microVU1-vs-interpreter register-exact shadow differential (needs instant VU1 — even an empty `LRPS2_NO_VU1_INSTANT=` disables it and poisons the log) |
 
