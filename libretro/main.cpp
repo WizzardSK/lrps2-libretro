@@ -129,6 +129,23 @@ static u8 setting_round_sprite                 = 0;
 static u8 setting_texture_inside_rt            = 0;
 static u8 setting_ee_cycle_skip                = 0;
 static s8 setting_ee_cycle_rate                = 0;
+
+// Audio-driven frameskip. RetroArch reports audio-buffer occupancy right before
+// each retro_run; when an underrun is imminent we skip the GS present for this
+// frame (video stutters, audio stays continuous) up to a consecutive cap.
+// setting_frameskip: 0 = off, 1..3 = max consecutive skips (the "auto" option
+// maps to 1). Only helps when video/GPU is the frame's bottleneck.
+static u8   setting_frameskip                  = 0;   // max consecutive skips (0=off)
+static bool g_audio_underrun_likely            = false;
+static int  g_frameskip_counter                = 0;   // consecutive skipped frames
+// Read on the GS thread in GSRenderer::VSync; set on the libretro thread in
+// retro_run before MainLoop drains this frame's VSYNC packet.
+std::atomic<bool> g_gs_frameskip_request{false};
+static void audio_buffer_status_cb(bool active, unsigned occupancy, bool underrun_likely)
+{
+   g_audio_underrun_likely = active && underrun_likely;
+   (void)occupancy;
+}
 static s8 setting_hint_language_unlock         = 0;
 s8 setting_hint_widescreen                     = 0;
 static s8 setting_hint_game_enhancements       = 0;
@@ -1165,6 +1182,34 @@ static void check_variables(bool first_run)
 
 		if (setting_hint_game_enhancements != game_enhancements_hint_prev)
 			updated = true;
+	}
+
+	var.key = "pcsx2_frameskip";
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+	{
+		const u8 frameskip_prev = setting_frameskip;
+		if (!strcmp(var.value, "disabled"))   setting_frameskip = 0;
+		else if (!strcmp(var.value, "auto"))  setting_frameskip = 1;
+		else                                  setting_frameskip = (u8)atoi(var.value); // "1".."3"
+
+		if (first_run || setting_frameskip != frameskip_prev)
+		{
+			// (Un)register the audio-buffer-status callback and request enough
+			// frontend audio latency for skipping to have room to recover.
+			struct retro_audio_buffer_status_callback bcb;
+			bcb.callback = setting_frameskip ? audio_buffer_status_cb : NULL;
+			environ_cb(RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK, &bcb);
+			if (setting_frameskip)
+			{
+				unsigned lat = 96; // ms; the standard "room for frameskip" floor
+				environ_cb(RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY, &lat);
+			}
+			else
+			{
+				g_audio_underrun_likely = false;
+				g_frameskip_counter = 0;
+			}
+		}
 	}
 
 	var.key = "pcsx2_ee_cycle_skip";
@@ -2277,6 +2322,21 @@ void retro_run(void)
 
 	if (!MTGS::IsOpen())
 		MTGS::TryOpenGS();
+
+	// Audio-driven frameskip: if the frontend expects an underrun and we haven't
+	// skipped too many in a row, ask the GS to drop this frame's present. The
+	// flag is consumed by GSRenderer::VSync on the GS thread as it renders the
+	// VSYNC packet MainLoop is about to drain.
+	if (setting_frameskip && g_audio_underrun_likely && g_frameskip_counter < setting_frameskip)
+	{
+		g_gs_frameskip_request.store(true, std::memory_order_relaxed);
+		g_frameskip_counter++;
+	}
+	else
+	{
+		g_gs_frameskip_request.store(false, std::memory_order_relaxed);
+		g_frameskip_counter = 0;
+	}
 
 	if (cpu_thread_state.load(std::memory_order_acquire) == VMState::Paused)
 		cpu_thread_resume();
