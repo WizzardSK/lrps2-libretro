@@ -69,7 +69,7 @@
 // the first op materializes them and only the last op restores x19 (x27 needs
 // no restore -- it is an EE cache slot and the cache refills it on next use).
 // Default true/true = the old per-op bracket (also what the EE rec sets when
-// liveness/run info is unavailable or LRPS2_NO_COP2_RUNHOIST=1).
+// liveness/run info is unavailable).
 bool g_cop2MacroFirst = true;
 bool g_cop2MacroLast  = true;
 
@@ -85,8 +85,7 @@ static void setupMacroOp(int mode)
 	if (g_cop2MacroFirst)
 	{
 		armMoveAddressToReg(RVUSTATE, &::vuRegs[0]);
-		if (mvuMacroX27())
-			armMoveAddressToReg(RVUMVU, &microVU0);
+		armMoveAddressToReg(RVUMVU, &microVU0);
 	}
 
 	// Enter COP2/macro mode BEFORE reset() so the allocator's reset() sees cop2 == 1
