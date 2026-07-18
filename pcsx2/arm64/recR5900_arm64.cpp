@@ -1558,28 +1558,6 @@ namespace
 
 	// Translate one simple integer ALU op (32- and 64-bit forms). Returns false,
 	// emitting nothing, for control flow / memory / FPU / MMI / anything else.
-	// TEMP diagnostic: env-gated toggles to force categories of EE ops back to
-	// the interpreter, to bisect which native EE JIT feature breaks MMX7's
-	// post-logo progression. Read once. Mirrored in IsTranslatable so the block
-	// builder and delay-slot handling stay consistent with EmitSimple.
-	struct EeDiagFlags { int no_mmi, no_muldiv, no_cop1, no_mem, no_load, no_store, no_branch, no_ld64, no_interpcall, no_fpu_arith; };
-	const EeDiagFlags& eeDiag()
-	{
-		static EeDiagFlags f = {
-			getenv("LRPS2_NO_EE_MMI")    ? 1 : 0,
-			getenv("LRPS2_NO_EE_MULDIV") ? 1 : 0,
-			getenv("LRPS2_NO_EE_COP1")   ? 1 : 0,
-			getenv("LRPS2_NO_EE_MEM")    ? 1 : 0,
-			(getenv("LRPS2_NO_EE_MEM") || getenv("LRPS2_NO_EE_LOAD"))  ? 1 : 0,
-			(getenv("LRPS2_NO_EE_MEM") || getenv("LRPS2_NO_EE_STORE")) ? 1 : 0,
-			getenv("LRPS2_NO_EE_BRANCH") ? 1 : 0,
-			getenv("LRPS2_NO_EE_LD64")   ? 1 : 0,
-			getenv("LRPS2_NO_EE_INTERPCALL") ? 1 : 0, // C.18 inline interp-op calls
-			getenv("LRPS2_NO_EE_FPU_ARITH")  ? 1 : 0, // C.23 native ADD.S/SUB.S/MUL.S
-		};
-		return f;
-	}
-
 	// C.18: execute an interpreter op implementation from inside the block.
 	// Only for ops with contained side effects: no control flow, no exception,
 	// and no reads of cpuRegs.pc or cpuBlockCycles (MFC0's Count uses
@@ -1907,8 +1885,6 @@ namespace {
 		else return false;
 		if (load && (rta == 0 || rta == rsa))
 			return false;
-		if (load ? (eeDiag().no_load || eeDiag().no_mem) : (eeDiag().no_store || eeDiag().no_mem))
-			return false;
 		*out = {load, is64, rta, rsa, offb};
 		return true;
 	}
@@ -2203,22 +2179,6 @@ namespace {
 	inline bool IsQfsrv(u32 insn) { return (insn & 0x3f) == 0x28 && ((insn >> 6) & 0x1f) == 0x1b; }
 	inline bool IsPcpyh(u32 insn) { return (insn & 0x3f) == 0x29 && ((insn >> 6) & 0x1f) == 0x1b; }
 
-	// TEMP bisect toggles for the C.18 inline-call op groups (finer than
-	// LRPS2_NO_EE_INTERPCALL, which disables all of them).
-	struct IcFlags { int no_cop0, no_cache, no_qfsrv, no_cop2, no_cop2macro, no_cop2xfer; };
-	const IcFlags& icDiag()
-	{
-		static IcFlags f = {
-			getenv("LRPS2_NO_EE_IC_COP0")  ? 1 : 0,
-			getenv("LRPS2_NO_EE_IC_CACHE") ? 1 : 0,
-			getenv("LRPS2_NO_EE_IC_QFSRV") ? 1 : 0,
-			getenv("LRPS2_NO_EE_IC_COP2")  ? 1 : 0,
-			getenv("LRPS2_NO_EE_COP2MACRO") ? 1 : 0,
-			getenv("LRPS2_NO_EE_COP2XFER") ? 1 : 0, // C.58
-		};
-		return f;
-	}
-
 	bool EmitSimple(MacroAssembler& m, const Register& gpr, u32 insn)
 	{
 		s_rc.pinned = 0; // new op: previous op's Register handles are dead
@@ -2228,14 +2188,6 @@ namespace {
 		const int32_t simm = (int16_t)(insn & 0xffff);
 		const uint64_t simm64 = (uint64_t)(int64_t)simm;
 		const u32 zimm = insn & 0xffff;
-
-		// TEMP diagnostic toggles (see eeDiag): force a category of EE ops back
-		// to the interpreter to bisect which native EE JIT feature breaks MMX7.
-		const int no_mmi = eeDiag().no_mmi, no_muldiv = eeDiag().no_muldiv;
-		const int no_cop1 = eeDiag().no_cop1;
-		const int no_fpu_arith = eeDiag().no_fpu_arith;
-		const int no_load = eeDiag().no_load, no_store = eeDiag().no_store;
-		const int no_ld64 = eeDiag().no_ld64;
 
 		switch (op)
 		{
@@ -2287,7 +2239,6 @@ namespace {
 					// HI/LO moves + integer mult/div (bit-exact, sign-extended results)
 					case 0x10: case 0x11: case 0x12: case 0x13: // MFHI/MTHI/MFLO/MTLO
 					case 0x18: case 0x19: case 0x1a: case 0x1b: // MULT/MULTU/DIV/DIVU
-						if (no_muldiv) return false;
 						EmitMulDiv(m, gpr, funct, rs, rt, rd); return true;
 					// SYNC is architecturally a barrier; the interpreter's SYNC()
 					// body is empty, so it translates to pure cycle bookkeeping.
@@ -2385,7 +2336,6 @@ namespace {
 			// the EE vtlb wrappers. gpr (x19) is callee-saved across the calls.
 			case 0x20: case 0x24: case 0x21: case 0x25: case 0x23: case 0x27: case 0x37:
 			{
-				if (no_load || (no_ld64 && op == 0x37)) return false;
 				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				const u32 amask = (op == 0x37) ? 7 : (op == 0x23 || op == 0x27) ? 3 : (op == 0x21 || op == 0x25) ? 1 : 0;
 				EmitMisalignGuard(m, amask); // C.53: cold path lives out of line
@@ -2451,7 +2401,6 @@ namespace {
 			// interpreted ops / 10500 frames).
 			case 0x22: case 0x26: case 0x1a: case 0x1b:
 			{
-				if (no_load) return false;
 				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				m.Mov(w1, rt);
 				s_rc.FlushReg(m, gpr, rt); // the helper READS GPR[rt] for the merge
@@ -2467,7 +2416,6 @@ namespace {
 			// aligned word/dword, same helper-call pattern.
 			case 0x2a: case 0x2e: case 0x2c: case 0x2d:
 			{
-				if (no_store) return false;
 				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				m.Mov(w1, rt);
 				s_rc.FlushReg(m, gpr, rt); // the helper reads GPR[rt] from memory
@@ -2481,7 +2429,6 @@ namespace {
 			// Stores (SB/SH/SW/SD).
 			case 0x28: case 0x29: case 0x2b: case 0x3f:
 			{
-				if (no_store || (no_ld64 && op == 0x3f)) return false;
 				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				const u32 amask = (op == 0x3f) ? 7 : (op == 0x2b) ? 3 : (op == 0x29) ? 1 : 0;
 				EmitMisalignGuard(m, amask); // C.53: cold path lives out of line
@@ -2543,7 +2490,7 @@ namespace {
 			// compiler-generated 128-bit copies.
 			case 0x1e: // LQ
 			{
-				if (no_load || !rt) return false; // rt==0: rare, leave to interp
+				if (!rt) return false; // rt==0: rare, leave to interp
 				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				m.And(w0, w0, 0xfffffff0);
 				Label slow, done;
@@ -2577,7 +2524,6 @@ namespace {
 			}
 			case 0x1f: // SQ
 			{
-				if (no_store) return false;
 				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				m.And(w0, w0, 0xfffffff0);
 				s_rc.FlushReg(m, gpr, rt); // the 128-bit source is read from memory
@@ -2610,14 +2556,12 @@ namespace {
 			// COP1 register ops (MFC1/MTC1/MOV.S/NEG.S/ABS.S only -- arithmetic and
 			// BC1/CFC1/CTC1 hand off to the interpreter).
 			case 0x11:
-				if (no_cop1 || !Cop1RegSupported(insn)) return false;
-				if (no_fpu_arith && Cop1ArithSupported(insn)) return false;
+				if (!Cop1RegSupported(insn)) return false;
 				EmitCop1Reg(m, gpr, insn);
 				return true;
 
 			// MMI (128-bit parallel integer) -> NEON, for the bit-exact subset.
 			case 0x1c:
-				if (no_mmi) return false;
 				// Pipeline-1 mult/div + HI1/LO1 moves: the funct encodings match
 				// the SPECIAL forms exactly, only HI/LO shift up by 8 bytes.
 				// MADD/MADDU (funct 0x00/0x01) are pipeline 0; MADD1/MADDU1
@@ -2626,15 +2570,12 @@ namespace {
 				{
 					case 0x10: case 0x11: case 0x12: case 0x13: // MFHI1/MTHI1/MFLO1/MTLO1
 					case 0x18: case 0x19: case 0x1a: case 0x1b: // MULT1/MULTU1/DIV1/DIVU1
-						if (no_muldiv) return false;
 						EmitMulDiv(m, gpr, funct, rs, rt, rd, 8);
 						return true;
 					case 0x00: case 0x01: // MADD/MADDU
-						if (no_muldiv) return false;
 						EmitMadd(m, gpr, funct == 0x01, rs, rt, rd, 0);
 						return true;
 					case 0x20: case 0x21: // MADD1/MADDU1
-						if (no_muldiv) return false;
 						EmitMadd(m, gpr, funct == 0x21, rs, rt, rd, 8);
 						return true;
 				}
@@ -2679,7 +2620,7 @@ namespace {
 				}
 				// QFSRV (quadword funnel shift by the SA register): interpreter
 				// implementation called inline (C.18).
-				if (IsQfsrv(insn) && !eeDiag().no_interpcall && !icDiag().no_qfsrv)
+				if (IsQfsrv(insn))
 				{
 					EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::MMI::QFSRV);
 					return true;
@@ -2704,22 +2645,20 @@ namespace {
 				// C.30-2: SPECIAL1/2 ALU ops emit natively via the microVU0
 				// single-op emitters; LRPS2_NO_EE_COP2MACRO=1 forces them back
 				// to the C.29-1 interp call.
-				if (rs >= 0x10 && !icDiag().no_cop2macro && EmitCop2Macro(m, gpr, insn))
+				if (rs >= 0x10 && EmitCop2Macro(m, gpr, insn))
 					return true;
 				// C.58: the COP2 transfers (QMFC2/CFC2/QMTC2/CTC2) are register
 				// moves once the VU0 syncs are out of the way -- no reason to pay
 				// an interpreter call, which also has to flush and then drop the
 				// whole GPR register cache.
-				if (!icDiag().no_cop2xfer && EmitCop2Transfer(m, gpr, insn))
+				if (EmitCop2Transfer(m, gpr, insn))
 					return true;
-				if (eeDiag().no_interpcall || icDiag().no_cop2) return false;
 				EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::COP2);
 				return true;
 
 			// interpreter implementation called inline (C.18). Top GT3 attract
 			// block-breaker (19.4M handoffs / 10500 frames).
 			case 0x2f:
-				if (eeDiag().no_interpcall || icDiag().no_cache) return false;
 				EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::CACHE);
 				return true;
 
@@ -2728,7 +2667,6 @@ namespace {
 			// identical in both execution modes; MTC0 Status/Config side effects
 			// live inside the op. BC0x (branches) and CO/TLB/ERET stay handoffs.
 			case 0x10:
-				if (eeDiag().no_interpcall || icDiag().no_cop0) return false;
 				if (rs == 0x00) { EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::COP0::MFC0); return true; }
 				if (rs == 0x04) { EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::COP0::MTC0); return true; }
 				// CO-format EI/DI (funct 0x38/0x39), C.43: both just conditionally
@@ -2749,7 +2687,6 @@ namespace {
 			// the interpreter's `if (addr & 3) return;`.
 			case 0x31:
 			{
-				if (no_cop1) return false;
 				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				Label skip;
 				m.Tst(w0, 3); m.B(&skip, ne);
@@ -2772,7 +2709,6 @@ namespace {
 			// SWC1 ft, off(base): write32(addr, fpr[ft].UL); misalign silently skipped.
 			case 0x39:
 			{
-				if (no_cop1) return false;
 				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				Label skip;
 				m.Tst(w0, 3); m.B(&skip, ne);
@@ -2806,14 +2742,6 @@ namespace {
 			// side effects -- it just throws the value away.
 			case 0x36: // LQC2
 			{
-				static const bool no_vuqmem = getenv("LRPS2_NO_EE_VUQMEM") != nullptr;
-				if (no_load) return false;
-				if (no_vuqmem)
-				{
-					if (eeDiag().no_interpcall) return false;
-					EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::LQC2);
-					return true;
-				}
 				static u128 s_lqc2_sink; // ft == 0: the read happens, the value doesn't land
 				m.Mov(x16, reinterpret_cast<uint64_t>(&vu0Sync)); m.Blr(x16);
 				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
@@ -2824,14 +2752,6 @@ namespace {
 			}
 			case 0x3e: // SQC2
 			{
-				static const bool no_vuqmem = getenv("LRPS2_NO_EE_VUQMEM") != nullptr;
-				if (no_store) return false;
-				if (no_vuqmem)
-				{
-					if (eeDiag().no_interpcall) return false;
-					EmitInterpOpCall(m, gpr, insn, &R5900::Interpreter::OpcodeImpl::SQC2);
-					return true;
-				}
 				m.Mov(x16, reinterpret_cast<uint64_t>(&vu0Sync)); m.Blr(x16);
 				{ const Register a = SrcGpr(m, gpr, rs, x0); m.Add(w0, a.W(), simm); }
 				m.Mov(x1, reinterpret_cast<uint64_t>(&vuRegs[0].VF[rt])); // VF[0] is the (0,0,0,1) constant
@@ -2988,7 +2908,7 @@ namespace {
 					return true;
 				case 0x10: case 0x11: case 0x12: case 0x13: // MFHI/MTHI/MFLO/MTLO
 				case 0x18: case 0x19: case 0x1a: case 0x1b: // MULT/MULTU/DIV/DIVU
-					return !eeDiag().no_muldiv;
+					return true;
 				case 0x20: case 0x22:                       // ADD/SUB (C.63, trap dropped)
 					return !NoEeAdd();
 				case 0x0f: return true;                     // SYNC (empty body)
@@ -2998,19 +2918,17 @@ namespace {
 			}
 		}
 		if (op == 0x11)
-			return !eeDiag().no_cop1 && Cop1RegSupported(insn) &&
-			       !(eeDiag().no_fpu_arith && Cop1ArithSupported(insn));
+			return Cop1RegSupported(insn);
 		if (op == 0x1c)
 		{
 			const u32 f = insn & 0x3f;
 			if ((f >= 0x10 && f <= 0x13) || (f >= 0x18 && f <= 0x1b) // pipeline-1 muldiv
 				|| f == 0x00 || f == 0x01 || f == 0x20 || f == 0x21) // MADD/MADDU(1)
-				return !eeDiag().no_mmi && !eeDiag().no_muldiv;
+				return true;
 			if (f == 0x04)             // PLZCW (C.63)
-				return !eeDiag().no_mmi && !NoEePlzcw();
-			return !eeDiag().no_mmi &&
-				(MmiSupported(insn) || MmiHiLoAction(insn) || IsPcpyh(insn) || // C.79
-				 (IsQfsrv(insn) && !eeDiag().no_interpcall && !icDiag().no_qfsrv));
+				return !NoEePlzcw();
+			return MmiSupported(insn) || MmiHiLoAction(insn) || IsPcpyh(insn) || // C.79
+				IsQfsrv(insn);
 		}
 		if (op == 0x01) // REGIMM: MTSAB/MTSAH only (branches handled elsewhere)
 		{
@@ -3020,15 +2938,14 @@ namespace {
 		if (op == 0x12) // COP2: all but BC2 (branches -> EmitBranch)
 		{
 			if (((insn >> 21) & 31) == 0x08) return false;
-			if (!icDiag().no_cop2xfer && Cop2XferSupported(insn)) return true; // C.58: native
-			return !eeDiag().no_interpcall && !icDiag().no_cop2;
+			if (Cop2XferSupported(insn)) return true; // C.58: native
+			return true;
 		}
-	if (op == 0x2f) return !eeDiag().no_interpcall && !icDiag().no_cache; // CACHE
+	if (op == 0x2f) return true; // CACHE
 		if (op == 0x10) // COP0: MFC0/MTC0 + CO-format EI/DI
 		{
 			const u32 crs = (insn >> 21) & 31, cf = insn & 0x3f;
-			return !eeDiag().no_interpcall && !icDiag().no_cop0 &&
-			       (crs == 0x00 || crs == 0x04 || (crs == 0x10 && (cf == 0x38 || cf == 0x39)));
+			return crs == 0x00 || crs == 0x04 || (crs == 0x10 && (cf == 0x38 || cf == 0x39));
 		}
 		switch (op)
 		{
@@ -3038,20 +2955,17 @@ namespace {
 				return true;
 			case 0x20: case 0x21: case 0x23: case 0x24: case 0x25: case 0x27:
 			case 0x22: case 0x26: case 0x1a: case 0x1b: // LWL/LWR/LDL/LDR
-				return !eeDiag().no_load;
+				return true;
 			case 0x2a: case 0x2e: case 0x2c: case 0x2d: // SWL/SWR/SDL/SDR
-				return !eeDiag().no_store;
-			case 0x1e: return !eeDiag().no_load && ((insn >> 16) & 31) != 0; // LQ (rt==0 -> interp)
-			case 0x36: case 0x3e: { // LQC2/SQC2: native (C.59), interp call when LRPS2_NO_EE_VUQMEM=1
-				static const bool nq = getenv("LRPS2_NO_EE_VUQMEM") != nullptr;
-				if (op == 0x36 ? eeDiag().no_load : eeDiag().no_store) return false;
-				return !nq || !eeDiag().no_interpcall; }
-			case 0x37: return !eeDiag().no_load && !eeDiag().no_ld64; // LD
+				return true;
+			case 0x1e: return ((insn >> 16) & 31) != 0; // LQ (rt==0 -> interp)
+			case 0x36: case 0x3e: return true; // LQC2/SQC2: native (C.59)
+			case 0x37: return true; // LD
 			case 0x28: case 0x29: case 0x2b:
-				return !eeDiag().no_store;
-			case 0x1f: return !eeDiag().no_store; // SQ
-			case 0x3f: return !eeDiag().no_store && !eeDiag().no_ld64; // SD
-			case 0x31: case 0x39: return !eeDiag().no_cop1; // LWC1/SWC1 are COP1 moves
+				return true;
+			case 0x1f: return true; // SQ
+			case 0x3f: return true; // SD
+			case 0x31: case 0x39: return true; // LWC1/SWC1 are COP1 moves
 			default: return false;
 		}
 	}
@@ -3121,7 +3035,6 @@ namespace {
 	// slot -> false (interpreter finishes the basic block).
 	bool EmitBranch(MacroAssembler& m, const Register& gpr, u32 bpc, u32 insn, int cyc_leading)
 	{
-		if (eeDiag().no_branch) return false; // TEMP diagnostic: force branches to interpreter
 		s_rc.pinned = 0; // new op: previous op's Register handles are dead
 		const u32 op = insn >> 26, rs = (insn >> 21) & 31, rt = (insn >> 16) & 31, funct = insn & 0x3f;
 		const int32_t simm = (int16_t)(insn & 0xffff);
