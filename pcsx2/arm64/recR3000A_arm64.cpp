@@ -148,17 +148,9 @@ namespace
 		}
 	};
 	IopRegCache s_irc;
-	inline bool IopRegCacheOn()
-	{
-		static int on = -1;
-		if (on < 0) on = getenv("LRPS2_NO_IOP_REGCACHE") ? 0 : 1;
-		return on != 0;
-	}
-
 	inline void LoadGpr(MacroAssembler& m, const Register& wd, const Register& gpr, u32 idx)
 	{
 		if (idx == 0) { m.Mov(wd, 0); return; }
-		if (!IopRegCacheOn()) { m.Ldr(wd, MemOperand(gpr, idx * 4)); return; }
 		int s = s_irc.host_of[idx];
 		if (s >= 0) { m.Mov(wd, IopCacheW(s)); return; }
 		m.Ldr(wd, MemOperand(gpr, idx * 4));
@@ -167,7 +159,7 @@ namespace
 	}
 	inline void StoreGpr(MacroAssembler& m, const Register& ws, const Register& gpr, u32 idx)
 	{
-		if (!IopRegCacheOn() || idx == 0)
+		if (idx == 0)
 		{
 			m.Str(ws, MemOperand(gpr, idx * 4));
 			return;
@@ -185,12 +177,6 @@ namespace
 	// for the next event test). Checked in BOTH EmitSimple and IsTranslatable
 	// so block building and delay-slot inlining stay consistent.
 	// LRPS2_NO_IOP_C68=1 pins all four back to the interpreter.
-	inline bool C68Enabled()
-	{
-		static const bool on = getenv("LRPS2_NO_IOP_C68") == nullptr;
-		return on;
-	}
-
 	// Translate one side-effect-light instruction (ALU + aligned load/store) to
 	// native AArch64. Returns false (emitting nothing) for control flow and
 	// anything not covered. gpr (x19) is callee-saved so it survives mem helpers.
@@ -213,9 +199,9 @@ namespace
 					case 0x04: if (rd) { LoadGpr(m, w0, gpr, rt); LoadGpr(m, w1, gpr, rs); m.Lsl(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
 					case 0x06: if (rd) { LoadGpr(m, w0, gpr, rt); LoadGpr(m, w1, gpr, rs); m.Lsr(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
 					case 0x07: if (rd) { LoadGpr(m, w0, gpr, rt); LoadGpr(m, w1, gpr, rs); m.Asr(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
-					case 0x20: if (!C68Enabled()) return false; [[fallthrough]]; // ADD == ADDU (C.68)
+					case 0x20: [[fallthrough]]; // ADD == ADDU (C.68)
 					case 0x21: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Add(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
-					case 0x22: if (!C68Enabled()) return false; [[fallthrough]]; // SUB == SUBU (C.68)
+					case 0x22: [[fallthrough]]; // SUB == SUBU (C.68)
 					case 0x23: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Sub(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
 					case 0x24: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.And(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
 					case 0x25: if (rd) { LoadGpr(m, w0, gpr, rs); LoadGpr(m, w1, gpr, rt); m.Orr(w0, w0, w1); StoreGpr(m, w0, gpr, rd); } return true;
@@ -269,7 +255,7 @@ namespace
 					}
 					default: return false;
 				}
-			case 0x08: if (!C68Enabled()) return false; [[fallthrough]]; // ADDI == ADDIU (C.68)
+			case 0x08: [[fallthrough]]; // ADDI == ADDIU (C.68)
 			case 0x09: if (rt) { LoadGpr(m, w0, gpr, rs); m.Add(w0, w0, simm); StoreGpr(m, w0, gpr, rt); } return true;
 			case 0x0a: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, (u32)simm); m.Cmp(w0, w1); m.Cset(w0, lt); StoreGpr(m, w0, gpr, rt); } return true;
 			case 0x0b: if (rt) { LoadGpr(m, w0, gpr, rs); m.Mov(w1, (u32)simm); m.Cmp(w0, w1); m.Cset(w0, lo); StoreGpr(m, w0, gpr, rt); } return true;
@@ -293,8 +279,7 @@ namespace
 				// stable for the process lifetime, so it embeds as a code
 				// constant. The read happens even for rt==0 (IO side effects
 				// on the slow path), matching the interpreter.
-				static const bool iop_fastmem = getenv("LRPS2_NO_IOP_FASTMEM") == nullptr;
-				const bool fast = iop_fastmem && iopMem;
+				const bool fast = iopMem != nullptr;
 				Label slow, done;
 				if (fast)
 				{
@@ -421,7 +406,7 @@ namespace
 				// C.68: RFE. psxCOP0 dispatches on the rs field alone (psxCP0[16]
 				// = psxRFE for any funct), so match the same way:
 				// Status = (Status & ~0xf) | ((Status & 0x3c) >> 2), Status = CP0.r[12].
-				if (rs_field == 0x10 && C68Enabled())
+				if (rs_field == 0x10)
 				{
 					m.Ldr(w0, MemOperand(gpr, 136 + 12 * 4));
 					m.And(w1, w0, 0x3c);
@@ -451,7 +436,7 @@ namespace
 				case 0x10: case 0x11: case 0x12: case 0x13: // C.33 HI/LO moves
 				case 0x18: case 0x19: case 0x1a: case 0x1b: // C.33 mult/div
 					return true;
-				case 0x20: case 0x22: return C68Enabled(); // C.68 ADD/SUB (no trap)
+				case 0x20: case 0x22: return true; // C.68 ADD/SUB (no trap)
 				default: return false;
 			}
 		}
@@ -459,12 +444,12 @@ namespace
 		{
 			const u32 rs_field = (insn >> 21) & 31;
 			if (rs_field == 0x10)
-				return C68Enabled();
+				return true;
 			return rs_field == 0x00 || rs_field == 0x02 || rs_field == 0x04 || rs_field == 0x06;
 		}
 		switch (op)
 		{
-			case 0x08: return C68Enabled(); // C.68 ADDI (no trap)
+			case 0x08: return true; // C.68 ADDI (no trap)
 			case 0x09: case 0x0a: case 0x0b: case 0x0c: case 0x0d: case 0x0e: case 0x0f:
 			case 0x20: case 0x21: case 0x23: case 0x24: case 0x25:
 			case 0x28: case 0x29: case 0x2b:
@@ -590,26 +575,16 @@ namespace
 		// taken branch; mirroring that made iopEventTest 5.9% of CPU time).
 		// The slice stays bounded by iopCycleEE, and the EE side's
 		// _cpuEventTest_Shared still calls iopEventTest unconditionally.
-		// LRPS2_NO_IOP_EVTGATE=1 restores the every-branch behaviour.
-		static const bool iop_evt_gate = getenv("LRPS2_NO_IOP_EVTGATE") == nullptr;
 		const auto EmitIopEventTest = [&m]()
 		{
-			if (iop_evt_gate)
-			{
-				Label skip;
-				m.Ldr(w0, RegsField(&psxRegs.cycle));
-				m.Ldr(w1, RegsField(&psxRegs.iopNextEventCycle));
-				m.Subs(w0, w0, w1); // (s32)(cycle - iopNextEventCycle)
-				m.B(&skip, mi);     // not due yet
-				m.Mov(x16, reinterpret_cast<uint64_t>(&iopEventTest));
-				m.Blr(x16);
-				m.Bind(&skip);
-			}
-			else
-			{
-				m.Mov(x16, reinterpret_cast<uint64_t>(&iopEventTest));
-				m.Blr(x16);
-			}
+			Label skip;
+			m.Ldr(w0, RegsField(&psxRegs.cycle));
+			m.Ldr(w1, RegsField(&psxRegs.iopNextEventCycle));
+			m.Subs(w0, w0, w1); // (s32)(cycle - iopNextEventCycle)
+			m.B(&skip, mi);     // not due yet
+			m.Mov(x16, reinterpret_cast<uint64_t>(&iopEventTest));
+			m.Blr(x16);
+			m.Bind(&skip);
 		};
 
 		// C.47: the IOP kernel idle loop is a block that is nothing but `j <self>`
@@ -622,9 +597,7 @@ namespace
 		// them in one step. cycle and iopCycleEE land on exactly the values the
 		// spin would have produced when the event test next fires, so the
 		// emulated timing is unchanged -- this is not a speedhack.
-		// LRPS2_NO_IOP_IDLE=1 restores the per-iteration spin.
-		static const bool iop_idle_skip = getenv("LRPS2_NO_IOP_IDLE") == nullptr;
-		if (iop_idle_skip && op == 0x02 && n_leading == 0 && ds == 0 && tconst == bpc)
+		if (op == 0x02 && n_leading == 0 && ds == 0 && tconst == bpc)
 		{
 			// k = EE cycles charged per iteration = (ICFG & 8 ? 9 : 8) * 2 insns
 			m.Mov(x10, reinterpret_cast<uint64_t>(&psxHu32(HW_ICFG)));
@@ -758,8 +731,7 @@ namespace
 		// the EE's C.44 cap-chain: end the block cleanly at p and chain, instead
 		// of handing a fully-translatable tail to the interpreter (LW/ADDIU
 		// sitting at position 64 were the residual IOP handoff breakers).
-		static const bool cap_chain = getenv("LRPS2_NO_IOP_CAP_CHAIN") == nullptr;
-		if (!done && n == kMaxInsns && cap_chain)
+		if (!done && n == kMaxInsns)
 		{
 			masm.Mov(w0, p);
 			StorePC(masm, w0);
@@ -920,9 +892,7 @@ static void recClearIOP(u32 addr, u32 size)
 static s32 recExecuteBlock(s32 eeCycles)
 {
 	// TEMP diagnostic toggle: LRPS2_NO_IOPREC=1 forces the IOP interpreter.
-	static int no_ioprec = -1;
-	if (no_ioprec < 0) no_ioprec = getenv("LRPS2_NO_IOPREC") ? 1 : 0;
-	if (!s_ok || no_ioprec)
+	if (!s_ok)
 		return psxInt.ExecuteBlock(eeCycles);
 
 	psxRegs.iopBreak   = 0;
