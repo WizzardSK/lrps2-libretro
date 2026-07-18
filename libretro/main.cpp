@@ -632,6 +632,10 @@ static void check_variables(bool first_run)
 #if 0
 			// TODO: ATM it crashes when changed on-the-fly, re-enable when fixed
 			// also remove "(Restart)" from the core option label
+			//
+			// Likely fixed by the set_image retract in libretro_context_destroy
+			// (the reinit used to release a view onto a pool texture CloseGS had
+			// already destroyed) - retest in a frontend before re-enabling.
 			else if (setting_upscale_multiplier != upscale_multiplier_prev)
 			{
 				retro_system_av_info av_info;
@@ -1692,6 +1696,22 @@ static void libretro_context_reset(void)
 static void libretro_context_destroy(void)
 {
 	cpu_thread_pause();
+
+#ifdef ENABLE_VULKAN
+	/* The frontend keeps replaying the last set_image (cached-frame
+	 * replay: pause, menu background, its own context-teardown blit) and
+	 * releases that view during the reinit that follows this callback.
+	 * The registered image points at a pool texture that CloseGS() below
+	 * destroys, so retract it and drain the frontend's GPU work first -
+	 * otherwise the reinit samples/releases a dangling VkImageView
+	 * (crashes observed when SET_SYSTEM_AV_INFO retriggers video init,
+	 * e.g. the disabled on-the-fly upscale switch). */
+	if (hw_render.context_type == RETRO_HW_CONTEXT_VULKAN && vulkan)
+	{
+		vulkan->set_image(vulkan->handle, nullptr, 0, nullptr, vulkan->queue_index);
+		vulkan->wait_sync_index(vulkan->handle);
+	}
+#endif
 
 	if (freeze())
 		defrost_requested = true;
