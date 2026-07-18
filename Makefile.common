@@ -1,5 +1,6 @@
 SOURCES_CXX :=
 SOURCES_C   :=
+SOURCES_CC  :=
 SOURCES_ASM :=
 
 # ----------------------------------------------------------------------------
@@ -89,6 +90,20 @@ ifeq ($(FRONTEND_SUPPORTS_RGB565), 1)
 	FLAGS += -DFRONTEND_SUPPORTS_RGB565
 endif
 
+# ----------------------------------------------------------------------------
+# AArch64 (arm64) recompiler backend (PR #143)
+# ----------------------------------------------------------------------------
+# VIXL is the AArch64 code emitter (aarch64 target only). The arm64 recompiler
+# TUs include its headers, so its include dir and the two VIXL config defines
+# must be visible to the whole core, not just the VIXL objects -- cmake sets
+# them PUBLIC on the vixl target for exactly this reason.
+ifeq ($(IS_ARM64), 1)
+	INCFLAGS += -I$(DEPS_DIR)/vixl/src
+	FLAGS    += -D_ARCH_64=1 \
+	            -DVIXL_INCLUDE_TARGET_AARCH64 \
+	            -DVIXL_CODE_BUFFER_MMAP
+endif
+
 CFLAGS   += $(FLAGS)
 CXXFLAGS += $(FLAGS)
 
@@ -131,8 +146,14 @@ SOURCES_CXX += \
 	$(COMMON_DIR)/SettingsWrapper.cpp \
 	$(COMMON_DIR)/StringUtil.cpp \
 	$(COMMON_DIR)/TextureDecompress.cpp \
-	$(COMMON_DIR)/Threads.cpp \
-	\
+	$(COMMON_DIR)/Threads.cpp
+
+# common/emitter is the x86-only JIT code emitter. On aarch64 the recompilers
+# that use it are gated out (VIXL is the arm64 emitter instead), so exclude it
+# -- matches the `if(_M_X86)` guard in common/CMakeLists.txt. FastJmp.cpp above
+# stays on both (it has an __aarch64__ path).
+ifneq ($(IS_ARM64), 1)
+SOURCES_CXX += \
 	$(COMMON_DIR)/emitter/avx.cpp \
 	$(COMMON_DIR)/emitter/groups.cpp \
 	$(COMMON_DIR)/emitter/jmp.cpp \
@@ -141,6 +162,7 @@ SOURCES_CXX += \
 	$(COMMON_DIR)/emitter/movs.cpp \
 	$(COMMON_DIR)/emitter/simd.cpp \
 	$(COMMON_DIR)/emitter/x86emitter.cpp
+endif
 
 # Win32 variant of FastJmp uses a dedicated GAS source for MinGW
 # (matches the FastJmp.asm MASM source used for the MSVC build).
@@ -283,6 +305,24 @@ SOURCES_CXX += \
 	$(LRPS2_DIR)/SPU2/spu2freeze.cpp \
 	$(LRPS2_DIR)/SPU2/spu2sys.cpp
 
+# pcsx2 CPU recompilers. x86_64 uses the x86 dynarec; aarch64 uses the native
+# arm64 EE/IOP/VU recompilers + NEON VIF unpack transplanted from ARMSX2 (the
+# x86 sources have no arm64 backend). CpuState.cpp only defines the EE/IOP/FPU
+# register state the interpreter needs too, so it is built on both. Mirrors the
+# `if(NOT _M_X86)` source swap in pcsx2/CMakeLists.txt.
+ifeq ($(IS_ARM64), 1)
+SOURCES_CXX += \
+	$(LRPS2_DIR)/x86/CpuState.cpp \
+	$(LRPS2_DIR)/arm64/recR3000A_arm64.cpp \
+	$(LRPS2_DIR)/arm64/recR5900_arm64.cpp \
+	$(LRPS2_DIR)/arm64/recVU1_arm64.cpp \
+	$(LRPS2_DIR)/arm64/aVU.cpp \
+	$(LRPS2_DIR)/arm64/AsmHelpers.cpp \
+	$(LRPS2_DIR)/arm64/Vif_UnpackNEON.cpp \
+	$(LRPS2_DIR)/arm64/Vif_Dynarec_arm64.cpp \
+	$(LRPS2_DIR)/arm64/Profiler_arm64.cpp \
+	$(LRPS2_DIR)/arm64/SyncStats_arm64.cpp
+else
 # pcsx2/x86 (recompilers)
 SOURCES_CXX += \
 	$(LRPS2_DIR)/x86/CpuState.cpp \
@@ -311,6 +351,7 @@ SOURCES_CXX += \
 	$(LRPS2_DIR)/x86/ix86-32/iR5900Shift.cpp \
 	$(LRPS2_DIR)/x86/ix86-32/iR5900Templates.cpp \
 	$(LRPS2_DIR)/x86/ix86-32/recVTLB.cpp
+endif
 
 # ============================================================================
 # pcsx2/GS - common renderer code
@@ -345,18 +386,26 @@ SOURCES_CXX += \
 	$(LRPS2_DIR)/GS/Renderers/HW/GSTextureReplacementLoaders.cpp \
 	$(LRPS2_DIR)/GS/Renderers/HW/GSTextureReplacements.cpp
 
-# pcsx2/GS/Renderers/SW - software renderer (always on)
+# pcsx2/GS/Renderers/SW - software renderer. The device + texture cache/texture
+# build everywhere; the scanline JIT (GS*CodeGenerator) and rasterizer are x86
+# xbyak codegen with no arm64 backend, so they are dropped on aarch64 (the HW
+# renderer / paraLLEl-GS cover it; GS.cpp gates the SW path on ARCH_ARM64).
+# Mirrors the `list(REMOVE_ITEM ... NOT _M_X86)` in pcsx2/CMakeLists.txt.
 SOURCES_CXX += \
 	$(LRPS2_DIR)/GS/Renderers/SW/GSDeviceSW.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSTextureCacheSW.cpp \
+	$(LRPS2_DIR)/GS/Renderers/SW/GSTextureSW.cpp
+
+ifneq ($(IS_ARM64), 1)
+SOURCES_CXX += \
 	$(LRPS2_DIR)/GS/Renderers/SW/GSDrawScanline.cpp \
 	$(LRPS2_DIR)/GS/Renderers/SW/GSDrawScanlineCodeGenerator.all.cpp \
 	$(LRPS2_DIR)/GS/Renderers/SW/GSDrawScanlineCodeGenerator.cpp \
 	$(LRPS2_DIR)/GS/Renderers/SW/GSRasterizer.cpp \
 	$(LRPS2_DIR)/GS/Renderers/SW/GSRendererSW.cpp \
 	$(LRPS2_DIR)/GS/Renderers/SW/GSSetupPrimCodeGenerator.all.cpp \
-	$(LRPS2_DIR)/GS/Renderers/SW/GSSetupPrimCodeGenerator.cpp \
-	$(LRPS2_DIR)/GS/Renderers/SW/GSTextureCacheSW.cpp \
-	$(LRPS2_DIR)/GS/Renderers/SW/GSTextureSW.cpp
+	$(LRPS2_DIR)/GS/Renderers/SW/GSSetupPrimCodeGenerator.cpp
+endif
 
 # pcsx2/GS/Renderers/OpenGL
 ifeq ($(HAVE_OPENGL), 1)
@@ -604,11 +653,37 @@ SOURCES_C += \
 	$(DEPS_DIR)/chdr/libchdr/src/libchdr_flac.c \
 	$(DEPS_DIR)/chdr/libchdr/src/libchdr_huffman.c
 
-# cpuinfo + clog
+# cpuinfo + clog. Arch- and OS-specific backends mirror the selection in
+# 3rdparty/cpuinfo/CMakeLists.txt. The x86 path keeps the existing Windows init
+# (the static Makefile's historical target); the arm64 path adds the ARM core
+# plus the Mach (Apple) or Linux backend so Apple Silicon / Linux aarch64 builds
+# resolve cpuinfo_initialize().
 SOURCES_C += \
 	$(DEPS_DIR)/cpuinfo/src/api.c \
 	$(DEPS_DIR)/cpuinfo/src/cache.c \
 	$(DEPS_DIR)/cpuinfo/src/init.c \
+	$(DEPS_DIR)/cpuinfo/deps/clog/src/clog.c
+
+ifeq ($(IS_ARM64), 1)
+SOURCES_C += \
+	$(DEPS_DIR)/cpuinfo/src/arm/uarch.c \
+	$(DEPS_DIR)/cpuinfo/src/arm/cache.c
+ifneq (,$(findstring Darwin,$(shell uname -s)))
+SOURCES_C += \
+	$(DEPS_DIR)/cpuinfo/src/arm/mach/init.c \
+	$(DEPS_DIR)/cpuinfo/src/mach/topology.c
+else
+SOURCES_C += \
+	$(DEPS_DIR)/cpuinfo/src/arm/linux/init.c \
+	$(DEPS_DIR)/cpuinfo/src/arm/linux/cpuinfo.c \
+	$(DEPS_DIR)/cpuinfo/src/arm/linux/clusters.c \
+	$(DEPS_DIR)/cpuinfo/src/arm/linux/chipset.c \
+	$(DEPS_DIR)/cpuinfo/src/arm/linux/midr.c \
+	$(DEPS_DIR)/cpuinfo/src/arm/linux/hwcap.c \
+	$(DEPS_DIR)/cpuinfo/src/arm/linux/aarch64-isa.c
+endif
+else
+SOURCES_C += \
 	$(DEPS_DIR)/cpuinfo/src/x86/cache/descriptor.c \
 	$(DEPS_DIR)/cpuinfo/src/x86/cache/deterministic.c \
 	$(DEPS_DIR)/cpuinfo/src/x86/cache/init.c \
@@ -619,8 +694,21 @@ SOURCES_C += \
 	$(DEPS_DIR)/cpuinfo/src/x86/topology.c \
 	$(DEPS_DIR)/cpuinfo/src/x86/uarch.c \
 	$(DEPS_DIR)/cpuinfo/src/x86/vendor.c \
-	$(DEPS_DIR)/cpuinfo/src/x86/windows/init.c \
-	$(DEPS_DIR)/cpuinfo/deps/clog/src/clog.c
+	$(DEPS_DIR)/cpuinfo/src/x86/windows/init.c
+endif
+
+# ----------------------------------------------------------------------------
+# VIXL - vendored aarch64-only subset (3rdparty/vixl); the AArch64 code emitter
+# backing the arm64 recompiler. Built only on aarch64. Sources are .cc, so they
+# live in SOURCES_CC; -w is applied to their objects in the top Makefile (third
+# party -- matches cmake's `-w` on the vixl target). Globbed to match cmake's
+# file(GLOB) so a VIXL bump doesn't need this list touched.
+# ----------------------------------------------------------------------------
+ifeq ($(IS_ARM64), 1)
+SOURCES_CC += \
+	$(wildcard $(DEPS_DIR)/vixl/src/*.cc) \
+	$(wildcard $(DEPS_DIR)/vixl/src/aarch64/*.cc)
+endif
 
 # rapidyaml (rolls c4core into the same library, matching ryml.vcxproj)
 SOURCES_CXX += \

@@ -33,6 +33,9 @@ ifeq ($(platform),)
       arch     = intel
       ifeq ($(shell uname -p),powerpc)
          arch = ppc
+      else ifneq (,$(findstring arm64,$(shell uname -m)))
+         # Apple Silicon: default to the native arm64 recompiler backend.
+         arch = arm64
       endif
    else ifneq ($(findstring MINGW,$(shell uname -s)),)
       platform = win
@@ -495,6 +498,36 @@ else
    endif
 endif
 
+# ---------------------------------------------------------------------------
+# Target-architecture selector for the CPU recompiler backend.
+#
+# PR #143 added native AArch64 (arm64) EE/IOP/VU recompilers plus the VIXL code
+# emitter, but only wired them into the cmake build. Mirror that here for the
+# static Makefile so modern Apple Silicon Macs (and Linux/iOS/tvOS arm64) use
+# the arm64 dynarec instead of the x86 one. Keyed off the *target* arch (like
+# cmake's _M_X86 vs aarch64 gate), not the OS.
+#
+# On macOS with no explicit arch, fall back to the host arch so a bare `make`
+# on Apple Silicon targets arm64 (clang already defaults its codegen to arm64
+# there; without this the x86 recompiler sources would be selected and fail).
+ifeq ($(platform), osx)
+   ifeq ($(arch),)
+      arch := $(shell uname -m)
+   endif
+endif
+
+ifneq (,$(filter arm64 aarch64,$(arch)))
+   IS_ARM64 = 1
+endif
+ifneq (,$(filter ios-arm64 tvos-arm64 rpi4_64,$(platform)))
+   IS_ARM64 = 1
+endif
+ifneq (,$(findstring unix,$(platform)))
+   ifneq (,$(filter aarch64 arm64,$(shell uname -m)))
+      IS_ARM64 = 1
+   endif
+endif
+
 include Makefile.common
 
 # The multi-ISA block below uses $(eval) to generate explicit per-tier object
@@ -679,8 +712,14 @@ ifeq ($(NO_GCC),1)
    WARNINGS :=
 endif
 
-OBJECTS := $(SOURCES_CXX:.cpp=.o) $(SOURCES_C:.c=.o) $(SOURCES_ASM:.S=.o) $(MULTI_ISA_OBJECTS)
-DEPS    := $(SOURCES_CXX:.cpp=.d) $(SOURCES_C:.c=.d)
+OBJECTS := $(SOURCES_CXX:.cpp=.o) $(SOURCES_CC:.cc=.o) $(SOURCES_C:.c=.o) $(SOURCES_ASM:.S=.o) $(MULTI_ISA_OBJECTS)
+DEPS    := $(SOURCES_CXX:.cpp=.d) $(SOURCES_CC:.cc=.d) $(SOURCES_C:.c=.d)
+
+# VIXL (SOURCES_CC) is third-party; silence its warnings for those objects only
+# (matches cmake's -w on the vixl target) without loosening warnings elsewhere.
+ifeq ($(IS_ARM64), 1)
+   $(SOURCES_CC:.cc=.o): CXXFLAGS += -w
+endif
 
 all: $(TARGET)
 
