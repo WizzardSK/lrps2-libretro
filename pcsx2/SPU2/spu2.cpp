@@ -23,39 +23,6 @@ static bool s_psxmode = false;
 
 u32 lClocks = 0;
 
-// TEMP diagnostic (LRPS2_SPU_SYNC_STATS=1): see spu2.h. Dumped at exit and
-// every ~2M sample ticks (~43 s of emulated audio).
-SpuSyncStats g_spuSync;
-const bool g_spuSyncOn = getenv("LRPS2_SPU_SYNC_STATS") != nullptr;
-
-void SpuSyncStats::Dump(const char* tag) const
-{
-	const double sec = ticks / 48000.0; // one stereo sample pair per tick
-	if (!sec)
-		return;
-	fprintf(stderr, "[spu-sync %s] audio %.1fs | reads %llu (%.0f/s) writes %llu (%.0f/s) | "
-		"dmaR %llu (%llu w) dmaW %llu (%llu w, %.0f/s) | irqs %llu | "
-		"TimeUpdate %llu | armed ticks %llu/%llu (%.2f%%)\n",
-		tag, sec, reads, reads / sec, writes, writes / sec,
-		dmar, dmar_words, dmaw, dmaw_words, dmaw / sec, irqs,
-		timeupd, ticks_armed, ticks, ticks ? 100.0 * ticks_armed / ticks : 0.0);
-	fprintf(stderr, "[spu-sync %s] irq sites: mixer %llu reverb %llu input %llu dma %llu reg %llu\n",
-		tag, irq_mix, irq_rvb, irq_inp, irq_dma, irq_reg);
-	// Top polled registers (read side = the drain-forcing accesses).
-	struct E { unsigned r; unsigned long long n; } top[12] = {};
-	for (unsigned r = 0; r < 0x400; r++)
-	{
-		unsigned long long n = rd_reg[r];
-		for (int i = 0; i < 12; i++)
-			if (n > top[i].n) { for (int j = 11; j > i; j--) top[j] = top[j - 1]; top[i] = { r, n }; break; }
-	}
-	fprintf(stderr, "[spu-sync %s] top reads:", tag);
-	for (int i = 0; i < 12 && top[i].n; i++)
-		fprintf(stderr, " %03x:%llu", top[i].r << 1, top[i].n); // raw reg offset (core1 = +0x400)
-	fprintf(stderr, "\n");
-}
-
-namespace { struct SpuSyncDumper { ~SpuSyncDumper() { if (g_spuSyncOn) g_spuSync.Dump("exit"); } } s_spuSyncDumper; }
 
 // --------------------------------------------------------------------------------------
 //  DMA 4/7 Callbacks from Core Emulator
@@ -99,8 +66,6 @@ u16 SPU2read(u32 rmem)
 	const u32 mem = rmem & 0xFFFF;
 	u32 omem = mem;
 
-	if (g_spuSyncOn) { g_spuSync.reads++; g_spuSync.rd_reg[(rmem & 0x7ff) >> 1]++; }
-
 	if (mem & 0x400)
 	{
 		omem ^= 0x400;
@@ -113,7 +78,7 @@ u16 SPU2read(u32 rmem)
 		for (int i = 0; i < 2; i++)
 		{
 			if (Cores[i].IRQEnable && (Cores[i].IRQA == Cores[core].ActiveTSA))
-				{ if (g_spuSyncOn) g_spuSync.irq_reg++; has_to_call_irq[i] = true; }
+				{ has_to_call_irq[i] = true; }
 		}
 		ret = Cores[core].DmaRead();
 	}
@@ -137,8 +102,6 @@ void SPU2write(u32 rmem, u16 value)
 	// Note: Reverb/Effects are very sensitive to having precise update timings.
 	// If the SPU2 isn't in in sync with the IOP, samples can end up playing at rather
 	// incorrect pitches and loop lengths.
-
-	if (g_spuSyncOn) g_spuSync.writes++;
 
 	TimeUpdate(psxRegs.cycle);
 

@@ -48,28 +48,3 @@ extern RegWriteHandler* const tbl_reg_writes[0x401];
 
 extern void TimeUpdate(u32 cClocks);
 
-// TEMP diagnostic (LRPS2_SPU_SYNC_STATS=1): counts the operations that would be
-// synchronization points for a prospective SPU worker thread. Reads force a
-// drain (wait for the worker to catch up), writes/DMA can be queued, and an
-// armed IRQ forces fully synchronous mixing (an IRQA crossing discovered late
-// would deliver the IOP interrupt at the wrong emulated time -- the C.8 bug
-// class). The verdict this collects: reads/sec (drain rate), the armed-tick
-// fraction (how much of the run must stay synchronous), and which registers
-// the game actually polls.
-struct SpuSyncStats
-{
-	unsigned long long reads = 0, writes = 0, dmar = 0, dmaw = 0,
-	                   dmar_words = 0, dmaw_words = 0, irqs = 0,
-	                   timeupd = 0, ticks = 0, ticks_armed = 0,
-	                   // IRQA-match sites (what raised has_to_call_irq*): mixer
-	                   // voice reads, reverb work area, ADMA input reads, DMA
-	                   // transfers, direct register-path TSA checks. The mixer/
-	                   // reverb/input ones are the async-mixing killers; the DMA/
-	                   // register ones happen on the EE thread synchronously
-	                   // regardless of a worker.
-	                   irq_mix = 0, irq_rvb = 0, irq_inp = 0, irq_dma = 0, irq_reg = 0;
-	unsigned long long rd_reg[0x400] = {}; // (rmem & 0x7ff) >> 1
-	void Dump(const char* tag) const;
-};
-extern SpuSyncStats g_spuSync;
-extern const bool g_spuSyncOn;

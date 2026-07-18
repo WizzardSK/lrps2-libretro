@@ -109,7 +109,7 @@ StereoOut32 V_Core::ReadInput()
 	if (has_irq_armed)
 		for (int i = 0; i < 2; i++)
 			if (Cores[i].IRQEnable && (0x2000 + (Index << 10) + ReadIndex) == (Cores[i].IRQA & 0xfffffdff))
-				{ if (g_spuSyncOn) g_spuSync.irq_inp++; has_to_call_irq[i] = true; }
+				{ has_to_call_irq[i] = true; }
 
 	// PlayMode & 2 is Bypass Mode, so it doesn't go through the SPU
 	if ((Index == 1) || !(Index == 0 && (PlayMode & 2) != 0))

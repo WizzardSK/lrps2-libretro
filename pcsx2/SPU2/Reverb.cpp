@@ -16,7 +16,6 @@
 #include <array>
 
 #include "Global.h"
-#include "spu2.h" // LRPS2_SPU_SYNC_STATS counters
 #include "../GS/GSVector.h"
 
 StereoOut32 V_Core::DoReverb(StereoOut32 Input)
@@ -97,7 +96,7 @@ StereoOut32 V_Core::DoReverb(StereoOut32 Input)
 
 				(Cores[i].IRQA == apf1_dst) || (Cores[i].IRQA == apf1_src) ||
 				(Cores[i].IRQA == apf2_dst) || (Cores[i].IRQA == apf2_src))
-				{ if (g_spuSyncOn) g_spuSync.irq_rvb++; has_to_call_irq[i] = true; }
+				{ has_to_call_irq[i] = true; }
 		}
 	}
 
