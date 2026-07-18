@@ -24,7 +24,6 @@
 
 #include "../Config.h"
 
-// #define IPU_TRACE 1 // TEMP: trace IPU command/worker progress
 
 // the BP doesn't advance and returns -1 if there is no data to be read
 alignas(16) tIPU_cmd ipu_cmd;
@@ -93,10 +92,6 @@ void tIPU_cmd::clear()
 
 __fi void IPUProcessInterrupt(void)
 {
-#ifdef IPU_TRACE
-	{ static u64 c=0; if(((++c)&0x3ff)==0) fprintf(stderr,"[ipu] proc#%llu busy=%u cmd=0x%x BP=%u IFC=%u\n",
-		(unsigned long long)c, ipuRegs.ctrl.BUSY, ipu_cmd.current, g_BP.BP, g_BP.IFC); }
-#endif
 	if (ipuRegs.ctrl.BUSY)
 		IPUWorker();
 }
@@ -331,9 +326,6 @@ static void ipuSETTH(u32 val)
 // The actual decoding will be handled by IPUworker.
 __fi void IPUCMD_WRITE(u32 val)
 {
-#ifdef IPU_TRACE
-	fprintf(stderr,"[ipu] CMD_WRITE val=0x%08x cmd=%u\n", val, (val>>28)&0xf);
-#endif
 	ipuRegs.ctrl.ECD = 0;
 	ipuRegs.ctrl.SCD = 0;
 	ipu_cmd.clear();

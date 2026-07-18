@@ -34,7 +34,6 @@
 #include <unistd.h>
 #include <sys/mman.h>
 
-// #define EE_PC_SAMPLE 1 // TEMP: EE PC histogram diagnostic (disables block-linking when on)
 
 #include "aarch64/macro-assembler-aarch64.h"
 
@@ -2687,17 +2686,6 @@ namespace {
 	// chain, so the final `ret` returns to the C++ caller.
 	void EmitChainEpilogue(MacroAssembler& m)
 	{
-#ifdef EE_PC_SAMPLE
-		m.Ldp(x19, x20, MemOperand(sp, 0));
-		m.Ldp(x21, x30, MemOperand(sp, 16));
-		m.Ldp(x22, x23, MemOperand(sp, 32));
-		m.Ldp(x24, x25, MemOperand(sp, 48));
-		m.Ldp(x26, x27, MemOperand(sp, 64));
-		m.Ldr(x28, MemOperand(sp, 80));
-		m.Add(sp, sp, 96);
-		m.Ret(); // TEMP: disable block-linking so every block returns to the dispatcher (PC sampling)
-		return;
-#endif
 		// C.40: try to chain FIRST, with the frame (and x19) still live --
 		// the successor's chain entry skips its prologue, so back-to-back
 		// blocks pay no frame pop/push or x19 rematerialization.
@@ -2756,11 +2744,6 @@ namespace {
 	void EmitKnownExit(MacroAssembler& m, u32 target_pc, uint64_t evt, bool evt_gate)
 	{
 		const u32 np = Norm(target_pc);
-#ifdef EE_PC_SAMPLE
-		if (evt) { m.Mov(x16, evt); m.Blr(x16); }
-		EmitChainEpilogue(m);
-		return;
-#endif
 		// An ungated event test runs unconditionally, so pc is never known; a
 		// target outside RAM has no LUT slot. Both fall back to the generic tail.
 		if (!s_lut || !InRam(np) || (evt && !evt_gate))
@@ -3689,27 +3672,5 @@ extern "C" bool eeFastmemFault_arm64(uintptr_t code_address)
 extern "C" void eeJitRunBlock_arm64(void)
 {
 
-#ifdef EE_PC_SAMPLE
-	// TEMP diagnostic: sample EE PC 1/256 dispatches, dump the hottest 14 PCs
-	// every ~3M samples to find the loop the game spins on while stalled.
-	{
-		static std::unordered_map<u32, u64> hist;
-		static u64 samples = 0;
-		if (samples == 0) Console.WriteLn("[ee-sample] dispatch hook live");
-		{
-			hist[cpuRegs.pc & 0x1fffffff]++;
-			if (++samples % 20000 == 0)
-			{
-				std::vector<std::pair<u32, u64>> v(hist.begin(), hist.end());
-				std::partial_sort(v.begin(), v.begin() + (v.size() < 14 ? v.size() : 14), v.end(),
-					[](auto& a, auto& b) { return a.second > b.second; });
-				Console.WriteLn("=== EE PC histogram (uniq=%zu) ===", v.size());
-				for (size_t i = 0; i < v.size() && i < 14; i++)
-					Console.WriteLn("  pc=0x%08x  %llu", v[i].first, (unsigned long long)v[i].second);
-				hist.clear();
-			}
-		}
-	}
-#endif
 	BlockForPC(cpuRegs.pc)();
 }
