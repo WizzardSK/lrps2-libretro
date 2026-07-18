@@ -8,8 +8,6 @@
 // as lrps2's x86 newVif_Dynarec.cpp -- the two trees never diverged here --
 // only the emitter is NEON and the code cache is a plain RWX mmap per VIF
 // index (lrps2's RecompiledCodeReserve infra stays x86-only).
-// LRPS2_NO_VIF_DYNAREC=1 routes unpacks to the C reference path (pre-C.19
-// behaviour) for A/B testing.
 
 #include "arm64/Vif_UnpackNEON.h"
 #include "arm64/AsmHelpers.h"
@@ -533,10 +531,9 @@ _vifT __fi void dVifUnpack(const u8* data, bool isFill)
 	vifStruct& vif = MTVU_VifX;
 	VIFregisters& vifRegs = MTVU_VifXRegs;
 
-	// A/B kill-switch (also set when the code region failed to map): the C
-	// reference path is the pre-C.19 arm64 behaviour.
-	static const bool no_dynarec = getenv("LRPS2_NO_VIF_DYNAREC") != nullptr;
-	if (no_dynarec || !s_vifCode[idx])
+	// The C reference path runs when the code region failed to map
+	// (pre-C.19 arm64 behaviour).
+	if (!s_vifCode[idx])
 	{
 		_nVifUnpack(idx, data, vifRegs.mode, isFill);
 		return;

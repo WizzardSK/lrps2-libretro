@@ -493,8 +493,8 @@ __ri void _nVifUnpackLoop(const u8* data)
 		{
 #ifdef ARCH_ARM64
 			// nVifUpk holds the NEON-generated kernels (C.19); it is all-NULL
-			// when the dynarec is disabled (LRPS2_NO_VIF_DYNAREC) or its code
-			// region failed to map -- then the portable C table handles the
+			// when the dynarec code region failed to map -- then the portable C
+			// table handles the
 			// same no-mode case (upkNum bit 4 selects the doMask variant and
 			// writeXYZW applies the per-cycle mask via vif.cl internally).
 			uint cl3 = std::min(vif.cl, 3);

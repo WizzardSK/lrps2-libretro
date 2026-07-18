@@ -71,14 +71,6 @@ static constexpr int mVU_F0 = 23, mVU_F1 = 24, mVU_F2 = 25, mVU_F3 = 26;
 // tracked pool (w0..w26), callee-saved, so helper C calls preserve it.
 #define RVUMVU a64::x27   // base ptr = &mVU
 
-// C.78: kill switch for the macro-mode x27 base (mvuAbsMem gate + the
-// setupMacroOp materialization must agree, so both read this).
-static inline bool mvuMacroX27()
-{
-	static const bool on = getenv("LRPS2_NO_COP2_MX27") == nullptr;
-	return on;
-}
-
 // C.74: pick the cheapest addressing for a VU-state global. Priority:
 //   1. &mVU.* field within the scaled-immediate window of the pinned x27
 //      (micro mode always; macro mode since C.78 -- the hot scalars were
@@ -92,7 +84,7 @@ static inline bool mvuMacroX27()
 static inline a64::MemOperand mvuAbsMem(microVU& mVU, const void* addr, unsigned size)
 {
 	const uintptr_t moff = reinterpret_cast<uintptr_t>(addr) - reinterpret_cast<uintptr_t>(&mVU);
-	if ((!mVU.cop2 || mvuMacroX27()) && moff < sizeof(microVU) && (moff % size) == 0 && (moff / size) <= 0xFFFu)
+	if (moff < sizeof(microVU) && (moff % size) == 0 && (moff / size) <= 0xFFFu)
 		return a64::MemOperand(RVUMVU, static_cast<int64_t>(moff));
 	const uintptr_t roff = reinterpret_cast<uintptr_t>(addr) - reinterpret_cast<uintptr_t>(&mVU.regs());
 	if (roff < sizeof(VURegs) && (roff % size) == 0 && (roff / size) <= 0xFFFu)

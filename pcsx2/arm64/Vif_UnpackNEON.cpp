@@ -3,9 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0+
 // Transplanted into lrps2 from isztldav/pcsx2 @ c89cb8a (C.19); near-verbatim
 // except VifUnpackSSE_Init/Destroy, which use a local mmap'd code region
-// instead of SysMemory, and the LRPS2_NO_VIF_DYNAREC=1 kill-switch (leaves
-// nVifUpk all-NULL so the C reference path keeps the no-mode case, as before
-// C.19).
+// instead of SysMemory.
 
 #include "Vif_UnpackNEON.h"
 
@@ -421,11 +419,6 @@ static constexpr size_t kUpkCodeSize = 128 * 1024;
 
 void VifUnpackSSE_Init()
 {
-	if (getenv("LRPS2_NO_VIF_DYNAREC"))
-	{
-		Console.WriteLn("arm64 VIF unpack dynarec (C.19): disabled by LRPS2_NO_VIF_DYNAREC.");
-		return; // nVifUpk stays all-NULL -> C reference path
-	}
 	if (!s_upkCode)
 	{
 		s_upkCode = (u8*)mmap(nullptr, kUpkCodeSize, PROT_READ | PROT_WRITE | PROT_EXEC,
