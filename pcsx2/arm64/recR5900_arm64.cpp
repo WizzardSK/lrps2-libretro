@@ -2741,12 +2741,11 @@ namespace {
 	// computation. The due path (call the event test, then chain generically off
 	// the possibly-redirected pc) is deferred to the block's stub area, so the
 	// hot stream carries none of it -- same reasoning as C.51/C.53.
-	void EmitKnownExit(MacroAssembler& m, u32 target_pc, uint64_t evt, bool evt_gate)
+	void EmitKnownExit(MacroAssembler& m, u32 target_pc, uint64_t evt)
 	{
 		const u32 np = Norm(target_pc);
-		// An ungated event test runs unconditionally, so pc is never known; a
-		// target outside RAM has no LUT slot. Both fall back to the generic tail.
-		if (!s_lut || !InRam(np) || (evt && !evt_gate))
+		// A target outside RAM has no LUT slot -> fall back to the generic tail.
+		if (!s_lut || !InRam(np))
 		{
 			if (evt) { m.Mov(x16, evt); m.Blr(x16); }
 			EmitChainEpilogue(m);
@@ -3099,7 +3098,7 @@ namespace {
 			EmitTailCycles(m, cyc_taken, true); // C.55 (bookkeeping + update, fused)
 			if (idle_skip) EmitIdleSkip();
 			if (is_jr) { EmitEventTest(); EmitChainEpilogue(m); }
-			else       EmitKnownExit(m, tconst, evt, true); // C.54
+			else       EmitKnownExit(m, tconst, evt); // C.54
 			return true;
 		}
 
@@ -3163,7 +3162,7 @@ namespace {
 			s_rc.FlushDirty(m, gpr); // block exit (taken)
 			EmitTailCycles(m, cyc_taken, true); // C.55 (bookkeeping + update, fused)
 			if (idle_skip) EmitIdleSkip();
-			EmitKnownExit(m, tconst, evt, true); // C.54
+			EmitKnownExit(m, tconst, evt); // C.54
 		}
 		s_rc = fork_state;
 		m.Bind(&not_taken);
@@ -3184,7 +3183,7 @@ namespace {
 		// which cascades into different kernel-scheduler decisions (MMX7 FMV
 		// loader wedge).
 		const bool nt_evt = (op == 0x04 || op == 0x05 || (likely && !bc0 && !bc1 && !bc2));
-		EmitKnownExit(m, bpc + (likely ? 8 : 4), nt_evt ? evt : 0, true); // C.54
+		EmitKnownExit(m, bpc + (likely ? 8 : 4), nt_evt ? evt : 0); // C.54
 		return true;
 	}
 
@@ -3420,7 +3419,7 @@ namespace {
 			StorePCImm(masm, p);
 			EmitCycleBookkeeping(masm, cyc);
 			s_rc.FlushDirty(masm, gpr);
-			EmitKnownExit(masm, p, 0, true); // C.54
+			EmitKnownExit(masm, p, 0); // C.54
 			done = true;
 		}
 
