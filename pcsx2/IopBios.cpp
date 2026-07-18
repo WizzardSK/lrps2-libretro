@@ -1066,7 +1066,7 @@ namespace R3000A
 	// those inputs with three RAM reads per hit. A module loading over the stub
 	// rewrites name/magic and fails revalidation -> full re-resolve. A stub with
 	// NO table (scan miss) is not cached: there is nothing stable to revalidate
-	// against. LRPS2_NO_IOP_JSTUB_CACHE=1 restores the uncached path.
+	// against.
 	namespace
 	{
 		struct JStubCacheEntry { u32 table, name0, name1; u16 index; irxHLE hle; irxDEBUG debug; };
@@ -1075,10 +1075,6 @@ namespace R3000A
 
 	int irxImportExecCached(u32 stubpc, u16 index)
 	{
-		static const bool enabled = getenv("LRPS2_NO_IOP_JSTUB_CACHE") == nullptr;
-		if (!enabled)
-			return irxImportExec(irxImportTableAddr(stubpc), index);
-
 		auto it = s_jstub_cache.find(stubpc);
 		if (it != s_jstub_cache.end())
 		{

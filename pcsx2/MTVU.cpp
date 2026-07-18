@@ -32,7 +32,6 @@ static __fi u32 SIZE_U32(u32 x) { return (x + 3) >> 2; }
 // C.80 lazy-kick state (see the comment block above VU_Thread::KickStart).
 // EE-thread-only, per the class contract (all producers run on the EE thread).
 static bool s_kickPending = false;
-static bool LazyKick() { static const bool on = getenv("LRPS2_NO_VIF_LAZYKICK") == nullptr; return on; }
 
 enum MTVU_EVENT
 {
@@ -480,7 +479,7 @@ void VU_Thread::Get_MTVUChanges()
 // observation point above notifies. This is NOT the unsound
 // NotifyOfWorkIfRunning state-peek (see Threading.h): the deferred notify is
 // still a full RMW, only issued later.
-// EE-thread-only state: s_kickPending/LazyKick near the top of this file.
+// EE-thread-only state: s_kickPending near the top of this file.
 
 void VU_Thread::KickStart()
 {
@@ -488,7 +487,7 @@ void VU_Thread::KickStart()
 	semaEvent.NotifyOfWork();
 }
 
-// Flush a deferred VifUnpack notify, if one is pending (see LazyKick above).
+// Flush a deferred VifUnpack notify, if one is pending.
 void VU_Thread::KickPending()
 {
 	if (s_kickPending)
@@ -545,10 +544,7 @@ void VU_Thread::VifUnpack(vifStruct& _vif, VIFregisters& _vifRegs, const u8* dat
 	Write(size);
 	Write(data, size);
 	m_ato_write_pos.store(m_write_pos, std::memory_order_release);
-	if (LazyKick())
-		s_kickPending = true; // C.80: published; notify deferred to a flush point
-	else
-		KickStart();
+	s_kickPending = true; // C.80: published; notify deferred to a flush point
 }
 
 void VU_Thread::WriteMicroMem(u32 vu_micro_addr, const void* data, u32 size)

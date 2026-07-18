@@ -528,11 +528,6 @@ __fi
 #endif
 void Mix(short *out_left, short *out_right)
 {
-	// TEMP measurement (LRPS2_SPU_MUTE): skip ALL voice mixing and emit silence.
-	// Deliberately incorrect (no ENDX/IRQ/ADSR progression) -- exists only to put
-	// an upper bound on what any SPU optimisation could gain on the EE thread.
-	static const bool mute = getenv("LRPS2_SPU_MUTE") != nullptr;
-	if (mute) { *out_left = 0; *out_right = 0; return; }
 	StereoOut32 Out;
 	StereoOut32 empty;
 	StereoOut32 Ext;
