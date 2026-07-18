@@ -1305,7 +1305,7 @@ static void SetMTVUAndAffinityControlDefault(SettingsInterface& si)
 	// safe defaults again -- the C.13c livelock and the 3M-cycle-budget wall
 	// were interpreter-provider problems, and microVU1 is now the only VU1
 	// provider.
-	const bool mtvu = std::thread::hardware_concurrency() >= 3 && g_MtvuMenuDefault;
+	const bool mtvu = std::thread::hardware_concurrency() >= 3 && VMManager::g_MtvuMenuDefault;
 	Console.WriteLn(mtvu ? "  MTVU enabled (pcsx2_mtvu; requires >= 3 hardware threads)."
 	                     : "  MTVU disabled.");
 	si.SetBoolValue("EmuCore/Speedhacks", "vuThread", mtvu);
