@@ -161,16 +161,6 @@ __fi u32 ipuRead32(u32 mem)
 		{
 			ipuRegs.ctrl.IFC = g_BP.IFC;
 			ipuRegs.ctrl.CBP = coded_block_pattern;
-			static int ctrl_log = -1; // cached: getenv on every CTRL read showed up in profiles
-			if (ctrl_log < 0) ctrl_log = getenv("LRPS2_IPU_CTRL_LOG") ? 1 : 0;
-			if (ctrl_log)
-			{
-				static u64 c = 0;
-				if (((++c) & 0x3ffff) == 1)
-					fprintf(stderr, "[ctrl] #%llu cycle=%u ctrl=%08x BUSY=%u IFC=%u cmd=%x BP=%u\n",
-						(unsigned long long)c, cpuRegs.cycle, ipuRegs.ctrl._u32, ipuRegs.ctrl.BUSY,
-						g_BP.IFC, ipu_cmd.current, g_BP.BP);
-			}
 			return ipuRegs.ctrl._u32;
 		}
 

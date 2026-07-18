@@ -2315,9 +2315,6 @@ static void update_av_info(void)
 
 void retro_run(void)
 {
-#ifdef ARCH_ARM64
-	{ extern volatile u64 g_diag_frame; static u64 rf = 0; g_diag_frame = rf++; } // TEMP diagnostic
-#endif
 	bool updated = false;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
 		check_variables(false);
@@ -2336,38 +2333,7 @@ void retro_run(void)
 	MTGS::MainLoop(false);
 	upload_output_audio_buffer();
 
-#ifdef ARCH_ARM64
-	// TEMP diagnostic (LRPS2_RAMCRC): per-frame FNV-1a of EE main RAM, to binary-
-	// search the first frame where a JIT run diverges from a NO_EEREC run.
-	if (getenv("LRPS2_RAMCRC"))
-	{
-		extern u8* GetEEMainRam();
-		static u64 fr = 0;
-		const u8* ram = GetEEMainRam();
-		if (ram)
-		{
-			u64 h = 1469598103934665603ull;
-			const u64* w = reinterpret_cast<const u64*>(ram);
-			for (u32 i = 0; i < (32u << 20) / 8; i++) { h ^= w[i]; h *= 1099511628211ull; }
-			// Scratchpad too -- game state parked in SPR survives frames invisibly
-			// to a main-RAM-only hash (learned the hard way on MMX7 frames 167-216).
-			extern u8* GetEEScratch();
-			if (const u64* s = reinterpret_cast<const u64*>(GetEEScratch()))
-				for (u32 i = 0; i < 16384 / 8; i++) { h ^= s[i]; h *= 1099511628211ull; }
-			extern u32 GetEECycle();
-			fprintf(stderr, "[ramcrc] frame=%llu crc=%016llx cyc=%u\n", (unsigned long long)fr, (unsigned long long)h, GetEECycle());
-			const char* df = getenv("LRPS2_DUMP_FRAME");
-			const char* dp = getenv("LRPS2_DUMP");
-			if (df && dp && fr == (u64)strtoull(df, 0, 10))
-			{
-				FILE* fo = fopen(dp, "wb");
-				if (fo) { fwrite(ram, 1, 32u << 20, fo); fclose(fo);
-					fprintf(stderr, "[ramdump] frame=%llu -> %s\n", (unsigned long long)fr, dp); }
-			}
-		}
-		fr++;
-	}
-#endif
+
 }
 
 std::optional<WindowInfo> Host::AcquireRenderWindow(void)

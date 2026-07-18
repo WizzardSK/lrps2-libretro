@@ -83,101 +83,6 @@ void intUpdateCPUCycles()
 
 // These macros are used to assemble the repassembler functions
 
-#ifdef ARCH_ARM64
-// TEMP diagnostic (LRPS2_TRACE=<path>, LRPS2_TRACE_LO/HI=<hex phys pc>): binary
-// (pc, GPR-state-hash) trace for A/B-diffing JIT vs interpreter execution of a
-// pc range. Called per-instruction from execI and per-block-entry from the
-// arm64 EE JIT (recR5900_arm64.cpp CompileBlock).
-volatile u64 g_diag_frame = 0; // set per-frame from retro_run (TEMP diagnostic)
-u32 GetEECycle(void) { return cpuRegs.cycle; } // TEMP diagnostic (LRPS2_RAMCRC)
-
-// Diagnostic hooks cost two calls per interpreted op even when disabled (they
-// showed up in GT3 attract profiles); execI gates them on this one bool,
-// resolved once at load (plain load, no magic-static guard in the hot path).
-static const bool s_eeDiagHooks = getenv("LRPS2_TRACE") || getenv("LRPS2_EXCLOG");
-
-// TEMP diagnostic (LRPS2_EXCLOG=<path>): log COP0 Cause/EPC/Status/Count +
-// cpuRegs.cycle + frame at every entry to the EE interrupt vector 0x80000200,
-// so a full-JIT run and a NO_EE_MEM run can be diffed to see whether interrupts
-// are taken at different cycles / with different pending-cause bits (the suspected
-// sub-frame interrupt-timing residual behind the MMX7 post-logo stall). Called at
-// block entry from the arm64 EE JIT and per-instruction from execI.
-extern "C" void eeLogExc(u32 pc)
-{
-	static FILE* f = nullptr; static int on = -1;
-	static u32 last_pc = 0; static u32 last_epc = 0; static u64 last_n = 0;
-	if (on < 0) { const char* p = getenv("LRPS2_EXCLOG"); f = p ? fopen(p, "w") : nullptr; on = f ? 1 : 0; }
-	if (!on) return;
-	const u32 pp = pc & 0x1fffffff;
-	if (pp != 0x200 && pp != 0x180) return;
-	// Dedup: with NO_EE_MEM the vector block may be entered via the JIT block
-	// hook AND execI at the same pc/EPC -- log each vector entry once.
-	static u64 n = 0; n++;
-	if (pp == last_pc && cpuRegs.CP0.n.EPC == last_epc && n == last_n + 1) { last_n = n; return; }
-	last_pc = pp; last_epc = cpuRegs.CP0.n.EPC; last_n = n;
-	// Cause IP field (bits 10-15) = pending HW interrupt lines (IP2/bit10 is the
-	// INTC/DMAC aggregate on the EE); EXCCODE = Cause bits 2-6.
-	const u32 cause = cpuRegs.CP0.n.Cause;
-	fprintf(f, "frame=%llu vec=%03x cyc=%u Cause=%08x(exc=%u,IP=%02x) EPC=%08x",
-		(unsigned long long)g_diag_frame, pp, cpuRegs.cycle, cause,
-		(cause >> 2) & 0x1f, (cause >> 10) & 0x3f, cpuRegs.CP0.n.EPC);
-	if (pp == 0x180) // syscall/common vector: log the call# ($v1) and args
-		fprintf(f, " v1=%02llx a=%08llx,%08llx,%08llx,%08llx",
-			(unsigned long long)cpuRegs.GPR.n.v1.UL[0], (unsigned long long)cpuRegs.GPR.n.a0.UL[0],
-			(unsigned long long)cpuRegs.GPR.n.a1.UL[0], (unsigned long long)cpuRegs.GPR.n.a2.UL[0],
-			(unsigned long long)cpuRegs.GPR.n.a3.UL[0]);
-	fprintf(f, "\n");
-}
-extern "C" void eeTraceHook(u32 pc)
-{
-	static FILE* f = nullptr; static int on = -1; static u32 lo = 0, hi = 0; static u64 n = 0;
-	static u64 tframe = ~0ull;
-	if (on < 0)
-	{
-		const char* p = getenv("LRPS2_TRACE");
-		const char* l = getenv("LRPS2_TRACE_LO");
-		const char* h = getenv("LRPS2_TRACE_HI");
-		const char* fr = getenv("LRPS2_TRACE_FRAME");
-		if (p && l && h) { f = fopen(p, "wb"); lo = (u32)strtoul(l, 0, 16); hi = (u32)strtoul(h, 0, 16); }
-		if (fr) tframe = (u64)strtoull(fr, 0, 10);
-		on = f ? 1 : 0;
-	}
-	if (!on || n >= 200000000ull) return;
-	if (tframe != ~0ull && g_diag_frame != tframe) return;
-	const u32 pp = pc & 0x1fffffff;
-	if (pp < lo || pp >= hi) return;
-	u64 hsh = 0;
-	for (int i = 1; i < 32; i++) { hsh ^= cpuRegs.GPR.r[i].UD[0] + 0x9e3779b97f4a7c15ull * (u64)i; hsh = (hsh << 7) | (hsh >> 57); }
-	hsh ^= cpuRegs.HI.UD[0]; hsh = (hsh << 7) | (hsh >> 57);
-	hsh ^= cpuRegs.LO.UD[0];
-	u64 rec[2] = { pc, hsh };
-	fwrite(rec, 16, 1, f);
-	// Targeted register dump around the frame-217 divergence at 0x001051d0
-	// (`daddu v1,v1,a1`): dump v0,v1,a0,a1,a2 before each op of the byte-
-	// assembly tail of 0x105138.
-	if (pp >= 0x001051b0 && pp <= 0x001051e0)
-	{
-		static u64 dn = 0;
-		if (dn < 60) { dn++; fprintf(stderr, "[div] pc=%08x v0=%016llx v1=%016llx a0=%016llx a1=%016llx a2=%016llx\n",
-			pp, (unsigned long long)cpuRegs.GPR.r[2].UD[0], (unsigned long long)cpuRegs.GPR.r[3].UD[0],
-			(unsigned long long)cpuRegs.GPR.r[4].UD[0], (unsigned long long)cpuRegs.GPR.r[5].UD[0],
-			(unsigned long long)cpuRegs.GPR.r[6].UD[0]); }
-	}
-	// Compact per-op register line (LRPS2_TRACE_SHOW): dumps a few regs for the
-	// first ~400 in-range ops so a JIT vs interp diff pinpoints the first op that
-	// produces a divergent (sign-extended) value.
-	if (getenv("LRPS2_TRACE_SHOW"))
-	{
-		static u64 sn = 0;
-		if (sn < 400) { sn++; fprintf(stderr, "[op] pc=%08x v0=%016llx v1=%016llx a1=%016llx a2=%016llx t2=%016llx\n",
-			pp, (unsigned long long)cpuRegs.GPR.r[2].UD[0], (unsigned long long)cpuRegs.GPR.r[3].UD[0],
-			(unsigned long long)cpuRegs.GPR.r[5].UD[0], (unsigned long long)cpuRegs.GPR.r[6].UD[0],
-			(unsigned long long)cpuRegs.GPR.r[10].UD[0]); }
-	}
-	if ((++n & 0xffff) == 0) fflush(f);
-}
-#endif
-
 static void execI(void)
 {
 	// execI is called for every instruction so it must remains as light as possible.
@@ -186,13 +91,6 @@ static void execI(void)
 	// Extra note: due to some cycle count issue PCSX2's internal debugger is
 	// not yet usable with the interpreter
 	u32 pc = cpuRegs.pc;
-#ifdef ARCH_ARM64
-	if (s_eeDiagHooks)
-	{
-		eeTraceHook(pc);
-		eeLogExc(pc);
-	}
-#endif
 	// We need to increase the pc before executing the memRead32. An exception could appears
 	// and it expects the PC counter to be pre-incremented
 	cpuRegs.pc += 4;
@@ -548,25 +446,6 @@ static void intReset()
 
 static void intEventTest()
 {
-	// TEMP diagnostic (LRPS2_EVTLOG=<path>, LRPS2_EVT_LO/HI=<frame range>): log
-	// every EE event test (cycle vs nextEventCycle, pc, pending INTC/DMAC bits)
-	// so a full-JIT and a NO_EE_MEM run can be diffed to find the first test
-	// where interrupt recognition diverges.
-	{
-		static FILE* f = nullptr; static int on = -1; static u64 flo = 0, fhi = 0;
-		if (on < 0)
-		{
-			const char* p = getenv("LRPS2_EVTLOG");
-			f = p ? fopen(p, "w") : nullptr; on = f ? 1 : 0;
-			const char* l = getenv("LRPS2_EVT_LO"); const char* h = getenv("LRPS2_EVT_HI");
-			flo = l ? strtoull(l, 0, 10) : 0; fhi = h ? strtoull(h, 0, 10) : ~0ull;
-		}
-		if (on && g_diag_frame >= flo && g_diag_frame <= fhi)
-			fprintf(f, "f=%llu cyc=%u nev=%d pc=%08x int=%08x is=%04x im=%04x\n",
-				(unsigned long long)g_diag_frame, cpuRegs.cycle,
-				(int)(s32)(cpuRegs.nextEventCycle - cpuRegs.cycle), cpuRegs.pc,
-				cpuRegs.interrupt, psHu16(INTC_STAT), psHu16(INTC_MASK));
-	}
 	// Perform counters, ints, and IOP updates:
 	_cpuEventTest_Shared();
 
@@ -699,90 +578,18 @@ static void intExecute(void)
 // arm64 EE recompiler entry points (provider recCpu, assembled below). They live
 // here so they can use the static execute loop, branch2, execI and intJmpBuf.
 
-// TEMP diagnostic (LRPS2_HANDOFF_STATS=1): dynamic histogram of the opcodes the
-// JIT hands off to the interpreter, keyed by (op, funct, subop) so MMI/REGIMM/
-// COPx sub-ops separate. Dumps the top of the table every 100M interpreted ops;
-// this is what decides which ops are worth translating next.
-static const bool s_handoffStats = getenv("LRPS2_HANDOFF_STATS") != nullptr;
-namespace {
-	struct HandoffTables
-	{
-		std::unordered_map<u32, u64> h, hf;
-		u64 n = 0, nf = 0;
-		~HandoffTables(); // dumps at exit: a 600-frame run never reaches 100M ops
-	};
-	HandoffTables s_handoff;
-}
-static void eeHandoffDump(const char* tag, std::unordered_map<u32, u64>& m, u64 total);
-
-HandoffTables::~HandoffTables()
-{
-	if (!s_handoffStats)
-		return;
-	eeHandoffDump("histogram", h, n);
-	eeHandoffDump("BREAKERS (first op)", hf, nf);
-}
-
-static void eeHandoffCount(u32 insn, bool first)
-{
-	// Two tables: h = every interpreted op (shows total interp volume, mostly
-	// already-translated ops stuck in handed-off block tails), hf = only the
-	// FIRST op of each handoff = the untranslated op that actually broke the
-	// block. hf is what decides which op to translate next.
-	std::unordered_map<u32, u64>& h = s_handoff.h;
-	std::unordered_map<u32, u64>& hf = s_handoff.hf;
-	u64& n = s_handoff.n; u64& nf = s_handoff.nf;
-	const u32 op = insn >> 26;
-	u32 key = op << 16;
-	if      (op == 0x00) key |= (insn & 0x3f) << 8;                            // SPECIAL: funct
-	else if (op == 0x01) key |= ((insn >> 16) & 0x1f) << 8;                    // REGIMM: rt
-	else if (op == 0x1c) key |= ((insn & 0x3f) << 8) | ((insn >> 6) & 0x1f);   // MMI: funct+subop
-	else if (op == 0x10 || op == 0x11 || op == 0x12)
-		key |= ((insn >> 21) & 0x1f) << 8;                                     // COPx: rs field
-	h[key]++;
-	if (first) { hf[key]++; nf++; }
-	if (++n % 100000000 != 0)
-		return;
-	eeHandoffDump("histogram", h, n);
-	eeHandoffDump("BREAKERS (first op)", hf, nf);
-}
-
-static void eeHandoffDump(const char* tag, std::unordered_map<u32, u64>& m, u64 total)
-{
-	std::vector<std::pair<u32, u64>> v(m.begin(), m.end());
-	const size_t k = v.size() < 24 ? v.size() : 24;
-	std::partial_sort(v.begin(), v.begin() + k, v.end(), [](auto& x, auto& y) { return x.second > y.second; });
-	fprintf(stderr, "=== EE handoff %s (%llu ops, uniq=%zu) ===\n", tag,
-		(unsigned long long)total, v.size());
-	for (size_t i = 0; i < k; i++)
-		fprintf(stderr, "  op=%02x funct=%02x sub=%02x  %llu\n",
-			v[i].first >> 16, (v[i].first >> 8) & 0xff, v[i].first & 0xff,
-			(unsigned long long)v[i].second);
-}
-
 // Run a single EE basic block through the interpreter (instructions until the
 // next taken branch). The arm64 JIT's per-PC blocks call this for now (Phase
 // C.3-1); later phases translate the instructions natively.
 extern "C" void eeRunBasicBlock_arm64(void)
 {
 	branch2 = 0;
-	if (s_handoffStats)
-	{
-		bool first = true;
-		do { eeHandoffCount(memRead32(cpuRegs.pc), first); first = false; execI(); } while (!branch2);
-		return;
-	}
 	do { execI(); } while (!branch2);
 }
 
 void eeRecExecute_arm64(void)
 {
-	// TEMP diagnostic toggle: LRPS2_NO_EEREC=1 runs the EE through the pure
-	// interpreter even though the recompiler provider is selected, to bisect
-	// whether a stall is a JIT correctness bug or shared C++ (IPU/DMA/timing).
-	static int no_eerec = -1;
-	if (no_eerec < 0) no_eerec = getenv("LRPS2_NO_EEREC") ? 1 : 0;
-	g_ee_block_runner = no_eerec ? nullptr : &eeJitRunBlock_arm64;
+	g_ee_block_runner = &eeJitRunBlock_arm64;
 	eeExecuteLoop();
 }
 
@@ -790,90 +597,19 @@ void eeRecExecute_arm64(void)
 // JIT's natively-translated loads/stores (Phase C.3-3). Defined here so they see
 // Memory.h / Cpu. Cpu->CancelInstruction() fastjmps to intJmpBuf, which is safe
 // from JIT code (fastjmp restores sp and callee-saved regs).
-// #define EE_RD_SAMPLE 1 // TEMP: EE read32 address histogram diagnostic (off)
 extern "C" u32  eeRead8_arm64 (u32 a) { return memRead8(a); }
 extern "C" u32  eeRead16_arm64(u32 a) { return memRead16(a); }
-#ifdef EE_RD_SAMPLE
-#include <unordered_map>
-#include <vector>
-#include <algorithm>
-extern "C" u32  eeRead32_arm64(u32 a)
-{
-	// TEMP diagnostic: histogram read32 addresses; dump top 16 every 4M reads
-	// (cleared each dump, so the final dump reflects the current/stall phase).
-	static std::unordered_map<u32, u64> h; static u64 n = 0;
-	h[a]++;
-	if (++n % 4000000 == 0)
-	{
-		std::vector<std::pair<u32,u64>> v(h.begin(), h.end());
-		size_t k = v.size() < 16 ? v.size() : 16;
-		std::partial_sort(v.begin(), v.begin()+k, v.end(), [](auto&x,auto&y){return x.second>y.second;});
-		fprintf(stderr, "=== EE read32 addr histogram (uniq=%zu) ===\n", v.size());
-		for (size_t i=0;i<k;i++) fprintf(stderr, "  addr=0x%08x  %llu\n", v[i].first,(unsigned long long)v[i].second);
-		h.clear();
-	}
-	return memRead32(a);
-}
-#else
-extern "C" void eeDiagLogMem(int rd, u32 a, u64 v, int w); // fwd (TEMP diagnostic, defined below)
-extern "C" u32  eeRead32_arm64(u32 a) { u32 v = memRead32(a); eeDiagLogMem(1, a, v, 4); return v; }
-#endif
-extern "C" u64  eeRead64_arm64(u32 a) { u64 v = memRead64(a); eeDiagLogMem(1, a, v, 8); return v; }
-// TEMP diagnostic (LRPS2_WLOG): log EE loads/stores touching the MMX7
-// IPU-handshake RAM regions and the IPU registers (0x10002000+) so a JIT run
-// and a NO_MEM (interpreter) run can be diffed to find the first divergent
-// value and the CMD-write/CTRL-poll/CMD-read ordering around it. Called from
-// the JIT mem wrappers below and the interpreter LW/LD/SW/SD ops
-// (R5900OpcodeImpl.cpp).
-extern "C" void eeDiagLogMem(int rd, u32 a, u64 v, int w)
-{
-	static int on = -1; static u64 seq = 0; static u64 n = 0;
-	static u32 wlo = 0, whi = 0; static u64 wframe = 0;
-	if (on < 0)
-	{
-		on = getenv("LRPS2_WLOG") ? 1 : 0;
-		// Watch window: LRPS2_WLO/LRPS2_WHI (hex phys addr, half-open range) and
-		// LRPS2_WFRAME (log only from this frame on) -- env-tunable so retargeting
-		// the watch needs no rebuild.
-		const char* s;
-		wlo = (s = getenv("LRPS2_WLO")) ? (u32)strtoul(s, 0, 16) : 0x00018c20;
-		whi = (s = getenv("LRPS2_WHI")) ? (u32)strtoul(s, 0, 16) : 0x00018c30;
-		wframe = (s = getenv("LRPS2_WFRAME")) ? (u64)strtoull(s, 0, 10) : 0;
-	}
-	if (!on) return;
-	const u32 p = a & 0x1fffffff;
-	if (p + (u32)w <= wlo || p >= whi) return;
-	if (g_diag_frame < wframe) return;
-	seq++;
-	if (n < 20000) { n++; fprintf(stderr, "[%c] f=%llu seq=%llu a=%08x v=%016llx w=%d pc=%08x\n",
-		rd ? 'r' : 'w', (unsigned long long)g_diag_frame, (unsigned long long)seq, p, (unsigned long long)v, w, cpuRegs.pc); }
-	// Sync-point RAM dump (LRPS2_DUMP=<path>): on the first D4_MADR write of the
-	// MMX7 stream buffer address, dump main RAM + scratchpad for A/B diffing.
-	if (!rd && p == 0x1000b410 && (u32)v == 0x0162d210)
-	{
-		static int dumped = 0;
-		const char* dp = getenv("LRPS2_DUMP");
-		if (dp && !dumped)
-		{
-			dumped = 1;
-			FILE* f = fopen(dp, "wb");
-			if (f) { fwrite(eeMem->Main, 1, Ps2MemSize::MainRam, f);
-			         fwrite(eeMem->Scratch, 1, Ps2MemSize::Scratch, f); fclose(f); }
-			fprintf(stderr, "[dump] RAM+SPR written to %s at seq=%llu\n", dp, (unsigned long long)seq);
-		}
-	}
-}
-extern "C" void eeDiagLogWrite(u32 a, u64 v, int w) { eeDiagLogMem(0, a, v, w); }
+extern "C" u32  eeRead32_arm64(u32 a) { return memRead32(a); }
+extern "C" u64  eeRead64_arm64(u32 a) { return memRead64(a); }
 // 128-bit LQ/SQ wrappers (Phase C.12). LQ/SQ silently align (addr & ~0xf on the
 // caller side); dst/src is &cpuRegs.GPR.r[rt]. These are the slow path -- the
-// JIT inlines the vtlb direct-pointer case and only calls here for handlers
-// (or with LRPS2_WLOG, where inlining is disabled so the watch hooks fire).
-extern "C" void eeRead128_arm64 (u32 a, u128* dst)       { memRead128(a, dst); eeDiagLogMem(1, a, dst->lo, 16); }
-extern "C" void eeWrite128_arm64(u32 a, const u128* src) { eeDiagLogMem(0, a, src->lo, 16); memWrite128(a, src); }
-extern "C" void eeWrite8_arm64 (u32 a, u32 v) { eeDiagLogWrite(a, v, 1); memWrite8(a, (u8)v); }
-extern "C" void eeWrite16_arm64(u32 a, u32 v) { eeDiagLogWrite(a, v, 2); memWrite16(a, (u16)v); }
-extern "C" void eeWrite32_arm64(u32 a, u32 v) { eeDiagLogWrite(a, v, 4); memWrite32(a, v); }
-extern "C" void eeWrite64_arm64(u32 a, u64 v) { eeDiagLogWrite(a, v, 8); memWrite64(a, v); }
+// JIT inlines the vtlb direct-pointer case and only calls here for handlers.
+extern "C" void eeRead128_arm64 (u32 a, u128* dst)       { memRead128(a, dst); }
+extern "C" void eeWrite128_arm64(u32 a, const u128* src) { memWrite128(a, src); }
+extern "C" void eeWrite8_arm64 (u32 a, u32 v) { memWrite8(a, (u8)v); }
+extern "C" void eeWrite16_arm64(u32 a, u32 v) { memWrite16(a, (u16)v); }
+extern "C" void eeWrite32_arm64(u32 a, u32 v) { memWrite32(a, v); }
+extern "C" void eeWrite64_arm64(u32 a, u64 v) { memWrite64(a, v); }
 extern "C" void eeCancelInstruction_arm64(void) { Cpu->CancelInstruction(); }
 // Unaligned load/store family (LWL/LWR/LDL/LDR, SWL/SWR/SDL/SDR), called from
 // the arm64 EE JIT (C.16) with the decoded rt index. Line-for-line mirrors of

@@ -31,8 +31,6 @@
 #include "yuv2rgb.h"
 #include "IPU_MultiISA.h"
 
-extern "C" volatile u64 g_diag_frame; // Interpreter.cpp (TEMP diagnostic)
-
 // the IPU is fixed to 16 byte strides (128-bit / QWC resolution):
 static const uint decoder_stride = 16;
 
@@ -1629,18 +1627,6 @@ __ri static bool ipuFDEC(u32 val)
 	ipuRegs.cmd.DATA = BigEndian(ipuRegs.cmd.DATA);
 	ipuRegs.top = ipuRegs.cmd.DATA;
 
-	// TEMP diagnostic (LRPS2_IPU_LOG_FRAME=N): log FDEC results from frame N on,
-	// to see what bitstream data the game's start-code scan actually reads.
-	{
-		static int lf = -2; static int n = 0;
-		if (lf == -2) { const char* s = getenv("LRPS2_IPU_LOG_FRAME"); lf = s ? atoi(s) : -1; }
-		if (lf >= 0 && g_diag_frame >= (u64)lf && n < 300)
-		{
-			n++;
-			fprintf(stderr, "[fdec] frame=%llu shift=%u BP=%u FP=%u IFC=%u -> %08x\n",
-				(unsigned long long)g_diag_frame, val & 0x3f, g_BP.BP, g_BP.FP, g_BP.IFC, ipuRegs.cmd.DATA);
-		}
-	}
 	return true;
 }
 

@@ -707,10 +707,6 @@ static void TAKES_R128 vuDataWrite128(u32 addr, r128 data)
 // PS2 Memory Init / Reset / Shutdown
 
 EEVM_MemoryAllocMess* eeMem = NULL;
-#ifdef ARCH_ARM64
-u8* GetEEMainRam(void) { return eeMem ? eeMem->Main : nullptr; } // TEMP (LRPS2_RAMCRC)
-u8* GetEEScratch(void) { return eeMem ? eeMem->Scratch : nullptr; } // TEMP (LRPS2_RAMCRC)
-#endif
 alignas(__pagealignsize) u8 eeHw[Ps2MemSize::Hardware];
 
 void memBindConditionalHandlers(void)

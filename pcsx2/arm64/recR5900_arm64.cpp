@@ -77,8 +77,6 @@ extern "C" void eeWriteU32_arm64(u32, u32), eeWriteU64_arm64(u32, u64);
 extern "C" void eeCancelInstruction_arm64(void);
 extern "C" void eeEventTest_arm64(void);
 extern "C" void eeUpdateCycles_arm64(void);
-extern "C" void eeTraceHook(u32 pc); // Interpreter.cpp (TEMP diagnostic, LRPS2_TRACE)
-extern "C" void eeLogExc(u32 pc);    // Interpreter.cpp (TEMP diagnostic, LRPS2_EXCLOG)
 
 // Interpreter op implementations invoked directly from JIT blocks (C.18): ops
 // with contained side effects (no control flow, no exception, no pc /
@@ -3611,33 +3609,6 @@ namespace {
 			masm.Cbz(w0, s_stale); // source changed -> discarded, back to dispatcher
 		}
 
-		// TEMP diagnostic (LRPS2_EXCLOG): only the EE exception vector blocks
-		// (pc 0x8000_0180/0200) call eeLogExc, dumping COP0 Cause/EPC + cycle.
-		if ((pc & 0x1fffffff) == 0x200 || (pc & 0x1fffffff) == 0x180)
-		{
-			masm.Mov(w0, pc);
-			masm.Mov(x16, reinterpret_cast<uint64_t>(&eeLogExc));
-			masm.Blr(x16);
-		}
-
-		// TEMP diagnostic (LRPS2_TRACE): call eeTraceHook(pc) at block entry so a
-		// full-JIT run can be state-diffed against a pure-interpreter run.
-		{
-			static int trc = -1; static u32 tlo = 0, thi = 0;
-			if (trc < 0)
-			{
-				const char* l = getenv("LRPS2_TRACE_LO"); const char* h = getenv("LRPS2_TRACE_HI");
-				trc = (getenv("LRPS2_TRACE") && !getenv("LRPS2_TRACE_STEP") && l && h) ? 1 : 0;
-				if (trc) { tlo = (u32)strtoul(l, 0, 16); thi = (u32)strtoul(h, 0, 16); }
-			}
-			if (trc && (pc & 0x1fffffff) >= tlo && (pc & 0x1fffffff) < thi)
-			{
-				masm.Mov(w0, pc);
-				masm.Mov(x16, reinterpret_cast<uint64_t>(&eeTraceHook));
-				masm.Blr(x16);
-			}
-		}
-
 		// One-shot dump of the guest ops each block in a pc range compiles from,
 		// with their translatability -- the tool for "why is this hot loop split
 		// into so many blocks / what still hands off to the interpreter".
@@ -3674,27 +3645,12 @@ namespace {
 		int cyc = 0; // raw sum of the leading translated ops' cycle costs
 		bool done = false;
 		bool branch_end = false; // ended via EmitBranch: branch + delay slot baked
-		// TEMP diagnostic (LRPS2_TRACE_STEP): per-instruction trace-hook calls so
-		// the JIT pc stream is 1:1 comparable with a pure-interpreter run.
-		static int trcstep = -1; static u32 slo = 0, shi = 0;
-		if (trcstep < 0)
-		{
-			const char* l = getenv("LRPS2_TRACE_LO"); const char* h = getenv("LRPS2_TRACE_HI");
-			trcstep = (getenv("LRPS2_TRACE_STEP") && l && h) ? 1 : 0;
-			if (trcstep) { slo = (u32)strtoul(l, 0, 16); shi = (u32)strtoul(h, 0, 16); }
-		}
 		Cop2RunInvalidate(); // C.66: liveness never crosses a block boundary
 		s_x19HeldVu = false; // C.78: a bracket never outlives its block (every run's last op closes it)
 		while (n < kMaxInsns)
 		{
 			s_emit_budget = (int)(kMaxInsns - n); // C.66: a COP2 run may not outlive the block
 			const u32 insn = memRead32(p);
-			if (trcstep && (p & 0x1fffffff) >= slo && (p & 0x1fffffff) < shi && IsTranslatable(insn))
-			{
-				masm.Mov(w0, p);
-				masm.Mov(x16, reinterpret_cast<uint64_t>(&eeTraceHook));
-				masm.Blr(x16);
-			}
 			s_emit_pc = p; // C.50: guest pc of the op being emitted (fastmem site bookkeeping)
 			// C.67: fuse the canonical unaligned pair into one host access. Both
 			// ops are consumed; the pair never straddles the block cap, and the
