@@ -1121,6 +1121,19 @@ static void check_variables(bool first_run)
 		}
 	}
 
+	/* MTVU / Instant VU1: restart-only (THREAD_VU1 must not flip while the
+	 * MTGS ring is live - see the MainLoop handoff-mutex comment). */
+	if (first_run)
+	{
+		var.key = "pcsx2_mtvu";
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+			s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vuThread", !strcmp(var.value, "enabled"));
+
+		var.key = "pcsx2_instant_vu1";
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+			s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vu1Instant", !strcmp(var.value, "enabled"));
+	}
+
 	var.key = "pcsx2_widescreen_hint";
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
 	{
