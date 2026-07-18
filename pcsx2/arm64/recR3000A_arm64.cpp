@@ -176,7 +176,6 @@ namespace
 	// immediate side effect in the interpreter either, pending interrupts wait
 	// for the next event test). Checked in BOTH EmitSimple and IsTranslatable
 	// so block building and delay-slot inlining stay consistent.
-	// LRPS2_NO_IOP_C68=1 pins all four back to the interpreter.
 	// Translate one side-effect-light instruction (ALU + aligned load/store) to
 	// native AArch64. Returns false (emitting nothing) for control flow and
 	// anything not covered. gpr (x19) is callee-saved so it survives mem helpers.
@@ -891,7 +890,7 @@ static void recClearIOP(u32 addr, u32 size)
 
 static s32 recExecuteBlock(s32 eeCycles)
 {
-	// TEMP diagnostic toggle: LRPS2_NO_IOPREC=1 forces the IOP interpreter.
+	// If the recompiler failed to initialize, run the IOP interpreter.
 	if (!s_ok)
 		return psxInt.ExecuteBlock(eeCycles);
 

@@ -606,9 +606,7 @@ namespace
 	}
 
 	// Is this a Cop1RegSupported() instruction specifically one of the S-format
-	// arithmetic/compare/convert ops (everything except the plain bit moves),
-	// for the LRPS2_NO_EE_FPU_ARITH bisect toggle (finer-grained than the
-	// blanket LRPS2_NO_EE_COP1, which also covers the plain bit-move ops).
+	// arithmetic/compare/convert ops (everything except the plain bit moves).
 	bool Cop1ArithSupported(u32 insn)
 	{
 		const u32 rs = (insn >> 21) & 31;
@@ -1570,8 +1568,7 @@ namespace
 	// place (masm is constructed over s_code + s_code_pos), so the current host
 	// address is the buffer start plus the cursor. Falls back to the full
 	// materialization when the page displacement does not encode or the page
-	// offset is not size-aligned. LRPS2_NO_COP2_ABSFOLD=1 restores the old
-	// mov+movk chains at the COP2 sites.
+	// offset is not size-aligned.
 	MemOperand AbsMem(MacroAssembler& m, const Register& scratch, const void* addr, unsigned size)
 	{
 		const uintptr_t cur = reinterpret_cast<uintptr_t>(m.GetBuffer()->GetStartAddress<u8*>()) +
@@ -1897,7 +1894,7 @@ namespace {
 		                     EEINST_COP2_SYNC_VU0 | EEINST_COP2_FINISH_VU0 | EEINST_COP2_FLUSH_VU0_REGISTERS;
 		EEINST* saved_inst = g_pCurInstInfo;
 		// C.66: real per-op liveness from the run analysis; the static all-live
-		// record only remains as the LRPS2_NO_COP2_LIVENESS fallback and for an
+		// record only remains for an
 		// op the analyzer would not include (should not happen -- the same
 		// predicate guards both). C.78: the analysis moved ahead of the VU0
 		// sync + cache retire so the run boundaries can gate them too.
@@ -2564,8 +2561,7 @@ namespace {
 			case 0x12:
 				if (rs == 0x08) return false; // BC2F/T(L) -> EmitBranch
 				// C.30-2: SPECIAL1/2 ALU ops emit natively via the microVU0
-				// single-op emitters; LRPS2_NO_EE_COP2MACRO=1 forces them back
-				// to the C.29-1 interp call.
+				// single-op emitters.
 				if (rs >= 0x10 && EmitCop2Macro(m, gpr, insn))
 					return true;
 				// C.58: the COP2 transfers (QMFC2/CFC2/QMTC2/CTC2) are register
@@ -3080,7 +3076,6 @@ namespace {
 		// block tail — it runs on every block exit and the call was 4.3% of
 		// CPU time. Any non-zero EECycleRate falls back to the helper, checked
 		// at runtime so settings changes need no block flush.
-		// LRPS2_NO_INLINE_UPD=1 restores the call.
 
 		// WaitLoop speedhack for the EE kernel idle loop at 0x81fc0 (6 nops +
 		// `beq zero,zero,-6`): the interpreter fast-forwards cpuRegs.cycle to
