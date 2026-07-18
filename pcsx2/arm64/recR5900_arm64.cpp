@@ -43,7 +43,6 @@
 // the analysis-flag plumbing they gate on.
 #include "arm64/AsmHelpers.h"
 #include "arm64/aR5900Analysis.h"
-#include "arm64/Profiler_arm64.h"
 #include "VUmicro.h" // _vu0FinishMicro
 // vu0Sync() lives in VU0.cpp with no header declaration (the interpreter ops call
 // it from the same TU); the C.58 COP2 transfers need it by address.
@@ -3750,7 +3749,6 @@ namespace {
 		s_exit_labels.clear();
 		s_blk_ret = nullptr;
 		s_code_pos += (sz + 15) & ~size_t(15);
-		ArmProf::NoteBlock("ee-jit", start, sz, pc);
 
 		// LRPS2_DUMP_HOST=<hex guest pc>: write this block's emitted host code to
 		// /home/user/ee_block_<pc>.bin, for `objdump -D -b binary -m aarch64`.
@@ -3915,7 +3913,6 @@ void eeJitReserve_arm64(void)
 	}
 	s_page_clears.assign(kRamBytes >> kPageShift, 0); // C.60
 	s_ok = s_ok && s_code && s_lut;
-	ArmProf::RegisterRegion("ee-jit", s_code, kCodeCacheSize);
 	Console.WriteLn("arm64 EE rec (C.7): %s.", s_ok ? "native ALU+mem+branch+FPU-mov+MMI+muldiv JIT (block-linking)" : "FAILED");
 }
 
@@ -4057,7 +4054,6 @@ extern "C" void eeJitDebugLocate_arm64(uintptr_t pc)
 
 extern "C" void eeJitRunBlock_arm64(void)
 {
-	ArmProf::AttachThread("EE");
 
 	// TEMP DEBUG (C.24 crash hunt): identify the EE-dispatch thread once.
 	if (getenv("LRPS2_FAULT_LOG"))

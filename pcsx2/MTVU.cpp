@@ -19,12 +19,10 @@
 #include "Common.h"
 #include "Gif_Unit.h"
 #include "MTVU.h"
-#include "arm64/SyncStats_arm64.h"
 #include "VMManager.h"
 #include "Vif_Dynarec.h"
 
 #include "../common/Threading.h"
-#include "arm64/Profiler_arm64.h"
 
 VU_Thread vu1Thread;
 
@@ -158,7 +156,6 @@ void VU_Thread::Reset()
 
 void VU_Thread::ExecuteRingBuffer(void)
 {
-	ArmProf::AttachThread("MTVU");
 
 	for (;;)
 	{
@@ -540,7 +537,6 @@ void VU_Thread::WaitVU()
 	// C.80: WaitForEmpty trusts the sema state machine -- flush any deferred
 	// unpack notify first or it can pass with unprocessed work in the ring.
 	KickPending();
-	SyncStat _s(g_sync_waitvu);
 	semaEvent.WaitForEmpty();
 }
 

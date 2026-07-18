@@ -14,7 +14,6 @@
  */
 
 #include "Common.h"
-#include "arm64/SyncStats_arm64.h"
 
 #include <atomic>
 #include <cstring>
@@ -29,7 +28,6 @@
 #include "Elfheader.h"
 
 #include "Host.h"
-#include "arm64/Profiler_arm64.h"
 
 // Mask to apply to ring buffer indices to wrap the pointer from end to
 // start (the wrapping is what makes it a ringbuffer, yo!)
@@ -126,9 +124,7 @@ void MTGS::PostVsyncStart()
 	// the ring through this VSYNC packet.
 	//
 	// (Letting the EE run 1-2 frames ahead of the GS was tried and measured: no
-	// change in wall time, because the EE is not actually waiting here -- see
-	// LRPS2_SYNC_STATS.)
-	SyncStat _s(g_sync_waitgs);
+	// change in wall time, because the EE is not actually waiting here.)
 	WaitGS(false);
 
 	// Vsyncs should always start the GS thread, regardless of how little has actually be queued.
@@ -169,7 +165,6 @@ void MTGS::TryOpenGS(void)
 
 void MTGS::MainLoop(bool flush_all)
 {
-	ArmProf::AttachThread("GS");
 
 	// Threading info: run in MTGS thread
 	// s_ReadPos is only update by the MTGS thread so it is safe to load it with a relaxed atomic

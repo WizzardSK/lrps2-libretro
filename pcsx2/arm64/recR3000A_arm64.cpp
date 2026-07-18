@@ -31,7 +31,6 @@
 
 #include "aarch64/macro-assembler-aarch64.h"
 
-#include "arm64/Profiler_arm64.h"
 
 using namespace vixl::aarch64;
 
@@ -789,7 +788,6 @@ namespace
 		const size_t sz = masm.GetSizeOfCodeGenerated();
 		__builtin___clear_cache(reinterpret_cast<char*>(start), reinterpret_cast<char*>(start + sz));
 		s_code_pos += (sz + 15) & ~size_t(15);
-		ArmProf::NoteBlock("iop-jit", start, sz, pc);
 
 		BlockFn fn = reinterpret_cast<BlockFn>(start);
 		// Native code covers the leading run; a translated branch also bakes the
@@ -872,7 +870,6 @@ static void recReserve(void)
 		if (s_lut == MAP_FAILED) s_lut = nullptr;
 	}
 	s_ok = s_ok && s_code && s_lut;
-	ArmProf::RegisterRegion("iop-jit", s_code, kCodeCacheSize);
 	Console.WriteLn("arm64 IOP rec (C.2b-4): %s.", s_ok ? "native ALU+mem+branch JIT active" : "FAILED -> interpreter fallback");
 }
 

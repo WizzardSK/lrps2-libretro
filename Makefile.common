@@ -319,9 +319,7 @@ SOURCES_CXX += \
 	$(LRPS2_DIR)/arm64/aVU.cpp \
 	$(LRPS2_DIR)/arm64/AsmHelpers.cpp \
 	$(LRPS2_DIR)/arm64/Vif_UnpackNEON.cpp \
-	$(LRPS2_DIR)/arm64/Vif_Dynarec_arm64.cpp \
-	$(LRPS2_DIR)/arm64/Profiler_arm64.cpp \
-	$(LRPS2_DIR)/arm64/SyncStats_arm64.cpp
+	$(LRPS2_DIR)/arm64/Vif_Dynarec_arm64.cpp
 else
 # pcsx2/x86 (recompilers)
 SOURCES_CXX += \

@@ -18,7 +18,6 @@
 // compiled block code is not executed yet — but it is fully emitted for real.
 
 #include "arm64/aVU.h"
-#include "arm64/Profiler_arm64.h"
 #include "arm64/aVU_IR.h"
 #include "arm64/aVU_Misc.h" // arch-neutral macro layer (task 7.3)
 
@@ -557,7 +556,6 @@ void mVUinit(microVU& mVU, uint vuIndex)
 		s_mvu_cache[vuIndex] = (u8*)mmap(nullptr, kMvuRecSize, PROT_READ | PROT_WRITE | PROT_EXEC,
 			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	mVU.cache        = s_mvu_cache[vuIndex];
-	ArmProf::RegisterRegion(vuIndex ? "mvu1" : "mvu0", s_mvu_cache[vuIndex], kMvuRecSize);
 	mVU.prog.codeReserveEnd = s_mvu_cache[vuIndex] + kMvuRecSize;
 	mVU.prog.codeEnd = mVU.prog.codeReserveEnd - (mVUcacheSafeZone * _1mb);
 
