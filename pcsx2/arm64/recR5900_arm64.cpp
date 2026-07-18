@@ -142,16 +142,10 @@ namespace
 	std::vector<u32> s_page_clears; // per RAM page, sized on reserve
 
 	// C.63 A/B toggles (cached: these are read per compiled instruction).
-	inline bool NoEeAdd()   { static const bool v = getenv("LRPS2_NO_EE_ADD")   != nullptr; return v; }
-	inline bool NoEePlzcw() { static const bool v = getenv("LRPS2_NO_EE_PLZCW") != nullptr; return v; }
-	inline bool NoEePrevh() { static const bool v = getenv("LRPS2_NO_EE_PREVH") != nullptr; return v; }
-	inline bool NoEeMmiHl() { static const bool v = getenv("LRPS2_NO_EE_MMIHL") != nullptr; return v; } // C.79
 
 	inline bool PageIsManual(u32 pg)
 	{
-		// LRPS2_NO_EE_MANUAL: back to protect-on-every-revive, for A/B.
-		static const bool off = getenv("LRPS2_NO_EE_MANUAL") != nullptr;
-		return !off && pg < s_page_clears.size() && s_page_clears[pg] >= kManualClears;
+		return pg < s_page_clears.size() && s_page_clears[pg] >= kManualClears;
 	}
 	// Any page the block's source spans having gone manual makes the block manual:
 	// none of them are protected any more, so it must validate all of its source.
@@ -233,10 +227,7 @@ namespace
 	// x10/x11 are scratch; w0/x1/q0 (address/value) are preserved.
 	inline bool InlineMemEnabled()
 	{
-		// LRPS2_NO_INLINE_MEM forces the inline memory path off for A/B diagnosis.
-		static int on = -1;
-		if (on < 0) on = getenv("LRPS2_NO_INLINE_MEM") ? 0 : 1;
-		return on != 0;
+		return true;
 	}
 	// The inline vmap path reads x28 as the VMAP base, so it is only legal when
 	// fastmem is off (in fastmem mode x28 holds the fastmem base instead). An op
@@ -308,8 +299,7 @@ namespace
 	{
 		static int mode = -1;
 		if (mode < 0)
-			mode = (!getenv("LRPS2_NO_FASTMEM") && !getenv("LRPS2_NO_INLINE_MEM") &&
-			        CHECK_FASTMEM && vtlb_private::vtlbdata.fastmem_base != 0) ? 1 : 0;
+			mode = (CHECK_FASTMEM && vtlb_private::vtlbdata.fastmem_base != 0) ? 1 : 0;
 		return mode != 0;
 	}
 	inline bool InlineVmapEnabled() { return InlineMemEnabled() && !FastmemMode(); }
@@ -497,9 +487,7 @@ namespace
 
 	inline bool RegCacheOn()
 	{
-		static int on = -1;
-		if (on < 0) on = getenv("LRPS2_NO_EE_REGCACHE") ? 0 : 1;
-		return on != 0;
+		return true;
 	}
 
 	// EE GPRs are 128-bit; integer ops use the low 64 bits at byte offset idx*16.
@@ -1246,7 +1234,7 @@ namespace
 				if (sub == 0x0e) { *fmt = 3; return M_CPYLD; } // PCPYLD
 				if (sub == 0x12) { *fmt = 0; return M_AND; }   // PAND
 				if (sub == 0x13) { *fmt = 0; return M_EOR; }   // PXOR
-				if (sub == 0x1b && !NoEePrevh()) { *fmt = 1; return M_REVH; }  // PREVH (C.63)
+				if (sub == 0x1b) { *fmt = 1; return M_REVH; }  // PREVH (C.63)
 				return -1;
 			case 0x29: // MMI3
 				if (sub == 0x0e) { *fmt = 3; return M_CPYUD; } // PCPYUD
@@ -1334,7 +1322,6 @@ namespace
 	enum { HL_NONE, HL_PMFHI, HL_PMFLO, HL_PMTHI, HL_PMTLO, HL_PPAC5 };
 	int MmiHiLoAction(u32 insn)
 	{
-		if (NoEeMmiHl()) return HL_NONE;
 		const u32 funct = insn & 0x3f, sub = (insn >> 6) & 0x1f;
 		if (funct == 0x09) { if (sub == 0x08) return HL_PMFHI; if (sub == 0x09) return HL_PMFLO; } // MMI2
 		if (funct == 0x29) { if (sub == 0x08) return HL_PMTHI; if (sub == 0x09) return HL_PMTLO; } // MMI3
@@ -1585,7 +1572,6 @@ namespace
 	// materialization when the page displacement does not encode or the page
 	// offset is not size-aligned. LRPS2_NO_COP2_ABSFOLD=1 restores the old
 	// mov+movk chains at the COP2 sites.
-	bool AbsFoldOk() { static const bool on = getenv("LRPS2_NO_COP2_ABSFOLD") == nullptr; return on; }
 	MemOperand AbsMem(MacroAssembler& m, const Register& scratch, const void* addr, unsigned size)
 	{
 		const uintptr_t cur = reinterpret_cast<uintptr_t>(m.GetBuffer()->GetStartAddress<u8*>()) +
@@ -1593,7 +1579,7 @@ namespace
 		const s64 page_disp = (static_cast<s64>(reinterpret_cast<uintptr_t>(addr) & ~uintptr_t(0xFFF)) -
 		                       static_cast<s64>(cur & ~uintptr_t(0xFFF))) >> 12;
 		const u32 page_off = static_cast<u32>(reinterpret_cast<uintptr_t>(addr) & 0xFFFu);
-		if (AbsFoldOk() && vixl::IsInt21(page_disp) && size && (page_off % size) == 0)
+		if (vixl::IsInt21(page_disp) && size && (page_off % size) == 0)
 		{
 			{
 				vixl::aarch64::SingleEmissionCheckScope guard(&m);
@@ -1712,7 +1698,6 @@ namespace {
 	int    s_emit_budget  = 1; // insns the current block may still emit (set by the builder)
 	inline void Cop2RunInvalidate() { s_cop2RunStart = 1; s_cop2RunEnd = 0; }
 
-	bool Cop2MacroSkipped(u32 insn); // defined below (TEMP bisect exclusions)
 
 	inline bool Cop2NativeMacroAlu(u32 insn)
 	{
@@ -1734,7 +1719,7 @@ namespace {
 		// is needed.
 		if ((insn & 0x3f) >= 0x3c && (sub == 0x2f || sub == 0x3b))
 			return false; // VNOP/VWAITQ (bracket-less empty emitters)
-		return recVUMacroIsMode0(insn) && !Cop2MacroSkipped(insn);
+		return recVUMacroIsMode0(insn);
 	}
 
 	void Cop2AnalyzeRun(u32 pc)
@@ -1794,60 +1779,6 @@ namespace {
 		if (last_mac >= 0)
 			s_cop2Run[last_mac].info |= EEINST_COP2_MAC_FLAG;
 	}
-	// TEMP bisect (C.30-2 black-texture hunt): LRPS2_COP2M_SKIP="a-b,c,d-e"
-	// (hex funct ranges) forces the listed COP2 SPECIAL functs back to the
-	// interp call while the rest stay native.
-	bool Cop2MacroSkipped(u32 insn)
-	{
-		const u32 funct = insn & 0x3f;
-		static int parsed = -1;
-		static u64 mask = 0;  // bit per funct 0..0x3f
-		static u64 smask[2] = {0, 0}; // bits per SPECIAL2 sub 0..0x43 ("sXX" entries)
-		if (parsed < 0)
-		{
-			parsed = 0;
-			// Also read the mask from a file so GUI-launched sessions (no env)
-			// can be re-tested by editing the file + restarting the frontend.
-			static char filebuf[256];
-			const char* e = getenv("LRPS2_COP2M_SKIP");
-			if (!e)
-			{
-				if (FILE* f = fopen("/home/user/lrps2_cop2skip.txt", "r"))
-				{
-					if (fgets(filebuf, sizeof(filebuf), f))
-						e = filebuf;
-					fclose(f);
-				}
-			}
-			if (e)
-			{
-				char buf[256]; strncpy(buf, e, 255); buf[255] = 0;
-				for (char* tok = strtok(buf, ","); tok; tok = strtok(nullptr, ","))
-				{
-					const bool sub = (tok[0] == 's');
-					if (sub) tok++;
-					unsigned lo, hi;
-					if (sscanf(tok, "%x-%x", &lo, &hi) == 2) {}
-					else if (sscanf(tok, "%x", &lo) == 1) hi = lo;
-					else continue;
-					// "sLO-sHI" tolerated too: strip a stray 's' on the hi bound
-					if (sub)
-						for (unsigned v = lo; v <= hi && v < 128; v++) smask[v >> 6] |= 1ull << (v & 63);
-					else
-						for (unsigned f = lo; f <= hi && f < 64; f++) mask |= 1ull << f;
-				}
-			}
-		}
-		if ((mask >> funct) & 1)
-			return true;
-		if (funct >= 0x3c) // SPECIAL2: match the sub index too
-		{
-			const u32 sub = (insn & 3) | ((insn >> 4) & 0x7c);
-			if (sub < 128 && ((smask[sub >> 6] >> (sub & 63)) & 1))
-				return true;
-		}
-		return false;
-	}
 
 	// ---- C.67: fused unaligned pairs ----
 	// The canonical MIPS unaligned idioms are two-op sequences that fully
@@ -1868,9 +1799,6 @@ namespace {
 	struct UPair { bool load, is64; u32 rt, rs; s32 off; };
 	inline bool UnalignedPair(u32 a, u32 b, UPair* out)
 	{
-		static const bool off_ = getenv("LRPS2_NO_EE_UPAIR") != nullptr;
-		if (off_)
-			return false;
 		const u32 opa = a >> 26, opb = b >> 26;
 		const u32 rta = (a >> 16) & 31, rtb = (b >> 16) & 31;
 		const u32 rsa = (a >> 21) & 31, rsb = (b >> 21) & 31;
@@ -1951,8 +1879,6 @@ namespace {
 	{
 		if (!recVUMacroIsMode0(insn))
 			{ Cop2CloseHold(m, gpr); return false; } // CALLMS/CALLMSR/unknown -> C.29-1 interp call
-		if (Cop2MacroSkipped(insn))
-			{ Cop2CloseHold(m, gpr); return false; } // TEMP bisect exclusion -> interp call
 		// VCLIP stays on the interpreter call PERMANENTLY (C.30-4 root cause,
 		// GT3 black road): the interpreter's macro path keeps the live clip
 		// shift register in VU->clipflag and commits it to VI[REG_CLIP_FLAG]
@@ -1975,19 +1901,14 @@ namespace {
 		// op the analyzer would not include (should not happen -- the same
 		// predicate guards both). C.78: the analysis moved ahead of the VU0
 		// sync + cache retire so the run boundaries can gate them too.
-		static const bool no_liveness = getenv("LRPS2_NO_COP2_LIVENESS") != nullptr;
-		static const bool no_runhoist = getenv("LRPS2_NO_COP2_RUNHOIST") != nullptr;
 		g_pCurInstInfo = &s_cop2AllLive;
 		bool in_run = false;
-		if (!no_liveness)
+		if (s_emit_pc < s_cop2RunStart || s_emit_pc >= s_cop2RunEnd)
+			Cop2AnalyzeRun(s_emit_pc);
+		if (s_emit_pc >= s_cop2RunStart && s_emit_pc < s_cop2RunEnd)
 		{
-			if (s_emit_pc < s_cop2RunStart || s_emit_pc >= s_cop2RunEnd)
-				Cop2AnalyzeRun(s_emit_pc);
-			if (s_emit_pc >= s_cop2RunStart && s_emit_pc < s_cop2RunEnd)
-			{
-				g_pCurInstInfo = &s_cop2Run[(s_emit_pc - s_cop2RunStart) >> 2];
-				in_run = true;
-			}
+			g_pCurInstInfo = &s_cop2Run[(s_emit_pc - s_cop2RunStart) >> 2];
+			in_run = true;
 		}
 		// C.78: hoist the per-op bracket overhead to once per run. First op of
 		// a run: VU0 sync + x19/x27 materialization (setupMacroOp reads
@@ -1997,7 +1918,7 @@ namespace {
 		// CMSAR1 are excluded from runs by the analyzer), so VU0 stays idle and
 		// x19/x27 stay valid for the run's whole emitted extent. The last op
 		// restores x19 in endMacroOp (g_cop2MacroLast).
-		const bool hoist = in_run && !no_runhoist;
+		const bool hoist = in_run;
 		const bool first = !hoist || !s_x19HeldVu;
 		const bool last  = !hoist || (s_emit_pc + 4 >= s_cop2RunEnd);
 		g_cop2MacroFirst = first;
@@ -2204,9 +2125,9 @@ namespace {
 					// 32-bit add/sub -> sign-extend to 64
 					// ADD/SUB trap on signed overflow; the x86 rec does not emulate that
 					// exception and neither do we for ADDI/DADDI, so they are ADDU/SUBU.
-					case 0x20: if (NoEeAdd()) break;
+					case 0x20:
 					case 0x21: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Add(d.W(), a.W(), b.W()); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // ADD/ADDU
-					case 0x22: if (NoEeAdd()) break;
+					case 0x22:
 					case 0x23: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.Sub(d.W(), a.W(), b.W()); m.Sxtw(d, d.W()); FinishDst(m, gpr, rd, d); } return true; // SUB/SUBU
 					// 64-bit logic / set / add / sub
 					case 0x24: if (rd) { const Register a = SrcGpr(m, gpr, rs, x0), b = SrcGpr(m, gpr, rt, x1), d = DstGpr(m, gpr, rd, x0); m.And(d, a, b); FinishDst(m, gpr, rd, d); } return true; // AND
@@ -2582,7 +2503,7 @@ namespace {
 				// C.63: PLZCW -- rd.UL[0..1] = count_leading_sign_bits(rs.SL[0..1]) - 1,
 				// which is exactly what AArch64's CLS computes (it excludes the sign
 				// bit). Only the low 64 bits of rd are written, like the interpreter.
-				if ((insn & 0x3f) == 0x04 && !NoEePlzcw())
+				if ((insn & 0x3f) == 0x04)
 				{
 					const u32 rd = (insn >> 11) & 31, rs = (insn >> 21) & 31;
 					if (rd)
@@ -2910,7 +2831,7 @@ namespace {
 				case 0x18: case 0x19: case 0x1a: case 0x1b: // MULT/MULTU/DIV/DIVU
 					return true;
 				case 0x20: case 0x22:                       // ADD/SUB (C.63, trap dropped)
-					return !NoEeAdd();
+					return true;
 				case 0x0f: return true;                     // SYNC (empty body)
 				case 0x0a: case 0x0b: return true;          // MOVZ/MOVN
 				case 0x28: case 0x29: return true;          // MFSA/MTSA
@@ -2926,7 +2847,7 @@ namespace {
 				|| f == 0x00 || f == 0x01 || f == 0x20 || f == 0x21) // MADD/MADDU(1)
 				return true;
 			if (f == 0x04)             // PLZCW (C.63)
-				return !NoEePlzcw();
+				return true;
 			return MmiSupported(insn) || MmiHiLoAction(insn) || IsPcpyh(insn) || // C.79
 				IsQfsrv(insn);
 		}
@@ -2983,7 +2904,6 @@ namespace {
 	// calls the helper) is a stub, not inline.
 	void EmitTailCycles(MacroAssembler& m, int cyc, bool with_update)
 	{
-		static const bool upd_inline = getenv("LRPS2_NO_INLINE_UPD") == nullptr;
 		const uint64_t upd = reinterpret_cast<uint64_t>(&eeUpdateCycles_arm64);
 		m.Mov(x10, reinterpret_cast<uint64_t>(&cpuBlockCycles)); // once, for both halves
 		m.Ldr(w1, RegsField(&cpuRegs.CP0.n.Config));
@@ -2993,7 +2913,7 @@ namespace {
 		m.Ldr(w0, MemOperand(x10));
 		m.Add(w0, w0, w2); // cpuBlockCycles += cyc * (2 - CP0.Config[18])
 
-		if (!with_update || !upd_inline)
+		if (!with_update)
 		{
 			m.Str(w0, MemOperand(x10));
 			if (with_update) { m.Mov(x16, upd); m.Blr(x16); }
@@ -3142,27 +3062,17 @@ namespace {
 		// taken branch, and mirroring that costs ~28% of CPU time in
 		// _cpuEventTest_Shared/iopEventTest bookkeeping (GT3 perf profile).
 		// This intentionally trades interpreter bit-identity (events fire at
-		// the next due branch, not the current one) for upstream-rec timing;
-		// LRPS2_NO_EVTGATE=1 restores the every-branch behaviour.
-		static const bool evt_gate = getenv("LRPS2_NO_EVTGATE") == nullptr;
+		// the next due branch, not the current one) for upstream-rec timing.
 		const auto EmitEventTest = [&m, evt]()
 		{
-			if (evt_gate)
-			{
-				Label skip;
-				m.Ldr(w0, RegsField(&cpuRegs.cycle));
-				m.Ldr(w1, RegsField(&cpuRegs.nextEventCycle));
-				m.Subs(w0, w0, w1); // (s32)(cycle - nextEventCycle)
-				m.B(&skip, mi);     // not due yet
-				m.Mov(x16, evt);
-				m.Blr(x16);
-				m.Bind(&skip);
-			}
-			else
-			{
-				m.Mov(x16, evt);
-				m.Blr(x16);
-			}
+			Label skip;
+			m.Ldr(w0, RegsField(&cpuRegs.cycle));
+			m.Ldr(w1, RegsField(&cpuRegs.nextEventCycle));
+			m.Subs(w0, w0, w1); // (s32)(cycle - nextEventCycle)
+			m.B(&skip, mi);     // not due yet
+			m.Mov(x16, evt);
+			m.Blr(x16);
+			m.Bind(&skip);
 		};
 
 		// C.39: inline the default-cycle-rate body of intUpdateCPUCycles
@@ -3211,7 +3121,7 @@ namespace {
 			EmitTailCycles(m, cyc_taken, true); // C.55 (bookkeeping + update, fused)
 			if (idle_skip) EmitIdleSkip();
 			if (is_jr) { EmitEventTest(); EmitChainEpilogue(m); }
-			else       EmitKnownExit(m, tconst, evt, evt_gate); // C.54
+			else       EmitKnownExit(m, tconst, evt, true); // C.54
 			return true;
 		}
 
@@ -3275,7 +3185,7 @@ namespace {
 			s_rc.FlushDirty(m, gpr); // block exit (taken)
 			EmitTailCycles(m, cyc_taken, true); // C.55 (bookkeeping + update, fused)
 			if (idle_skip) EmitIdleSkip();
-			EmitKnownExit(m, tconst, evt, evt_gate); // C.54
+			EmitKnownExit(m, tconst, evt, true); // C.54
 		}
 		s_rc = fork_state;
 		m.Bind(&not_taken);
@@ -3296,7 +3206,7 @@ namespace {
 		// which cascades into different kernel-scheduler decisions (MMX7 FMV
 		// loader wedge).
 		const bool nt_evt = (op == 0x04 || op == 0x05 || (likely && !bc0 && !bc1 && !bc2));
-		EmitKnownExit(m, bpc + (likely ? 8 : 4), nt_evt ? evt : 0, evt_gate); // C.54
+		EmitKnownExit(m, bpc + (likely ? 8 : 4), nt_evt ? evt : 0, true); // C.54
 		return true;
 	}
 
@@ -3317,8 +3227,6 @@ namespace {
 	// interpreter-loop bookkeeping and has no JIT equivalent to mirror.
 	bool EmitEret(MacroAssembler& m, const Register& gpr, u32 insn, int cyc_leading)
 	{
-		static const bool no_eret = getenv("LRPS2_NO_EE_ERET") != nullptr;
-		if (no_eret) return false;
 		if ((insn >> 26) != 0x10 || ((insn >> 21) & 31) != 0x10 || (insn & 0x3f) != 0x18)
 			return false;
 		s_rc.pinned = 0; // new op: previous op's Register handles are dead
@@ -3514,22 +3422,6 @@ namespace {
 			if (EmitSimple(masm, gpr, insn))
 			{
 				cyc += OpCycles(insn); p += 4; n++;
-				// TEMP diagnostic (LRPS2_EE_SPLIT_MEM): execute mem ops natively but
-				// end the block right after each one (shortest-possible native blocks,
-				// like NO_EE_MEM's block shape but keeping native mem execution) -- to
-				// bisect "native mem op is wrong" vs "long native block interaction".
-				static int split_mem = -1;
-				if (split_mem < 0) split_mem = getenv("LRPS2_EE_SPLIT_MEM") ? 1 : 0;
-				const u32 mop = insn >> 26;
-				const bool is_mem = (mop >= 0x20 && mop <= 0x2b) || mop == 0x37 || mop == 0x3f || mop == 0x31 || mop == 0x39;
-				if (split_mem && is_mem)
-				{
-					StorePCImm(masm, p);
-					EmitCycleBookkeeping(masm, cyc);
-					s_rc.FlushDirty(masm, gpr); // block exit: memory must be current
-					EmitKnownExit(masm, p, 0, true); // C.54: no event test here -> pc is p
-					done = true; break;
-				}
 				continue;
 			}
 			if (EmitBranch(masm, gpr, p, insn, cyc)) { done = true; branch_end = true; break; } // emits bookkeeping + pc + eventtest + chain epilogue
@@ -3545,8 +3437,7 @@ namespace {
 		// fully-translatable tail to the interpreter; end the block cleanly at p
 		// and let the chain continue translating from there. This was the #1
 		// "breaker" in the handoff stats (LD/SD/etc. sitting at position 64).
-		static const bool cap_chain = getenv("LRPS2_NO_CAP_CHAIN") == nullptr;
-		if (!done && n == kMaxInsns && cap_chain)
+		if (!done && n == kMaxInsns)
 		{
 			StorePCImm(masm, p);
 			EmitCycleBookkeeping(masm, cyc);
