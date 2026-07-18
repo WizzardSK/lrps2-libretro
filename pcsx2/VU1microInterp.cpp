@@ -244,14 +244,6 @@ void InterpVU1::SetStartPC(u32 startPC)
 	vuRegs[1].start_pc = startPC;
 }
 
-// Single-step one VU1 instruction pair -- used by the aVU MVU_DIFF shadow
-// tool to localize the first diverging instruction inside a program.
-void InterpVU1::Step()
-{
-	vuRegs[1].VI[REG_TPC].UL &= VU1_PROGMASK;
-	vu1Exec(&vuRegs[1]);
-}
-
 void InterpVU1::Execute(u32 cycles)
 {
 	const FPControlRegisterBackup fpcr_backup(EmuConfig.Cpu.VU1FPCR);

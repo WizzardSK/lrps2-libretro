@@ -916,7 +916,7 @@ void VMManager::UpdateCPUImplementations()
 		CpuVU1 = &CpuMicroVU1;
 #else
 	// C.28-4: microVU1 (the armsx2 transplant, native VU codegen) is the VU1
-	// provider -- MVU_DIFF-verified register-exact against the interpreter.
+	// provider -- verified register-exact against the interpreter.
 	if (EmuConfig.Cpu.Recompiler.EnableVU1)
 	{
 		CpuVU1 = &CpuMicroVU1;
@@ -1299,7 +1299,7 @@ static void SetMTVUAndAffinityControlDefault(SettingsInterface& si)
 	// with upstream's XGKICK handling) -- until C.28-4 MTVU was opt-in
 	// (helps VU-light titles; MMX7 verified pixel-identical).
 	// C.28-4: with microVU1 as the default VU1 provider (native codegen,
-	// MVU_DIFF-verified against the interpreter), MTVU and instant VU1 are
+	// verified register-exact against the interpreter), MTVU and instant VU1 are
 	// safe defaults again -- the C.13c livelock and the 3M-cycle-budget wall
 	// were interpreter-provider problems, and microVU1 is now the only VU1
 	// provider.
