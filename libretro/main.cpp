@@ -1122,12 +1122,31 @@ static void check_variables(bool first_run)
 	}
 
 	/* MTVU / Instant VU1: restart-only (THREAD_VU1 must not flip while the
-	 * MTGS ring is live - see the MainLoop handoff-mutex comment). */
+	 * MTGS ring is live - see the MainLoop handoff-mutex comment). On arm64
+	 * VMManager decides MTVU itself (default ON with microVU1, overridable
+	 * via LRPS2_NO_MTVU/LRPS2_MTVU - VMManager.cpp ~1314) and rewrites
+	 * vuThread at boot, so the option drives that env mechanism instead of
+	 * fighting the rewrite. */
 	if (first_run)
 	{
 		var.key = "pcsx2_mtvu";
 		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-			s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vuThread", !strcmp(var.value, "enabled"));
+		{
+			const bool mtvu_on = !strcmp(var.value, "enabled");
+			s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vuThread", mtvu_on);
+#ifdef ARCH_ARM64
+			if (mtvu_on)
+			{
+				unsetenv("LRPS2_NO_MTVU");
+				setenv("LRPS2_MTVU", "1", 1);
+			}
+			else
+			{
+				setenv("LRPS2_NO_MTVU", "1", 1);
+				unsetenv("LRPS2_MTVU");
+			}
+#endif
+		}
 
 		var.key = "pcsx2_instant_vu1";
 		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
