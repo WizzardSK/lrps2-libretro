@@ -4,7 +4,7 @@
 #include "FastJmp.h"
 
 /* Win32 uses Fastjmp.asm, because MSVC doesn't support inline asm. */
-#if !defined(_WIN32) || defined(_M_ARM64)
+#if !defined(_WIN32) || (defined(_M_ARM64) || defined(__aarch64__))
 
 #if defined(__APPLE__)
 #define PREFIX "_"
@@ -46,7 +46,7 @@ asm(
 	jmp *%rdx
 )");
 
-#elif defined(_M_ARM64)
+#elif (defined(_M_ARM64) || defined(__aarch64__))
 
 asm(
 	"\t.global " PREFIX "fastjmp_set\n"

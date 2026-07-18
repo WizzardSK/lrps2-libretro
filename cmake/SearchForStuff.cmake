@@ -75,6 +75,12 @@ target_include_directories(fast_float INTERFACE 3rdparty/rapidyaml/rapidyaml/ext
 add_subdirectory(3rdparty/cpuinfo EXCLUDE_FROM_ALL)
 add_subdirectory(3rdparty/lz4 EXCLUDE_FROM_ALL)
 
+# arm64 recompiler port (Phase C): VIXL is the AArch64 code emitter. x86 builds
+# use the in-tree x86 emitter (common/emitter) instead, so this is arm64-only.
+if(NOT _M_X86)
+	add_subdirectory(3rdparty/vixl EXCLUDE_FROM_ALL)
+endif()
+
 if(USE_OPENGL)
 	add_subdirectory(3rdparty/glad EXCLUDE_FROM_ALL)
 endif()

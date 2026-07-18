@@ -187,7 +187,7 @@ void V_Core::FinishDMAwrite()
 			// and an interrupt never fires again, leaving the voices looping the same samples forever.
 
 			if (Cores[i].IRQEnable && (Cores[i].IRQA > start || Cores[i].IRQA < TDA))
-				has_to_call_irq_dma[i] = true;
+				{ if (g_spuSyncOn) g_spuSync.irq_dma++; has_to_call_irq_dma[i] = true; }
 		}
 	}
 	else
@@ -202,7 +202,7 @@ void V_Core::FinishDMAwrite()
 		for (int i = 0; i < 2; i++)
 		{
 			if (Cores[i].IRQEnable && (Cores[i].IRQA > ActiveTSA && Cores[i].IRQA < TDA))
-				has_to_call_irq_dma[i] = true;
+				{ if (g_spuSyncOn) g_spuSync.irq_dma++; has_to_call_irq_dma[i] = true; }
 		}
 	}
 
@@ -270,7 +270,7 @@ void V_Core::FinishDMAread()
 		for (int i = 0; i < 2; i++)
 		{
 			if (Cores[i].IRQEnable && (Cores[i].IRQA > start || Cores[i].IRQA < TDA))
-				has_to_call_irq_dma[i] = true;
+				{ if (g_spuSyncOn) g_spuSync.irq_dma++; has_to_call_irq_dma[i] = true; }
 		}
 	}
 	else
@@ -286,7 +286,7 @@ void V_Core::FinishDMAread()
 		for (int i = 0; i < 2; i++)
 		{
 			if (Cores[i].IRQEnable && (Cores[i].IRQA > ActiveTSA && Cores[i].IRQA < TDA))
-				has_to_call_irq_dma[i] = true;
+				{ if (g_spuSyncOn) g_spuSync.irq_dma++; has_to_call_irq_dma[i] = true; }
 		}
 	}
 
@@ -317,6 +317,8 @@ void V_Core::FinishDMAread()
 
 void V_Core::DoDMAread(u16* pMem, u32 size)
 {
+	if (g_spuSyncOn) { g_spuSync.dmar++; g_spuSync.dmar_words += size; } // LRPS2_SPU_SYNC_STATS
+
 	TimeUpdate(psxRegs.cycle);
 
 	DMARPtr = pMem;
@@ -344,6 +346,8 @@ void V_Core::DoDMAread(u16* pMem, u32 size)
 
 void V_Core::DoDMAwrite(u16* pMem, u32 size)
 {
+	if (g_spuSyncOn) { g_spuSync.dmaw++; g_spuSync.dmaw_words += size; } // LRPS2_SPU_SYNC_STATS
+
 	DMAPtr = pMem;
 
 	if (size < 2)

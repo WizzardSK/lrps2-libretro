@@ -316,6 +316,14 @@ static bool cpuIntsEnabled(int Interrupt)
 // and the recompiler.  (moved here to help alleviate redundant code)
 __fi void _cpuEventTest_Shared(void)
 {
+	// TEMP diagnostic (LRPS2_EVT_STATS): how often are we here, and how often do
+	// the individual sub-tests actually do something?
+	static const bool evt_stats = getenv("LRPS2_EVT_STATS") != nullptr;
+	static u64 n_calls = 0, n_rcnt = 0, n_int = 0, n_exc = 0, n_iop = 0;
+	if (evt_stats && (++n_calls & 0xfffff) == 0)
+		fprintf(stderr, "[evt] calls=%lluM rcntUpdate=%llu ints=%llu exc=%llu iop=%llu\n",
+			(unsigned long long)(n_calls >> 20), (unsigned long long)n_rcnt,
+			(unsigned long long)n_int, (unsigned long long)n_exc, (unsigned long long)n_iop);
 	eeEventTestIsActive    = true;
 	cpuRegs.nextEventCycle = cpuRegs.cycle + EE_WAIT_CYCLES;
 	cpuRegs.lastEventCycle = cpuRegs.cycle;
@@ -326,7 +334,10 @@ __fi void _cpuEventTest_Shared(void)
 
 	uint mask = intcInterrupt() | dmacInterrupt();
 	if (cpuIntsEnabled(mask))
+	{
+		if (evt_stats) n_exc++;
 		cpuException(mask, cpuRegs.branch);
+	}
 
 
 	// ---- Counters -------------
@@ -336,6 +347,7 @@ __fi void _cpuEventTest_Shared(void)
 
 	if (cpuTestCycle(nextStartCounter, nextDeltaCounter))
 	{
+		if (evt_stats) n_rcnt++;
 		rcntUpdate();
 		// Perfs are updated when read by games (COP0's MFC0/MTC0 instructions), so we need
 		// only update them at semi-regular intervals to keep cpuRegs.cycle from wrapping
@@ -363,6 +375,7 @@ __fi void _cpuEventTest_Shared(void)
 
 	if (cpuRegs.interrupt)
 	{
+		if (evt_stats) n_int++;
 		// This is a BIOS hack because the coding in the BIOS is terrible but the bug is masked by Data Cache
 		// where a DMA buffer is overwritten without waiting for the transfer to end, which causes the fonts to get all messed up
 		// so to fix it, we run all the DMA's instantly when in the BIOS.
@@ -394,6 +407,7 @@ __fi void _cpuEventTest_Shared(void)
 
 	if (iopEventAction)
 	{
+		if (evt_stats) n_iop++;
 		EEsCycle = psxCpu->ExecuteBlock(EEsCycle);
 
 		iopEventAction = false;
@@ -428,6 +442,27 @@ __fi void _cpuEventTest_Shared(void)
 	// Apply vsync and other counter nextDeltaCycles
 	if ((int)(cpuRegs.nextEventCycle - nextStartCounter) > nextDeltaCounter)
 		cpuRegs.nextEventCycle = nextStartCounter + nextDeltaCounter;
+
+	// TEMP diagnostic (LRPS2_EVT_STATS): which clamp actually decides how soon we
+	// come back, and how far out it is.
+	if (evt_stats)
+	{
+		const int d = (int)(cpuRegs.nextEventCycle - cpuRegs.cycle);
+		static u64 n_slice = 0, n_delta = 0, n_cnt = 0, n_other = 0, sum_d = 0, n_d = 0;
+		static u64 h[8] = {};
+		if (cpuRegs.nextEventCycle == nextStartCounter + nextDeltaCounter) n_cnt++;
+		else if (EEsCycle >= nextIopEventDeta) n_slice++;
+		else n_delta++;
+		sum_d += (u64)(d > 0 ? d : 0); n_d++;
+		h[d <= 8 ? 0 : d <= 16 ? 1 : d <= 32 ? 2 : d <= 64 ? 3 : d <= 128 ? 4 : d <= 256 ? 5 : d <= 1024 ? 6 : 7]++;
+		if ((n_d & 0xfffff) == 0)
+			fprintf(stderr, "[evt2] clamp: counter=%llu iop-slice=%llu iop-delta=%llu | avg_next=%llu | hist<=8,16,32,64,128,256,1k,inf: %llu %llu %llu %llu %llu %llu %llu %llu\n",
+				(unsigned long long)n_cnt, (unsigned long long)n_slice, (unsigned long long)n_delta,
+				(unsigned long long)(sum_d / n_d),
+				(unsigned long long)h[0], (unsigned long long)h[1], (unsigned long long)h[2], (unsigned long long)h[3],
+				(unsigned long long)h[4], (unsigned long long)h[5], (unsigned long long)h[6], (unsigned long long)h[7]);
+		(void)n_other;
+	}
 
 	eeEventTestIsActive = false;
 }

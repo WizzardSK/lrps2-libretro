@@ -24,6 +24,8 @@
 
 #include "../Config.h"
 
+// #define IPU_TRACE 1 // TEMP: trace IPU command/worker progress
+
 // the BP doesn't advance and returns -1 if there is no data to be read
 alignas(16) tIPU_cmd ipu_cmd;
 alignas(16) tIPU_BP g_BP;
@@ -91,6 +93,10 @@ void tIPU_cmd::clear()
 
 __fi void IPUProcessInterrupt(void)
 {
+#ifdef IPU_TRACE
+	{ static u64 c=0; if(((++c)&0x3ff)==0) fprintf(stderr,"[ipu] proc#%llu busy=%u cmd=0x%x BP=%u IFC=%u\n",
+		(unsigned long long)c, ipuRegs.ctrl.BUSY, ipu_cmd.current, g_BP.BP, g_BP.IFC); }
+#endif
 	if (ipuRegs.ctrl.BUSY)
 		IPUWorker();
 }
@@ -155,6 +161,16 @@ __fi u32 ipuRead32(u32 mem)
 		{
 			ipuRegs.ctrl.IFC = g_BP.IFC;
 			ipuRegs.ctrl.CBP = coded_block_pattern;
+			static int ctrl_log = -1; // cached: getenv on every CTRL read showed up in profiles
+			if (ctrl_log < 0) ctrl_log = getenv("LRPS2_IPU_CTRL_LOG") ? 1 : 0;
+			if (ctrl_log)
+			{
+				static u64 c = 0;
+				if (((++c) & 0x3ffff) == 1)
+					fprintf(stderr, "[ctrl] #%llu cycle=%u ctrl=%08x BUSY=%u IFC=%u cmd=%x BP=%u\n",
+						(unsigned long long)c, cpuRegs.cycle, ipuRegs.ctrl._u32, ipuRegs.ctrl.BUSY,
+						g_BP.IFC, ipu_cmd.current, g_BP.BP);
+			}
 			return ipuRegs.ctrl._u32;
 		}
 
@@ -325,6 +341,9 @@ static void ipuSETTH(u32 val)
 // The actual decoding will be handled by IPUworker.
 __fi void IPUCMD_WRITE(u32 val)
 {
+#ifdef IPU_TRACE
+	fprintf(stderr,"[ipu] CMD_WRITE val=0x%08x cmd=%u\n", val, (val>>28)&0xf);
+#endif
 	ipuRegs.ctrl.ECD = 0;
 	ipuRegs.ctrl.SCD = 0;
 	ipu_cmd.clear();

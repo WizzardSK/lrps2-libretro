@@ -469,6 +469,10 @@ void LHU()
 	cpuRegs.GPR.r[_Rt_].UD[0] = temp;
 }
 
+#ifdef ARCH_ARM64
+extern "C" void eeDiagLogMem(int rd, u32 a, u64 v, int w); // TEMP diagnostic (LRPS2_WLOG)
+#endif
+
 void LW()
 {
 	u32 addr = cpuRegs.GPR.r[_Rs_].UL[0] + _Imm_;
@@ -478,6 +482,9 @@ void LW()
 
 	u32 temp = memRead32(addr);
 
+#ifdef ARCH_ARM64
+	eeDiagLogMem(1, addr, temp, 4);
+#endif
 	if (!_Rt_) return;
 	cpuRegs.GPR.r[_Rt_].SD[0] = (s32)temp;
 }
@@ -574,7 +581,12 @@ void LD()
 	if (unlikely(addr & 7))
 		Cpu->CancelInstruction();
 
-	cpuRegs.GPR.r[_Rt_].UD[0] = memRead64(addr);
+	u64 temp = memRead64(addr);
+
+#ifdef ARCH_ARM64
+	eeDiagLogMem(1, (u32)addr, temp, 8);
+#endif
+	cpuRegs.GPR.r[_Rt_].UD[0] = temp;
 }
 
 static const u64 LDL_MASK[8] =
@@ -632,6 +644,11 @@ void SH()
 	memWrite16(addr, cpuRegs.GPR.r[_Rt_].US[0]);
 }
 
+#ifdef ARCH_ARM64
+extern "C" void eeDiagLogWrite(u32 a, u64 v, int w); // TEMP diagnostic (LRPS2_WLOG)
+extern "C" void eeDiagLogMem(int rd, u32 a, u64 v, int w); // TEMP diagnostic (LRPS2_WLOG)
+#endif
+
 void SW()
 {
 	u32 addr = cpuRegs.GPR.r[_Rs_].UL[0] + _Imm_;
@@ -639,6 +656,9 @@ void SW()
 	if (unlikely(addr & 3))
 		Cpu->CancelInstruction();
 
+#ifdef ARCH_ARM64
+	eeDiagLogWrite(addr, cpuRegs.GPR.r[_Rt_].UL[0], 4);
+#endif
 	memWrite32(addr, cpuRegs.GPR.r[_Rt_].UL[0]);
 }
 
@@ -692,6 +712,9 @@ void SD()
 	if (unlikely(addr & 7))
 		Cpu->CancelInstruction();
 
+#ifdef ARCH_ARM64
+	eeDiagLogWrite(addr, cpuRegs.GPR.r[_Rt_].UD[0], 8);
+#endif
 	memWrite64(addr,cpuRegs.GPR.r[_Rt_].UD[0]);
 }
 
@@ -732,6 +755,9 @@ void SQ()
 	// MIPS Note: LQ and SQ are special and "silently" align memory addresses, thus
 	// an address error due to unaligned access isn't possible like it is on other loads/stores.
 	u32 addr = cpuRegs.GPR.r[_Rs_].UL[0] + _Imm_;
+#ifdef ARCH_ARM64
+	eeDiagLogMem(0, addr & ~0xf, cpuRegs.GPR.r[_Rt_].UD[0], 16);
+#endif
 	memWrite128(addr & ~0xf, &cpuRegs.GPR.r[_Rt_].UQ);
 }
 

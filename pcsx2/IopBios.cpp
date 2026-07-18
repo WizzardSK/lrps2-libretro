@@ -1056,4 +1056,66 @@ namespace R3000A
 		return 0;
 	}
 
+	// C.71: per-stub cache of the import resolution. psxJ runs the module-import
+	// stub through irxImportExec on EVERY execution -- a backward scan of up to
+	// 0x2000 bytes for the 0x41e00000 table magic, a std::string heap allocation
+	// for the library name, and a string-compare chain, millions of times per
+	// minute (this is the one J form the arm64 IOP JIT leaves to the interpreter
+	// for exactly this hook). The resolution depends only on the table magic,
+	// the 8-byte libname and the index, so cache it per stub pc and revalidate
+	// those inputs with three RAM reads per hit. A module loading over the stub
+	// rewrites name/magic and fails revalidation -> full re-resolve. A stub with
+	// NO table (scan miss) is not cached: there is nothing stable to revalidate
+	// against. LRPS2_NO_IOP_JSTUB_CACHE=1 restores the uncached path.
+	namespace
+	{
+		struct JStubCacheEntry { u32 table, name0, name1; u16 index; irxHLE hle; irxDEBUG debug; };
+		std::unordered_map<u32, JStubCacheEntry> s_jstub_cache;
+	}
+
+	int irxImportExecCached(u32 stubpc, u16 index)
+	{
+		static const bool enabled = getenv("LRPS2_NO_IOP_JSTUB_CACHE") == nullptr;
+		if (!enabled)
+			return irxImportExec(irxImportTableAddr(stubpc), index);
+
+		auto it = s_jstub_cache.find(stubpc);
+		if (it != s_jstub_cache.end())
+		{
+			const JStubCacheEntry& e = it->second;
+			if (e.index == index &&
+				iopMemRead32(e.table) == 0x41e00000 &&
+				iopMemRead32(e.table + 12) == e.name0 &&
+				iopMemRead32(e.table + 16) == e.name1)
+			{
+				if (e.debug)
+					e.debug();
+				if (e.hle)
+					return e.hle();
+				return 0;
+			}
+			s_jstub_cache.erase(it);
+		}
+
+		const u32 table = irxImportTableAddr(stubpc);
+		if (!table)
+			return 0;
+
+		JStubCacheEntry e;
+		e.table = table;
+		e.name0 = iopMemRead32(table + 12);
+		e.name1 = iopMemRead32(table + 16);
+		e.index = index;
+		std::string libname = iopMemReadString(table + 12, 8);
+		e.hle   = irxImportHLE(libname, index);
+		e.debug = irxImportDebug(libname, index);
+		s_jstub_cache.emplace(stubpc, e);
+
+		if (e.debug)
+			e.debug();
+		if (e.hle)
+			return e.hle();
+		return 0;
+	}
+
 } // end namespace R3000A

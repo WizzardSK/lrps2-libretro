@@ -124,9 +124,9 @@ void psxBNE()   // Branch if Rs != Rt
 *********************************************************/
 void psxJ(void)
 {
-	// check for iop module import table magic
+	// check for iop module import table magic (C.71: cached resolution)
 	u32 delayslot = iopMemRead32(psxRegs.pc);
-	if (delayslot >> 16 == 0x2400 && R3000A::irxImportExec(R3000A::irxImportTableAddr(psxRegs.pc), delayslot & 0xffff))
+	if (delayslot >> 16 == 0x2400 && R3000A::irxImportExecCached(psxRegs.pc, delayslot & 0xffff))
 		return;
 
 	doBranch(_JumpTarget_);
@@ -179,6 +179,91 @@ static s32 intExecuteBlock( s32 eeCycles )
 
 	return psxRegs.iopBreak + psxRegs.iopCycleEE;
 }
+
+#ifdef ARCH_ARM64
+// TEMP diagnostic (LRPS2_IOP_HANDOFF_STATS=1): dynamic histogram of the opcodes
+// the IOP JIT hands off to the interpreter, keyed (op, funct/rs/rt sub-field).
+// Mirrors the EE's LRPS2_HANDOFF_STATS (Interpreter.cpp): h = every interpreted
+// op, hf = only the FIRST op of each handoff (the actual block breaker). Dumps
+// at exit. Delay-slot ops run inside doBranch and are not counted (same caveat
+// as the EE tool).
+#include <unordered_map>
+#include <vector>
+#include <algorithm>
+static const bool s_iopHandoffStats = getenv("LRPS2_IOP_HANDOFF_STATS") != nullptr;
+namespace
+{
+	static void iopHandoffDump(const char* tag, std::unordered_map<u32, u64>& m, u64 total)
+	{
+		std::vector<std::pair<u32, u64>> v(m.begin(), m.end());
+		const size_t k = v.size() < 24 ? v.size() : 24;
+		std::partial_sort(v.begin(), v.begin() + k, v.end(), [](auto& x, auto& y) { return x.second > y.second; });
+		fprintf(stderr, "=== IOP handoff %s (%llu ops, uniq=%zu) ===\n", tag,
+			(unsigned long long)total, v.size());
+		for (size_t i = 0; i < k; i++)
+			fprintf(stderr, "  op=%02x sub=%02x  %llu\n",
+				v[i].first >> 8, v[i].first & 0xff, (unsigned long long)v[i].second);
+	}
+
+	struct IopHandoffTables
+	{
+		std::unordered_map<u32, u64> h, hf;
+		u64 n = 0, nf = 0;
+		~IopHandoffTables()
+		{
+			if (!s_iopHandoffStats)
+				return;
+			iopHandoffDump("histogram", h, n);
+			iopHandoffDump("BREAKERS (first op)", hf, nf);
+		}
+	};
+	IopHandoffTables s_iopHandoff;
+
+	static void iopHandoffCount(u32 insn, bool first)
+	{
+		const u32 op = insn >> 26;
+		u32 key = op << 8;
+		if      (op == 0x00) key |= insn & 0x3f;         // SPECIAL: funct
+		else if (op == 0x01) key |= (insn >> 16) & 0x1f; // REGIMM: rt
+		else if (op == 0x10 || op == 0x12) key |= (insn >> 21) & 0x1f; // COP0/COP2: rs
+		s_iopHandoff.h[key]++; s_iopHandoff.n++;
+		if (first) { s_iopHandoff.hf[key]++; s_iopHandoff.nf++;
+			// TEMP: pinpoint unexplained breakers (LRPS2_IOP_HANDOFF_PC=<key>)
+			static const char* want = getenv("LRPS2_IOP_HANDOFF_PC");
+			static u32 wkey = want ? (u32)strtoul(want, nullptr, 0) : 0xffffffff;
+			static int budget = 20;
+			if (key == wkey && budget > 0) { budget--; fprintf(stderr, "[iop-hf] pc=%08x insn=%08x\n", psxRegs.pc, insn); }
+		}
+	}
+}
+
+// arm64 recompiler (Phase C.2b) helper: run a single IOP basic block through the
+// interpreter -- instructions until the next taken branch (and its delay slot,
+// which execI()/doBranch() handle). The arm64 JIT currently emits one per-PC
+// block per basic block, each of which calls this; Phase C.2b-2 replaces the
+// body with natively translated instructions. Mirrors intExecuteBlock's inner
+// loop (incl. the BIOS HLE entry hook) so behaviour is identical.
+extern "C" void iopRunBasicBlock_arm64(void)
+{
+	if ((psxHu32(HW_ICFG) & 8) && ((psxRegs.pc & 0x1fffffffU) == 0xa0 || (psxRegs.pc & 0x1fffffffU) == 0xb0 || (psxRegs.pc & 0x1fffffffU) == 0xc0))
+		psxBiosCall();
+
+	branch2 = 0;
+	if (s_iopHandoffStats)
+	{
+		bool first = true;
+		while (!branch2)
+		{
+			iopHandoffCount(iopMemRead32(psxRegs.pc), first);
+			first = false;
+			execI();
+		}
+		return;
+	}
+	while (!branch2)
+		execI();
+}
+#endif
 
 R3000Acpu psxInt = {
 	intReserve,

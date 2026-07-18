@@ -632,6 +632,10 @@ static void check_variables(bool first_run)
 #if 0
 			// TODO: ATM it crashes when changed on-the-fly, re-enable when fixed
 			// also remove "(Restart)" from the core option label
+			//
+			// Likely fixed by the set_image retract in libretro_context_destroy
+			// (the reinit used to release a view onto a pool texture CloseGS had
+			// already destroyed) - retest in a frontend before re-enabling.
 			else if (setting_upscale_multiplier != upscale_multiplier_prev)
 			{
 				retro_system_av_info av_info;
@@ -1115,6 +1119,38 @@ static void check_variables(bool first_run)
 			s_settings_interface.SetIntValue("EmuCore/Speedhacks", "EECycleRate", setting_ee_cycle_rate);
 			updated = true;
 		}
+	}
+
+	/* MTVU / Instant VU1: restart-only (THREAD_VU1 must not flip while the
+	 * MTGS ring is live - see the MainLoop handoff-mutex comment). On arm64
+	 * VMManager decides MTVU itself (default ON with microVU1, overridable
+	 * via LRPS2_NO_MTVU/LRPS2_MTVU - VMManager.cpp ~1314) and rewrites
+	 * vuThread at boot, so the option drives that env mechanism instead of
+	 * fighting the rewrite. */
+	if (first_run)
+	{
+		var.key = "pcsx2_mtvu";
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		{
+			const bool mtvu_on = !strcmp(var.value, "enabled");
+			s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vuThread", mtvu_on);
+#ifdef ARCH_ARM64
+			if (mtvu_on)
+			{
+				unsetenv("LRPS2_NO_MTVU");
+				setenv("LRPS2_MTVU", "1", 1);
+			}
+			else
+			{
+				setenv("LRPS2_NO_MTVU", "1", 1);
+				unsetenv("LRPS2_MTVU");
+			}
+#endif
+		}
+
+		var.key = "pcsx2_instant_vu1";
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+			s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vu1Instant", !strcmp(var.value, "enabled"));
 	}
 
 	var.key = "pcsx2_widescreen_hint";
@@ -1693,6 +1729,22 @@ static void libretro_context_destroy(void)
 {
 	cpu_thread_pause();
 
+#ifdef ENABLE_VULKAN
+	/* The frontend keeps replaying the last set_image (cached-frame
+	 * replay: pause, menu background, its own context-teardown blit) and
+	 * releases that view during the reinit that follows this callback.
+	 * The registered image points at a pool texture that CloseGS() below
+	 * destroys, so retract it and drain the frontend's GPU work first -
+	 * otherwise the reinit samples/releases a dangling VkImageView
+	 * (crashes observed when SET_SYSTEM_AV_INFO retriggers video init,
+	 * e.g. the disabled on-the-fly upscale switch). */
+	if (hw_render.context_type == RETRO_HW_CONTEXT_VULKAN && vulkan)
+	{
+		vulkan->set_image(vulkan->handle, nullptr, 0, nullptr, vulkan->queue_index);
+		vulkan->wait_sync_index(vulkan->handle);
+	}
+#endif
+
 	if (freeze())
 		defrost_requested = true;
 
@@ -2263,6 +2315,9 @@ static void update_av_info(void)
 
 void retro_run(void)
 {
+#ifdef ARCH_ARM64
+	{ extern volatile u64 g_diag_frame; static u64 rf = 0; g_diag_frame = rf++; } // TEMP diagnostic
+#endif
 	bool updated = false;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
 		check_variables(false);
@@ -2280,6 +2335,39 @@ void retro_run(void)
 
 	MTGS::MainLoop(false);
 	upload_output_audio_buffer();
+
+#ifdef ARCH_ARM64
+	// TEMP diagnostic (LRPS2_RAMCRC): per-frame FNV-1a of EE main RAM, to binary-
+	// search the first frame where a JIT run diverges from a NO_EEREC run.
+	if (getenv("LRPS2_RAMCRC"))
+	{
+		extern u8* GetEEMainRam();
+		static u64 fr = 0;
+		const u8* ram = GetEEMainRam();
+		if (ram)
+		{
+			u64 h = 1469598103934665603ull;
+			const u64* w = reinterpret_cast<const u64*>(ram);
+			for (u32 i = 0; i < (32u << 20) / 8; i++) { h ^= w[i]; h *= 1099511628211ull; }
+			// Scratchpad too -- game state parked in SPR survives frames invisibly
+			// to a main-RAM-only hash (learned the hard way on MMX7 frames 167-216).
+			extern u8* GetEEScratch();
+			if (const u64* s = reinterpret_cast<const u64*>(GetEEScratch()))
+				for (u32 i = 0; i < 16384 / 8; i++) { h ^= s[i]; h *= 1099511628211ull; }
+			extern u32 GetEECycle();
+			fprintf(stderr, "[ramcrc] frame=%llu crc=%016llx cyc=%u\n", (unsigned long long)fr, (unsigned long long)h, GetEECycle());
+			const char* df = getenv("LRPS2_DUMP_FRAME");
+			const char* dp = getenv("LRPS2_DUMP");
+			if (df && dp && fr == (u64)strtoull(df, 0, 10))
+			{
+				FILE* fo = fopen(dp, "wb");
+				if (fo) { fwrite(ram, 1, 32u << 20, fo); fclose(fo);
+					fprintf(stderr, "[ramdump] frame=%llu -> %s\n", (unsigned long long)fr, dp); }
+			}
+		}
+		fr++;
+	}
+#endif
 }
 
 std::optional<WindowInfo> Host::AcquireRenderWindow(void)

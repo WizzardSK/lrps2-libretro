@@ -65,7 +65,11 @@ bool GSRendererHWFunctions::SwPrimRender(GSRendererHW& hw, bool invalidate_tc, b
 	// Optimize the division by 1 with a nop. It also means that GS_SPRITE_CLASS must be processed when !vt.m_eq.q.
 	// If you have both GS_SPRITE_CLASS && vt.m_eq.q, it will depends on the first part of the 'OR'.
 	const u32 q_div = !hw.IsMipMapActive() && ((vt.m_eq.q && vt.m_min.t.z != 1.0f) || (!vt.m_eq.q && vt.m_primclass == GS_SPRITE_CLASS));
+#ifndef ARCH_ARM64
+	// GSVertexSW::s_cvb lives in the (excluded) SW renderer; this fills data for
+	// the CPU-side GSSingleRasterizer draw, which is also disabled on arm64.
 	GSVertexSW::s_cvb[vt.m_primclass][PRIM->TME][PRIM->FST][q_div](context, data.vertex, hw.m_vertex.buff, hw.m_vertex.next);
+#endif
 
 	GSVector4i scissor = context->scissor.in;
 	GSVector4i bbox    = GSVector4i(vt.m_min.p.floor().xyxy(vt.m_max.p.ceil())).rintersect(scissor);
@@ -523,10 +527,14 @@ bool GSRendererHWFunctions::SwPrimRender(GSRendererHW& hw, bool invalidate_tc, b
 		}
 	}
 
+#ifndef ARCH_ARM64
+	// GSSingleRasterizer is part of the x86 SW renderer, which isn't built on
+	// arm64; the HW renderer's CPU-side draw fallback is unavailable there.
 	if (!hw.m_sw_rasterizer)
 		hw.m_sw_rasterizer = std::make_unique<GSSingleRasterizer>();
 
 	static_cast<GSSingleRasterizer*>(hw.m_sw_rasterizer.get())->Draw(data);
+#endif
 
 	if (invalidate_tc)
 		g_texture_cache->InvalidateVideoMem(context->offset.fb, bbox);

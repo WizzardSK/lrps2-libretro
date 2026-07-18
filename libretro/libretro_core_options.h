@@ -576,6 +576,43 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "100% (Normal Speed)"
    },
    {
+      "pcsx2_mtvu",
+      "Emulation > MTVU (Multi-Threaded VU1) (Restart)",
+      "MTVU (Multi-Threaded VU1) (Restart)",
+      "Runs VU1 on its own thread. Large speedup on multi-core CPUs; a small number of games hang with it. The default matches the platform default (on arm64, MTVU is on whenever the native VU1 recompiler drives VU1).",
+      NULL,
+      "emulation",
+      {
+#ifdef ARCH_ARM64
+         { "enabled", NULL },
+         { "disabled", NULL },
+#else
+         { "disabled", NULL },
+         { "enabled", NULL },
+#endif
+         { NULL, NULL },
+      },
+#ifdef ARCH_ARM64
+      "enabled"
+#else
+      "disabled"
+#endif
+   },
+   {
+      "pcsx2_instant_vu1",
+      "Emulation > Instant VU1 (Restart)",
+      "Instant VU1 (Restart)",
+      "Runs VU1 to completion immediately (ignored while MTVU is enabled). Usually a speedup.",
+      NULL,
+      "emulation",
+      {
+         { "enabled", NULL },
+         { "disabled", NULL },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+   {
       "pcsx2_ee_cycle_skip",
       "Emulation > EE Cycle Skipping",
       "EE Cycle Skipping",

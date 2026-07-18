@@ -942,12 +942,23 @@ void vtlb_AddLoadStoreInfo(uptr code_address, u32 code_size, u32 guest_pc, u32 g
 	s_fastmem_backpatch_count++;
 }
 
+#ifdef ARCH_ARM64
+extern "C" bool eeFastmemFault_arm64(uintptr_t code_address); // arm64 EE rec (C.50)
+#endif
+
 static bool vtlb_BackpatchLoadStore(uptr code_address, uptr fault_address)
 {
 	uptr fastmem_start = (uptr)vtlbdata.fastmem_base;
 	uptr fastmem_end = fastmem_start + 0xFFFFFFFFu;
 	if (fault_address < fastmem_start || fault_address > fastmem_end)
 		return false;
+
+#ifdef ARCH_ARM64
+	// The arm64 EE rec (C.50) keeps its own site registry and pre-emits the slow
+	// stub next to every fastmem access, so backpatching is a single instruction
+	// rewrite over there -- none of the info block below is needed.
+	return eeFastmemFault_arm64(code_address);
+#endif
 
 	bool   found;
 	size_t pos = vtlb_BackpatchLowerBound(code_address, &found);
@@ -957,9 +968,14 @@ static bool vtlb_BackpatchLoadStore(uptr code_address, uptr fault_address)
 	const LoadstoreBackpatchInfo& info = s_fastmem_backpatch[pos].info;
 	const u32 info_guest_pc = info.guest_pc;
 	const u32 guest_addr = static_cast<u32>(fault_address - fastmem_start);
+#ifdef ARCH_ARM64
+	// No x86 recompiler / fastmem backpatching on arm64 (interpreter only).
+	return false;
+#else
 	vtlb_DynBackpatchLoadStore(code_address, info.code_size, info.guest_pc, guest_addr,
 		info.gpr_bitmask, info.fpr_bitmask, info.address_register, info.data_register,
 		info.size_in_bits, info.is_signed, info.is_load, info.is_fpr);
+#endif
 
 	// queue block for recompilation later
 	Cpu->Clear(info_guest_pc, 1);
@@ -1363,6 +1379,32 @@ vtlb_ProtectionMode mmap_GetRamPageInfo(u32 paddr)
 	return m_PageProtectInfo[rampage].Mode;
 }
 
+// TEMP diagnostic (LRPS2_SMC_STATS): shape of the protect/fault/clear churn.
+// Counts protects and clears per RAM page, dumps the worst offenders at exit.
+namespace {
+	struct SmcStats
+	{
+		bool  on = getenv("LRPS2_SMC_STATS") != nullptr;
+		u64   protects = 0, clears = 0;
+		std::map<u32, std::pair<u32, u32>> per_page; // page -> (protects, clears)
+		~SmcStats()
+		{
+			if (!on)
+				return;
+			fprintf(stderr, "[smc] %llu protects, %llu clears over %zu pages\n",
+				(unsigned long long)protects, (unsigned long long)clears, per_page.size());
+			std::vector<std::pair<u32, std::pair<u32, u32>>> v(per_page.begin(), per_page.end());
+			std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) {
+				return a.second.second > b.second.second;
+			});
+			for (size_t i = 0; i < v.size() && i < 15; i++)
+				fprintf(stderr, "[smc]   page %5u (ram %08x)  protects=%7u clears=%7u\n",
+					v[i].first, v[i].first << __pageshift, v[i].second.first, v[i].second.second);
+		}
+	};
+	SmcStats s_smc;
+}
+
 // paddr - physically mapped PS2 address
 void mmap_MarkCountedRamPage(u32 paddr)
 {
@@ -1371,6 +1413,16 @@ void mmap_MarkCountedRamPage(u32 paddr)
 
 	uptr ptr = (uptr)PSM(paddr);
 	int rampage = (ptr - (uptr)eeMem->Main) >> __pageshift;
+
+	// Defensive: PSM() can yield a pointer outside Main (handler-mapped page,
+	// TLB-remapped, SPR) -- protecting a page outside Main both corrupts
+	// m_PageProtectInfo (OOB) and mprotects unrelated host memory.
+	if (!ptr || rampage < 0 || rampage >= (int)(Ps2MemSize::MainRam >> __pageshift))
+	{
+		if (getenv("LRPS2_FAULT_LOG"))
+			fprintf(stderr, "[mark-skip] paddr=%08x ptr=%p rampage=%d\n", paddr, (void*)ptr, rampage);
+		return;
+	}
 
 	// Important: Update the ReverseRamMap here because TLB changes could alter the paddr
 	// mapping into eeMem->Main.
@@ -1381,6 +1433,7 @@ void mmap_MarkCountedRamPage(u32 paddr)
 		return; // skip town if we're already protected.
 
 	m_PageProtectInfo[rampage].Mode = ProtMode_Write;
+	if (s_smc.on) { s_smc.protects++; s_smc.per_page[rampage].first++; }
 	mode.m_read  = true;
 	mode.m_write = false;
 	mode.m_exec  = false;
@@ -1404,11 +1457,22 @@ static __fi void mmap_ClearCpuBlock(uint offset)
 	if (CHECK_FASTMEM)
 		vtlb_UpdateFastmemProtection(rampage << __pageshift, __pagesize, mode);
 	m_PageProtectInfo[rampage].Mode = ProtMode_Manual;
+	if (s_smc.on) { s_smc.clears++; s_smc.per_page[rampage].second++; }
 	Cpu->Clear(m_PageProtectInfo[rampage].ReverseRamMap, __pagesize);
 }
 
+#if defined(__aarch64__)
+// TEMP diagnostic (LRPS2_FAULT_LOG, C.24 crash hunt): JIT-block locators.
+extern "C" void eeJitDebugLocate_arm64(uintptr_t);
+extern "C" void iopJitDebugLocate_arm64(uintptr_t);
+#endif
+
 bool vtlb_private::PageFaultHandler(const PageFaultInfo& info)
 {
+	// TEMP diagnostic (LRPS2_FAULT_LOG; stderr is not async-signal-safe, debug only)
+	if (getenv("LRPS2_FAULT_LOG"))
+		fprintf(stderr, "[fault] pc=%p addr=%p main=%p off=%lx\n", (void*)info.pc, (void*)info.addr,
+			(void*)eeMem->Main, (long)(info.addr - (uptr)eeMem->Main));
 	u32 vaddr;
 	if (CHECK_FASTMEM && vtlb_GetGuestAddress(info.addr, &vaddr))
 	{
@@ -1426,7 +1490,19 @@ bool vtlb_private::PageFaultHandler(const PageFaultInfo& info)
 		// get bad virtual address
 		uptr offset = info.addr - (uptr)eeMem->Main;
 		if (offset >= Ps2MemSize::MainRam)
+		{
+#if defined(__aarch64__)
+			// TEMP diagnostic (LRPS2_FAULT_LOG): about to hand the fault to the
+			// default handler (-> abort). Say which JIT block the pc belongs to.
+			if (getenv("LRPS2_FAULT_LOG"))
+			{
+				fprintf(stderr, "[fault-UNHANDLED] pc=%p addr=%p\n", (void*)info.pc, (void*)info.addr);
+				eeJitDebugLocate_arm64(info.pc);
+				iopJitDebugLocate_arm64(info.pc);
+			}
+#endif
 			return false;
+		}
 
 		mmap_ClearCpuBlock(offset);
 		return true;

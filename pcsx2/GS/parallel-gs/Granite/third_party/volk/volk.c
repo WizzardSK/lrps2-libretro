@@ -120,6 +120,11 @@ VkResult volkInitialize(void)
 	vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)dlsym(module, "vkGetInstanceProcAddr");
 	VOLK_RESTORE_GCC_PEDANTIC_WARNINGS
 #else
+	/* RTLD_DEEPBIND is a glibc extension and is absent on musl libc (e.g. Alpine
+	   / postmarketOS). It has no musl equivalent, so fall back to 0 (no flag). */
+#ifndef RTLD_DEEPBIND
+#define RTLD_DEEPBIND 0
+#endif
 	void* module = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND);
 	if (!module)
 		module = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND);

@@ -822,6 +822,8 @@ bool VMManager::ChangeDisc(CDVD_SourceType source, std::string path)
 
 void VMManager::InitializeCPUProviders()
 {
+	// arm64 has no x86 recompilers / SSE VIF unpack; the interpreters are used.
+#ifndef ARCH_ARM64
 	recCpu.Reserve();
 	psxRec.Reserve();
 
@@ -830,16 +832,38 @@ void VMManager::InitializeCPUProviders()
 
 	dVifReserve(0);
 	dVifReserve(1);
+#else
+	// arm64: reserve the IOP recompiler (psxRec, Phase C.2b) and the EE
+	// recompiler (recCpu, Phase C.3) so their code caches/self-tests come up.
+	psxRec.Reserve();
+	recCpu.Reserve();
+	CpuRecVU1_arm64.Reserve();
+	// C.28-4: the armsx2 microVU1 transplant is the default VU1 provider.
+	// Its Reserve() also opens vu1Thread (idempotent with the Open() below).
+	CpuMicroVU1.Reserve();
+	// C.30-1: microVU0 for VU0 micro programs (VCALLMS/VCALLMSR).
+	CpuMicroVU0.Reserve();
+	// The MTVU worker thread is normally spawned by recMicroVU1::Reserve()
+	// (x86/microVU.cpp), which doesn't exist in this build -- with vuThread
+	// enabled the EE would push to vu1Thread's ring and wait on its WorkSema
+	// forever (boot hang / black screen). The worker runs VU1 through
+	// CpuVU1->Execute(), so it works with the VU interpreter provider too.
+	vu1Thread.Open();
+	// arm64 VIF unpack dynarec (C.19, NEON port transplanted from ARMSX2).
+	dVifReserve(0);
+	dVifReserve(1);
+#endif
 
 	GSCodeReserve::GetInstance().Assign(GetVmMemory().CodeMemory());
 
-	VifUnpackSSE_Init();
+	VifUnpackSSE_Init(); // on arm64 this generates the NEON nVifUpk kernels (C.19)
 }
 
 void VMManager::ShutdownCPUProviders()
 {
 	GSCodeReserve::GetInstance().Release();
 
+#ifndef ARCH_ARM64
 	dVifRelease(1);
 	dVifRelease(0);
 
@@ -850,22 +874,65 @@ void VMManager::ShutdownCPUProviders()
 
 	psxRec.Shutdown();
 	recCpu.Shutdown();
-
+#else
+	CpuMicroVU0.Shutdown();
+	CpuMicroVU1.Shutdown(); // waits on the MTVU worker, then mVUclose
+	vu1Thread.Close();
+	dVifRelease(1);
+	dVifRelease(0);
+	VifUnpackSSE_Destroy();
+	CpuRecVU1_arm64.Shutdown();
+	psxRec.Shutdown();
+	recCpu.Shutdown();
+#endif
 }
 
 void VMManager::UpdateCPUImplementations()
 {
+#ifndef ARCH_ARM64
 	Cpu    = CHECK_EEREC ? &recCpu : &intCpu;
 	psxCpu = CHECK_IOPREC ? &psxRec : &psxInt;
+#else
+	// arm64: IOP uses the arm64 recompiler (Phase C.2b). EE uses the arm64 EE
+	// recompiler (Phase C.3) when CHECK_EEREC is set; C.3-1 blocks call the
+	// interpreter so behaviour is identical while the JIT plumbing runs.
+	Cpu    = CHECK_EEREC ? &recCpu : &intCpu;
+	psxCpu = &psxRec;
+#endif
 
 	CpuVU0 = &CpuIntVU0;
 	CpuVU1 = &CpuIntVU1;
 
+#ifdef ARCH_ARM64
+	// C.30-1: microVU0 runs VU0 micro programs natively (macro-mode COP2
+	// stays on the C.29-1 inline interpreter calls until C.30-2).
+	// LRPS2_NO_VU0REC=1 falls back to the VU0 interpreter.
+	if (EmuConfig.Cpu.Recompiler.EnableVU0 && !getenv("LRPS2_NO_VU0REC"))
+		CpuVU0 = &CpuMicroVU0;
+#endif
+
+#ifndef ARCH_ARM64
 	if (EmuConfig.Cpu.Recompiler.EnableVU0)
 		CpuVU0 = &CpuMicroVU0;
 
 	if (EmuConfig.Cpu.Recompiler.EnableVU1)
 		CpuVU1 = &CpuMicroVU1;
+#else
+	// C.28-4: microVU1 (the armsx2 transplant, native VU codegen) is the
+	// DEFAULT VU1 provider -- MVU_DIFF-verified register-exact against the
+	// interpreter on both test titles. LRPS2_VU1REC_PAIR=1 selects the C.14
+	// interp-pair rec; LRPS2_NO_VU1REC=1 falls back to plain InterpVU1.
+	if (EmuConfig.Cpu.Recompiler.EnableVU1 && !getenv("LRPS2_NO_VU1REC"))
+	{
+		if (getenv("LRPS2_VU1REC_PAIR"))
+			CpuVU1 = &CpuRecVU1_arm64;
+		else
+		{
+			CpuVU1 = &CpuMicroVU1;
+			Console.WriteLn("arm64 VU1 rec: microVU1 (native codegen) is the default provider.");
+		}
+	}
+#endif
 }
 
 void VMManager::Internal::ClearCPUExecutionCaches()
@@ -873,15 +940,19 @@ void VMManager::Internal::ClearCPUExecutionCaches()
 	Cpu->Reset();
 	psxCpu->Reset();
 
+#ifndef ARCH_ARM64
 	// mVU's VU0 needs to be properly initialized for macro mode even if it's not used for micro mode!
 	if (CHECK_EEREC && !EmuConfig.Cpu.Recompiler.EnableVU0)
 		CpuMicroVU0.Reset();
+#endif
 
 	CpuVU0->Reset();
 	CpuVU1->Reset();
 
+#ifndef ARCH_ARM64
 	dVifReset(0);
 	dVifReset(1);
+#endif
 }
 
 void VMManager::Execute()
@@ -1224,8 +1295,41 @@ static void InitializeCPUInfo(void)
 static void SetMTVUAndAffinityControlDefault(SettingsInterface& si)
 {
 	VMManager::EnsureCPUInfoInitialized();
-	Console.WriteLn("  Enabling MTVU.");
-	si.SetBoolValue("EmuCore/Speedhacks", "vuThread", true);
+	// arm64 MTVU status: the worker thread spawns (InitializeCPUProviders) and
+	// sets VPU_STAT busy around interpreter VU1 programs (MTVU.cpp), which makes
+	// MTVU produce correct XGKICK output. However, games driving a CONTINUOUS
+	// VU1 program (an endless microprogram streaming XGKICK packets, e.g. GT3's
+	// arcade attract) deadlock the one-packet-per-program MTVU handoff with the
+	// VU1 INTERPRETER: the worker drip-feeds gsPack mid-program until path1's
+	// 9MB buffer fills (CopyGSPacketData -> WaitGS(true) with an empty
+	// gsPackQueue), while MTGS sits in semaXGkick.Wait() for a program end that
+	// never comes. Needs a partial-packet flush protocol (or a VU recompiler
+	// with upstream's XGKICK handling) -- until then MTVU is OPT-IN:
+	// LRPS2_MTVU=1 (helps VU-light titles; MMX7 verified pixel-identical).
+	// C.28-4: with microVU1 as the default VU1 provider (native codegen,
+	// MVU_DIFF-verified against the interpreter), MTVU and instant VU1 are
+	// safe defaults again -- the C.13c livelock and the 3M-cycle-budget wall
+	// were interpreter-provider problems. When an interp-style provider is
+	// explicitly selected (LRPS2_NO_VU1REC / LRPS2_VU1REC_PAIR), fall back to
+	// the conservative C.13c behavior (both opt-in).
+	const bool vu1_mvu = !getenv("LRPS2_NO_VU1REC") && !getenv("LRPS2_VU1REC_PAIR");
+	const bool mtvu = std::thread::hardware_concurrency() >= 3 &&
+		(vu1_mvu ? !getenv("LRPS2_NO_MTVU") : getenv("LRPS2_MTVU") != nullptr);
+	Console.WriteLn(mtvu ? "  MTVU enabled (default with microVU1; LRPS2_NO_MTVU=1 disables)."
+	                     : "  MTVU disabled.");
+	si.SetBoolValue("EmuCore/Speedhacks", "vuThread", mtvu);
+	// Instant VU1 assumes the VU1 provider finishes a program quickly (x86
+	// microVU). With the VU1 INTERPRETER, a continuous microprogram (endless
+	// loop streaming XGKICK -- GT3's arcade attract) burns the full
+	// vu1RunCycles=3M budget on EVERY kick: the EE thread spends seconds per
+	// frame inside InterpVU1::Execute and the frontend appears hung. Run VU1
+	// in small interleaved slices instead (upstream's non-instant scheduling).
+	// LRPS2_VU1_INSTANT=1 restores instant mode for A/B testing.
+	const bool vu1_instant = vu1_mvu ? !getenv("LRPS2_NO_VU1_INSTANT")
+	                                 : getenv("LRPS2_VU1_INSTANT") != nullptr;
+	Console.WriteLn(vu1_instant ? "  Instant VU1 enabled (default with microVU1; LRPS2_NO_VU1_INSTANT=1 disables)."
+	                            : "  Instant VU1 disabled (interp-style VU1 runs interleaved).");
+	si.SetBoolValue("EmuCore/Speedhacks", "vu1Instant", vu1_instant);
 }
 
 #else

@@ -78,6 +78,7 @@ namespace R3000A
 	void irxImportLog(const std::string& libnameptr, u16 index, const char* funcname);
 	void irxImportLog_rec(u32 import_table, u16 index, const char* funcname);
 	int irxImportExec(u32 import_table, u16 index);
+	int irxImportExecCached(u32 stubpc, u16 index); // C.71: cached psxJ hook path
 
 	namespace ioman
 	{

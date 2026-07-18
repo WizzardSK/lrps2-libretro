@@ -58,7 +58,7 @@
 #define _MM_MK_INSERTPS_NDX(srcField, dstField, zeroMask) (((srcField) << 6) | ((dstField) << 4) | (zeroMask))
 #endif
 
-#elif defined(_M_ARM64)
+#elif (defined(_M_ARM64) || defined(__aarch64__))
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <arm64_neon.h>
 #else
