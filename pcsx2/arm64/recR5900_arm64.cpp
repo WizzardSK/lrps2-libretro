@@ -637,7 +637,7 @@ namespace
 	// raw result bits the same way checkOverflow/checkUnderflow do. Verified safe
 	// against host FPCR: EE blocks always run with FPCR left at its process
 	// default (bitmask 0, no flush-to-zero) -- only VU1 briefly swaps FPCR
-	// (recVU1_arm64.cpp, RAII-restored), so denormal results here are never
+	// (RAII-restored), so denormal results here are never
 	// silently flushed by the host before we can inspect them.
 
 	// Clamp a raw single bit pattern per fpuDouble(). wtmp is scratch.

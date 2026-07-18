@@ -837,7 +837,6 @@ void VMManager::InitializeCPUProviders()
 	// recompiler (recCpu, Phase C.3) so their code caches/self-tests come up.
 	psxRec.Reserve();
 	recCpu.Reserve();
-	CpuRecVU1_arm64.Reserve();
 	// C.28-4: the armsx2 microVU1 transplant is the default VU1 provider.
 	// Its Reserve() also opens vu1Thread (idempotent with the Open() below).
 	CpuMicroVU1.Reserve();
@@ -881,7 +880,6 @@ void VMManager::ShutdownCPUProviders()
 	dVifRelease(1);
 	dVifRelease(0);
 	VifUnpackSSE_Destroy();
-	CpuRecVU1_arm64.Shutdown();
 	psxRec.Shutdown();
 	recCpu.Shutdown();
 #endif
