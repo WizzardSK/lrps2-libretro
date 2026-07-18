@@ -802,33 +802,6 @@ namespace
 		// re-handing `lw ra` to the interpreter forever.)
 		const u32 cov = (!done && InRam(ne)) ? ne + 4 : ne;
 
-		// TEMP tooling (C.46): LRPS2_DUMP_HOST_IOP=0x<guest pc> writes the emitted
-		// host code and the guest source words for offline disassembly.
-		if (const char* want = getenv("LRPS2_DUMP_HOST_IOP"))
-		{
-			if (Norm((u32)strtoul(want, nullptr, 0)) == ns)
-			{
-				char path[128];
-				snprintf(path, sizeof(path), "/tmp/iopblk_%08x.host.bin", ns);
-				if (FILE* f = fopen(path, "wb"))
-				{
-					fwrite(start, 1, sz, f);
-					fclose(f);
-				}
-				snprintf(path, sizeof(path), "/tmp/iopblk_%08x.guest.bin", ns);
-				if (FILE* f = fopen(path, "wb"))
-				{
-					for (u32 q = 0; ns + q * 4 < ne; q++)
-					{
-						const u32 w = iopMemRead32(pc + q * 4);
-						fwrite(&w, 4, 1, f);
-					}
-					fclose(f);
-				}
-				fprintf(stderr, "[dump-iop] guest 0x%08x: %zu host bytes, %u guest insns\n",
-					ns, sz, (ne > ns) ? (ne - ns) >> 2 : 0);
-			}
-		}
 		s_blocks.emplace(pc, BlockRec{fn, cov});
 		if (InRam(ns)) s_lut[ns >> 2] = fn;
 		if (cov > ns)
@@ -976,26 +949,3 @@ R3000Acpu psxRec = {
 	recShutdown,
 };
 
-// TEMP DEBUG (C.24 crash hunt, LRPS2_FAULT_LOG): IOP-side twin of
-// eeJitDebugLocate_arm64. Not signal-safe -- debug only.
-extern "C" void iopJitDebugLocate_arm64(uintptr_t pc)
-{
-	if (!s_code || pc < (uintptr_t)s_code || pc >= (uintptr_t)s_code + kCodeCacheSize)
-	{
-		fprintf(stderr, "[locate] pc=%p NOT in IOP cache (%p..%p)\n",
-			(void*)pc, (void*)s_code, (void*)(s_code + kCodeCacheSize));
-		return;
-	}
-	u32 best_pc = 0; uintptr_t best_fn = 0;
-	for (const auto& kv : s_blocks)
-	{
-		const uintptr_t fn = (uintptr_t)kv.second.fn;
-		if (fn <= pc && fn > best_fn) { best_fn = fn; best_pc = kv.first; }
-	}
-	fprintf(stderr, "[locate] pc=%p in IOP cache; block guest=%08x host=%p off=+%#lx\n",
-		(void*)pc, best_pc, (void*)best_fn, (unsigned long)(pc - best_fn));
-	const u32* w = (const u32*)(pc - 48);
-	for (int i = 0; i < 24; i++)
-		fprintf(stderr, "[code] %p: %08x%s\n", (void*)(w + i), w[i],
-			((uintptr_t)(w + i) == pc) ? "  <-- FAULT" : "");
-}

@@ -233,11 +233,9 @@ namespace
 	// x10/x11 are scratch; w0/x1/q0 (address/value) are preserved.
 	inline bool InlineMemEnabled()
 	{
-		// LRPS2_WLOG needs every access to go through the wrappers (that's
-		// where the watch hooks live); LRPS2_NO_INLINE_MEM forces it off for
-		// A/B diagnosis.
+		// LRPS2_NO_INLINE_MEM forces the inline memory path off for A/B diagnosis.
 		static int on = -1;
-		if (on < 0) on = (getenv("LRPS2_WLOG") || getenv("LRPS2_NO_INLINE_MEM")) ? 0 : 1;
+		if (on < 0) on = getenv("LRPS2_NO_INLINE_MEM") ? 0 : 1;
 		return on != 0;
 	}
 	// The inline vmap path reads x28 as the VMAP base, so it is only legal when
@@ -310,7 +308,7 @@ namespace
 	{
 		static int mode = -1;
 		if (mode < 0)
-			mode = (!getenv("LRPS2_NO_FASTMEM") && !getenv("LRPS2_WLOG") && !getenv("LRPS2_NO_INLINE_MEM") &&
+			mode = (!getenv("LRPS2_NO_FASTMEM") && !getenv("LRPS2_NO_INLINE_MEM") &&
 			        CHECK_FASTMEM && vtlb_private::vtlbdata.fastmem_base != 0) ? 1 : 0;
 		return mode != 0;
 	}
@@ -499,12 +497,8 @@ namespace
 
 	inline bool RegCacheOn()
 	{
-		// LRPS2_TRACE_STEP's per-op hook hashes GPR MEMORY mid-block; with a
-		// dirty write-back cache that state is deliberately stale, so the
-		// trace tooling forces the cache off (block-entry tracing is fine --
-		// every block exit flushes).
 		static int on = -1;
-		if (on < 0) on = (getenv("LRPS2_NO_EE_REGCACHE") || getenv("LRPS2_TRACE_STEP")) ? 0 : 1;
+		if (on < 0) on = getenv("LRPS2_NO_EE_REGCACHE") ? 0 : 1;
 		return on != 0;
 	}
 
@@ -2065,19 +2059,6 @@ namespace {
 
 		const bool ok = recVUMacroEmitMode0(insn);
 
-		// TEMP diagnostic (LRPS2_JIT_STATS): prove the native macro path compiles.
-		{
-			static const bool stats = getenv("LRPS2_JIT_STATS") != nullptr;
-			if (stats && ok)
-			{
-				static u64 n = 0;
-				n++;
-				if (n <= 5 || (n & 0xff) == 0)
-					fprintf(stderr, "[jit] COP2 macro op #%llu native (insn=%08x funct=%02x)\n",
-						(unsigned long long)n, insn, insn & 0x3f);
-			}
-		}
-
 		armAsm = saved_asm;
 		armAsmPtr = saved_ptr;
 		armAsmCapacity = saved_cap;
@@ -3236,18 +3217,6 @@ namespace {
 		if (ds_interp && !(likely && (two || one) && !bc0 && !bc1 && !bc2 && link < 0))
 			return false;
 
-		// TEMP diagnostic (LRPS2_JIT_STATS): confirm the likely-branch path is
-		// actually exercised (compiled), not just harmless.
-		static const bool jit_stats = getenv("LRPS2_JIT_STATS") != nullptr;
-		if (likely && jit_stats)
-		{
-			static u64 n = 0;
-			n++;
-			if (n <= 5 || (n & 0x3ff) == 0)
-				fprintf(stderr, "[jit] likely branch #%llu compiled at %08x (op=%02x)\n",
-					(unsigned long long)n, bpc, op);
-		}
-
 		// Taken/uncond runs the branch + its delay slot inline; not-taken runs only
 		// the branch (the delay slot at bpc+4 is executed by the continuation).
 		const int cyc_taken = cyc_leading + OpCycles(insn) + OpCycles(ds);
@@ -3502,15 +3471,11 @@ namespace {
 		}
 	}
 
-	int s_cache_wraps = 0; // TEMP DEBUG (C.24 crash hunt)
 
 	BlockFn CompileBlock(u32 pc)
 	{
 		if (s_code_pos + 8192 > kCodeCacheSize)
 		{
-			s_cache_wraps++;
-			if (getenv("LRPS2_FAULT_LOG"))
-				fprintf(stderr, "[ee-cache-WRAP #%d]\n", s_cache_wraps);
 			s_blocks.clear();
 			s_page.clear();
 			LutClearAll();
@@ -3608,38 +3573,6 @@ namespace {
 			masm.Cbz(w0, s_stale); // source changed -> discarded, back to dispatcher
 		}
 
-		// One-shot dump of the guest ops each block in a pc range compiles from,
-		// with their translatability -- the tool for "why is this hot loop split
-		// into so many blocks / what still hands off to the interpreter".
-		// LRPS2_DUMP_RANGE=lo:hi (physical pcs, hex); LRPS2_DUMP_STALL keeps the
-		// original MMX7 stall-loop range.
-		static u32 dump_lo = 0, dump_hi = 0;
-		static bool dump_init = false;
-		if (!dump_init)
-		{
-			dump_init = true;
-			if (const char* r = getenv("LRPS2_DUMP_RANGE"))
-				sscanf(r, "%x:%x", &dump_lo, &dump_hi);
-			else if (getenv("LRPS2_DUMP_STALL")) { dump_lo = 0x0010b7a8; dump_hi = 0x0010bd74; }
-		}
-		if (dump_hi && (pc & 0x1fffffff) >= dump_lo && (pc & 0x1fffffff) <= dump_hi)
-		{
-			static u32 dumped = 0;
-			if (!(dumped & (1u << ((pc >> 4) & 31))))
-			{
-				dumped |= (1u << ((pc >> 4) & 31));
-				for (u32 q = pc, k = 0; k < 24; q += 4, k++)
-				{
-					u32 i = memRead32(q);
-					fprintf(stderr, "[stall] %08x: %08x op=%02x funct=%02x rs=%u rt=%u rd=%u imm=%04x xlat=%d\n",
-						q, i, i >> 26, i & 0x3f, (i >> 21) & 31, (i >> 16) & 31, (i >> 11) & 31, i & 0xffff, IsTranslatable(i));
-					if ((i >> 26) == 0x02 || (i >> 26) == 0x03 || ((i >> 26) == 0 && ((i & 0x3f) == 8 || (i & 0x3f) == 9))
-						|| ((i >> 26) >= 0x04 && (i >> 26) <= 0x07) || (i >> 26) == 0x01) { fprintf(stderr, "[stall]   ^branch, +delayslot\n"); break; }
-				}
-			}
-		}
-
-		u32 p = pc;
 		int n = 0;
 		int cyc = 0; // raw sum of the leading translated ops' cycle costs
 		bool done = false;
@@ -3750,22 +3683,6 @@ namespace {
 		s_blk_ret = nullptr;
 		s_code_pos += (sz + 15) & ~size_t(15);
 
-		// LRPS2_DUMP_HOST=<hex guest pc>: write this block's emitted host code to
-		// /home/user/ee_block_<pc>.bin, for `objdump -D -b binary -m aarch64`.
-		if (const char* dh = getenv("LRPS2_DUMP_HOST"))
-		{
-			const u32 want = (u32)strtoul(dh, nullptr, 16);
-			static bool done_dump = false;
-			if (!done_dump && (pc & 0x1fffffff) == want)
-			{
-				done_dump = true;
-				char path[128];
-				snprintf(path, sizeof(path), "/home/user/ee_block_%08x.bin", pc);
-				if (FILE* f = fopen(path, "wb")) { fwrite(start, 1, sz, f); fclose(f); }
-				fprintf(stderr, "[dump-host] guest %08x -> %s (%zu bytes)\n", pc, path, sz);
-			}
-		}
-
 		BlockFn fn = reinterpret_cast<BlockFn>(start);
 		// Native code covers the leading translated run; a translated branch also
 		// bakes the branch + delay slot (p still points at the branch there).
@@ -3778,35 +3695,6 @@ namespace {
 			rec.src.resize((ne - ns) >> 2);
 			for (u32 q = 0; q < (u32)rec.src.size(); q++)
 				rec.src[q] = memRead32(pc + q * 4);
-		}
-		// TEMP tooling (C.46 code-quality work): LRPS2_DUMP_HOST=0x<guest pc>
-		// writes this block's emitted host code and its guest source words next
-		// to each other, for offline disassembly (objdump -b binary -m aarch64).
-		if (const char* want = getenv("LRPS2_DUMP_HOST"))
-		{
-			if (Norm((u32)strtoul(want, nullptr, 0)) == ns)
-			{
-				char path[128];
-				snprintf(path, sizeof(path), "/tmp/eeblk_%08x.host.bin", ns);
-				if (FILE* f = fopen(path, "wb"))
-				{
-					fwrite(start, 1, sz, f);
-					fclose(f);
-				}
-				snprintf(path, sizeof(path), "/tmp/eeblk_%08x.guest.bin", ns);
-				if (FILE* f = fopen(path, "wb"))
-				{
-					const u32 nwords = (ne > ns) ? (ne - ns) >> 2 : 0;
-					for (u32 q = 0; q < nwords; q++)
-					{
-						const u32 w = memRead32(pc + q * 4);
-						fwrite(&w, 4, 1, f);
-					}
-					fclose(f);
-				}
-				fprintf(stderr, "[dump-host] guest 0x%08x: %zu host bytes, %u guest insns\n",
-					ns, sz, (ne > ns) ? (ne - ns) >> 2 : 0);
-			}
 		}
 
 		s_blocks[pc] = std::move(rec); // overwrites a dead record after SMC
@@ -3831,14 +3719,6 @@ namespace {
 		const u32 ns = Norm(pc);
 		if (InRam(ns)) s_lut[ns >> 2] = r.fn;
 		RegisterPages(pc, ns, r.end);
-		// TEMP diagnostic (LRPS2_JIT_STATS): prove revives happen (vs recompiles).
-		static const bool stats = getenv("LRPS2_JIT_STATS") != nullptr;
-		if (stats)
-		{
-			static u64 nrev = 0;
-			if ((++nrev & 0xfff) == 0)
-				fprintf(stderr, "[eerec] %llu block revives\n", (unsigned long long)nrev);
-		}
 		return r.fn;
 	}
 
@@ -3968,10 +3848,6 @@ void eeJitShutdown_arm64(void)
 	s_code_pos = 0;
 }
 
-// TEMP DEBUG (C.24 crash hunt, LRPS2_FAULT_LOG): given a host fault pc, say
-// whether it lies in the EE JIT cache, which block contains it, and hexdump
-// the emitted code around it (offline-disassemblable). Not signal-safe --
-// debug only.
 // C.50: a fastmem access touched a page the vtlb doesn't back with memory (a
 // hardware register, or an unmapped vaddr). Rewrite the faulting instruction
 // into a branch to the slow stub that was emitted next to it, so the kernel's
@@ -4007,60 +3883,13 @@ extern "C" bool eeFastmemFault_arm64(uintptr_t code_address)
 	if (it == s_fm_faulting.end() || *it != site.pc)
 		s_fm_faulting.insert(it, site.pc);
 
-	if (getenv("LRPS2_FASTMEM_LOG"))
-		fprintf(stderr, "[fastmem] patched site %p (guest pc %08x) -> stub %p\n",
-			(void*)site.code, site.pc, (void*)site.stub);
 	return true;
 }
 
-extern "C" void eeJitDebugLocate_arm64(uintptr_t pc)
-{
-	if (!s_code || pc < (uintptr_t)s_code || pc >= (uintptr_t)s_code + kCodeCacheSize)
-	{
-		fprintf(stderr, "[locate] pc=%p NOT in EE cache (%p..%p)\n",
-			(void*)pc, (void*)s_code, (void*)(s_code + kCodeCacheSize));
-		return;
-	}
-	u32 best_pc = 0; uintptr_t best_fn = 0; bool best_live = false;
-	for (const auto& kv : s_blocks)
-	{
-		const uintptr_t fn = (uintptr_t)kv.second.fn;
-		if (fn <= pc && fn > best_fn) { best_fn = fn; best_pc = kv.first; best_live = kv.second.live; }
-	}
-	fprintf(stderr, "[locate] pc=%p in EE cache; block guest=%08x host=%p off=+%#lx live=%d\n",
-		(void*)pc, best_pc, (void*)best_fn, (unsigned long)(pc - best_fn), (int)best_live);
-	fprintf(stderr, "[locate] cache=%p pos=%#zx pc-off=%#lx wraps=%d tid=%ld\n",
-		(void*)s_code, s_code_pos, (unsigned long)(pc - (uintptr_t)s_code), s_cache_wraps,
-		(long)syscall(SYS_gettid));
-	// Dump the whole emitted block from its start through a bit past the fault.
-	{
-		const u32* w = (const u32*)best_fn;
-		const int nwords = (int)((pc - best_fn) / 4) + 24;
-		for (int i = 0; i < nwords; i++)
-			fprintf(stderr, "[code+%04x] %08x%s\n", i * 4, w[i],
-				((uintptr_t)(w + i) == pc) ? "  <-- FAULT" : "");
-	}
-	// And the block's guest source snapshot (MIPS words) for cross-reference.
-	auto it = s_blocks.find(best_pc);
-	if (it != s_blocks.end())
-	{
-		const u32 ns = Norm(best_pc);
-		fprintf(stderr, "[guest] block %08x native-end %08x src words %zu\n",
-			best_pc, it->second.end, it->second.src.size());
-		for (size_t i = 0; i < it->second.src.size(); i++)
-			fprintf(stderr, "[mips %08x] %08x\n", ns + (u32)i * 4, it->second.src[i]);
-	}
-}
 
 extern "C" void eeJitRunBlock_arm64(void)
 {
 
-	// TEMP DEBUG (C.24 crash hunt): identify the EE-dispatch thread once.
-	if (getenv("LRPS2_FAULT_LOG"))
-	{
-		static bool once = false;
-		if (!once) { once = true; fprintf(stderr, "[ee-thread] tid=%ld\n", (long)syscall(SYS_gettid)); }
-	}
 #ifdef EE_PC_SAMPLE
 	// TEMP diagnostic: sample EE PC 1/256 dispatches, dump the hottest 14 PCs
 	// every ~3M samples to find the loop the game spins on while stalled.

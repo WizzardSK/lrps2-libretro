@@ -33,16 +33,6 @@ static __fi u32 SIZE_U32(u32 x) { return (x + 3) >> 2; }
 // EE-thread-only, per the class contract (all producers run on the EE thread).
 static bool s_kickPending = false;
 static bool LazyKick() { static const bool on = getenv("LRPS2_NO_VIF_LAZYKICK") == nullptr; return on; }
-// TEMP diagnostic (LRPS2_MTVU_STATS=1): unpacks deferred vs notifies issued.
-static u64 s_statUnpacks = 0, s_statKicks = 0;
-static bool MtvuStatsOn() { static const bool on = getenv("LRPS2_MTVU_STATS") != nullptr; return on; }
-namespace { struct MtvuStatsDumper { ~MtvuStatsDumper() {
-	if (MtvuStatsOn())
-		fprintf(stderr, "[mtvu-stats] unpacks %llu, notifies %llu (saved %llu = %.1f%%)\n",
-			(unsigned long long)s_statUnpacks, (unsigned long long)s_statKicks,
-			(unsigned long long)(s_statUnpacks > s_statKicks ? s_statUnpacks - s_statKicks : 0),
-			s_statUnpacks ? 100.0 * (double)(s_statUnpacks - s_statKicks) / (double)s_statUnpacks : 0.0);
-} } s_mtvuStatsDumper; }
 
 enum MTVU_EVENT
 {
@@ -195,19 +185,6 @@ void VU_Thread::ExecuteRingBuffer(void)
 					if (CpuVU1 != &CpuMicroVU1)
 						vuRegs[0].VI[REG_VPU_STAT].UL |= 0x0100;
 					CpuVU1->Execute(vu1RunCycles);
-					// TEMP diagnostic (LRPS2_MTVU_LOG): count worker-side VU1 programs
-					// and the GS-packet bytes they produced.
-					{
-						static int log_on = -1; static u64 n = 0, bytes = 0;
-						if (log_on < 0) log_on = getenv("LRPS2_MTVU_LOG") ? 1 : 0;
-						if (log_on)
-						{
-							n++; bytes += gifUnit.gifPath[GIF_PATH_1].gsPack.size;
-							if (n <= 4 || (n & 0xf) == 0)
-								fprintf(stderr, "[mtvu-w] progs=%llu path1_bytes=%llu\n",
-									(unsigned long long)n, (unsigned long long)bytes);
-						}
-					}
 					gifUnit.gifPath[GIF_PATH_1].FinishGSPacketMTVU();
 					semaXGkick.Post(); // Tell MTGS a path1 packet is complete
 					vuCycles[vuCycleIdx].store(vuRegs[1].cycle, std::memory_order_release);
@@ -243,12 +220,6 @@ void VU_Thread::ExecuteRingBuffer(void)
 					break;
 				case MTVU_VIF_UNPACK:
 				{
-					// TEMP diagnostic (LRPS2_MTVU_LOG)
-					{
-						static int log_on = -1; static u64 n = 0;
-						if (log_on < 0) log_on = getenv("LRPS2_MTVU_LOG") ? 1 : 0;
-						if (log_on) { n++; if (n <= 4 || (n & 0x3ff) == 0) fprintf(stderr, "[mtvu-u] unpacks=%llu\n", (unsigned long long)n); }
-					}
 					u32 vif_copy_size = (uptr)&vif.StructEnd - (uptr)&vif.tag;
 					Read(&vif.tag, vif_copy_size);
 					ReadRegs(&vifRegs);
@@ -514,7 +485,6 @@ void VU_Thread::Get_MTVUChanges()
 void VU_Thread::KickStart()
 {
 	s_kickPending = false;
-	if (MtvuStatsOn()) s_statKicks++;
 	semaEvent.NotifyOfWork();
 }
 
@@ -575,7 +545,6 @@ void VU_Thread::VifUnpack(vifStruct& _vif, VIFregisters& _vifRegs, const u8* dat
 	Write(size);
 	Write(data, size);
 	m_ato_write_pos.store(m_write_pos, std::memory_order_release);
-	if (MtvuStatsOn()) s_statUnpacks++;
 	if (LazyKick())
 		s_kickPending = true; // C.80: published; notify deferred to a flush point
 	else

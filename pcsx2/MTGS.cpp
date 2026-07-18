@@ -220,18 +220,6 @@ void MTGS::MainLoop(bool flush_all)
 						Gif_Path& path = gifUnit.gifPath[tag.data[2]];
 						u32 offset     = tag.data[0];
 						u32 size       = tag.data[1];
-						// TEMP diagnostic (LRPS2_MTVU_LOG): per-path GS byte counters
-						{
-							static int log_on = -1; static u64 b[3] = {0,0,0}, n = 0;
-							if (log_on < 0) log_on = getenv("LRPS2_MTVU_LOG") ? 1 : 0;
-							if (log_on && offset != ~0u)
-							{
-								b[tag.data[2] % 3] += size; n++;
-								if ((n & 0x3ff) == 0)
-									fprintf(stderr, "[gsbytes] p1=%llu p2=%llu p3=%llu\n",
-										(unsigned long long)b[0], (unsigned long long)b[1], (unsigned long long)b[2]);
-							}
-						}
 						if (offset != ~0u)
 							GSgifTransfer((u8*)&path.buffer[offset], size / 16);
 						path.readAmount.fetch_sub(size, std::memory_order_acq_rel);
@@ -260,19 +248,6 @@ void MTGS::MainLoop(bool flush_all)
 							mtvu_lock.lock();
 						}
 						GS_Packet gsPack = path.GetGSPacketMTVU(); // Get vu1 program's xgkick packet(s)
-						// TEMP diagnostic (LRPS2_MTVU_LOG): count consumed MTVU path1
-						// packets/bytes on the GS side, incl. empty ones.
-						{
-							static int log_on = -1; static u64 n = 0, bytes = 0, empty = 0;
-							if (log_on < 0) log_on = getenv("LRPS2_MTVU_LOG") ? 1 : 0;
-							if (log_on)
-							{
-								n++; bytes += gsPack.size; if (!gsPack.size) empty++;
-								if (n <= 4 || (n & 0xf) == 0)
-									fprintf(stderr, "[mtvu-gs] pkts=%llu bytes=%llu empty=%llu\n",
-										(unsigned long long)n, (unsigned long long)bytes, (unsigned long long)empty);
-							}
-						}
 						if (gsPack.size)
 							GSgifTransfer((u8*)&path.buffer[gsPack.offset], gsPack.size / 16);
 						path.readAmount.fetch_sub(gsPack.size + gsPack.readAmount, std::memory_order_acq_rel);

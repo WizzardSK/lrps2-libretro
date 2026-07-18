@@ -318,18 +318,6 @@ namespace
 
 		BlockFn fn = reinterpret_cast<BlockFn>(start);
 		s_lut[(pc & kProgMask) >> 3] = fn;
-		// TEMP diagnostic (LRPS2_JIT_STATS): prove blocks are compiled+dispatched.
-		{
-			static int log_on = -1; static u64 n = 0;
-			if (log_on < 0) log_on = getenv("LRPS2_JIT_STATS") ? 1 : 0;
-			if (log_on)
-			{
-				n++;
-				if (n <= 4 || (n & 0xff) == 0)
-					fprintf(stderr, "[vu1rec] block #%llu compiled at VU1 pc=%04x\n",
-						(unsigned long long)n, pc & kProgMask);
-			}
-		}
 		return fn;
 	}
 }
