@@ -22,6 +22,7 @@
 
 #include <cstdlib>
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <dlfcn.h>
@@ -448,6 +449,198 @@ namespace aVUPersist
 		prog.persist = nullptr;
 	}
 
+	//------------------------------------------------------------------
+	// Serialization (phase 3): a program's recorded block graph -> a flat,
+	// content-addressed image. Layout bases (image / arena / per-block heap)
+	// are stored so hydration can rebase the fixups by delta.
+	//------------------------------------------------------------------
+
+	static constexpr u32 kImageMagic = 0x32555641; // 'AVU2'
+	static constexpr u32 kImageVersion = 1;
+
+	struct ImageHeader
+	{
+		u32 magic;
+		u32 version;
+		u32 vuIndex;
+		u32 startPC;      // microMem byte offset of the creating entry
+		u64 contentHash;  // hash of the guest microprogram this was compiled from
+		u64 imageBase;    // s_ranges.imgBegin at record time
+		u64 arenaBase;    // mVU.cache at record time
+		u32 blockCount;
+		u32 chunkCount;
+		u64 payloadHash;  // hash of every byte after this header (bit-rot guard)
+	};
+	static_assert(sizeof(ImageHeader) == 56);
+
+	struct DiskBlock
+	{
+		u32 chunkIndex;
+		u32 entryOffset;
+		u32 startPC;
+		u32 _pad;
+		u64 liveBase; // record-time address of the microBlock (for kFixBlockAbs rebase)
+		u8 pState[sizeof(microRegInfo)];
+		u8 pStateEnd[sizeof(microRegInfo)];
+	};
+
+	static u64 HashBytes(const void* data, size_t len, u64 seed = 1469598103934665603ull)
+	{
+		const u8* p = static_cast<const u8*>(data);
+		u64 h = seed;
+		for (size_t i = 0; i < len; i++)
+		{
+			h ^= p[i];
+			h *= 1099511628211ull;
+		}
+		return h;
+	}
+
+	template <typename T>
+	static void AppendPod(std::vector<u8>& out, const T& v)
+	{
+		const u8* p = reinterpret_cast<const u8*>(&v);
+		out.insert(out.end(), p, p + sizeof(T));
+	}
+
+	// Serialize `prog`'s recorded graph into `out`. Returns false when the
+	// program has no persistable log or recorded nothing.
+	static bool SerializeProgram(microVU& mVU, const microProgram& prog, std::vector<u8>& out)
+	{
+		const MvuPersistLog* log = prog.persist;
+		if (!log || !log->persistable || log->blocks.empty() || log->chunks.empty())
+			return false;
+
+		out.clear();
+		ImageHeader hdr = {};
+		hdr.magic = kImageMagic;
+		hdr.version = kImageVersion;
+		hdr.vuIndex = mVU.index;
+		hdr.startPC = static_cast<u32>(prog.startPC) * 8u;
+		hdr.contentHash = HashBytes(prog.data, sizeof(prog.data));
+		hdr.imageBase = s_ranges.imgBegin;
+		hdr.arenaBase = reinterpret_cast<u64>(mVU.cache);
+		hdr.blockCount = static_cast<u32>(log->blocks.size());
+		hdr.chunkCount = static_cast<u32>(log->chunks.size());
+		AppendPod(out, hdr); // payloadHash filled in after the body
+
+		for (const PersistBlockRec& b : log->blocks)
+		{
+			DiskBlock db = {};
+			db.chunkIndex = b.chunkIndex;
+			db.entryOffset = b.entryOffset;
+			db.startPC = b.startPC;
+			db.liveBase = reinterpret_cast<u64>(b.live);
+			std::memcpy(db.pState, &b.pState, sizeof(microRegInfo));
+			std::memcpy(db.pStateEnd, &b.pStateEnd, sizeof(microRegInfo));
+			AppendPod(out, db);
+		}
+		for (const PersistChunk& c : log->chunks)
+		{
+			const u32 codeSize = static_cast<u32>(c.code.size());
+			const u32 fixupCount = static_cast<u32>(c.fixups.size());
+			AppendPod(out, codeSize);
+			AppendPod(out, fixupCount);
+			out.insert(out.end(), c.code.begin(), c.code.end());
+			for (const PersistFixup& f : c.fixups)
+				AppendPod(out, f);
+		}
+
+		// Fill payloadHash over everything after the header.
+		const u64 ph = HashBytes(out.data() + sizeof(ImageHeader), out.size() - sizeof(ImageHeader));
+		std::memcpy(out.data() + offsetof(ImageHeader, payloadHash), &ph, sizeof(ph));
+		return true;
+	}
+
+	// Parse a serialized image and verify it structurally round-trips against
+	// the live `log` it was produced from: header sanity, payload hash, and
+	// byte-exact chunk code + fixup records. Returns true on full agreement.
+	// This proves the format is complete and lossless before any hydration
+	// consumes it. Test-only (LRPS2_VU_PROGCACHE_SELFTEST).
+	static bool VerifyRoundTrip(const std::vector<u8>& img, const MvuPersistLog& log)
+	{
+		if (img.size() < sizeof(ImageHeader))
+			return false;
+		ImageHeader hdr;
+		std::memcpy(&hdr, img.data(), sizeof(hdr));
+		if (hdr.magic != kImageMagic || hdr.version != kImageVersion)
+			return false;
+		if (hdr.blockCount != log.blocks.size() || hdr.chunkCount != log.chunks.size())
+			return false;
+		if (HashBytes(img.data() + sizeof(ImageHeader), img.size() - sizeof(ImageHeader)) != hdr.payloadHash)
+			return false;
+
+		size_t pos = sizeof(ImageHeader);
+		for (u32 i = 0; i < hdr.blockCount; i++)
+		{
+			if (pos + sizeof(DiskBlock) > img.size())
+				return false;
+			DiskBlock db;
+			std::memcpy(&db, img.data() + pos, sizeof(db));
+			pos += sizeof(db);
+			const PersistBlockRec& b = log.blocks[i];
+			if (db.chunkIndex != b.chunkIndex || db.entryOffset != b.entryOffset || db.startPC != b.startPC)
+				return false;
+			if (std::memcmp(db.pState, &b.pState, sizeof(microRegInfo)) != 0)
+				return false;
+		}
+		for (u32 i = 0; i < hdr.chunkCount; i++)
+		{
+			if (pos + 8 > img.size())
+				return false;
+			u32 codeSize, fixupCount;
+			std::memcpy(&codeSize, img.data() + pos, 4);
+			std::memcpy(&fixupCount, img.data() + pos + 4, 4);
+			pos += 8;
+			const PersistChunk& c = log.chunks[i];
+			if (codeSize != c.code.size() || fixupCount != c.fixups.size())
+				return false;
+			if (pos + codeSize > img.size() || std::memcmp(img.data() + pos, c.code.data(), codeSize) != 0)
+				return false;
+			pos += codeSize;
+			for (u32 j = 0; j < fixupCount; j++)
+			{
+				if (pos + sizeof(PersistFixup) > img.size())
+					return false;
+				PersistFixup f;
+				std::memcpy(&f, img.data() + pos, sizeof(f));
+				pos += sizeof(f);
+				if (f.codeOffset != c.fixups[j].codeOffset || f.kind != c.fixups[j].kind || f.target != c.fixups[j].target)
+					return false;
+			}
+		}
+		return pos == img.size();
+	}
+
+	// Walk every recorded program and round-trip serialize/verify it. Called
+	// from mVUclose before programs are freed. Gated by
+	// LRPS2_VU_PROGCACHE_SELFTEST; counts pass/fail into the stats.
+	static u64 s_selftestPass[2] = {};
+	static u64 s_selftestFail[2] = {};
+	static void RoundTripSelfTest(microVU& mVU)
+	{
+		if (!s_enabled)
+			return;
+		static const bool run = getenv("LRPS2_VU_PROGCACHE_SELFTEST") != nullptr;
+		if (!run)
+			return;
+		for (u32 i = 0; i < (mVU.progSize / 2); i++)
+		{
+			if (!mVU.prog.prog[i])
+				continue;
+			for (microProgram* p : *mVU.prog.prog[i])
+			{
+				if (!p || !p->persist || !p->persist->persistable || p->persist->blocks.empty())
+					continue;
+				std::vector<u8> img;
+				if (SerializeProgram(mVU, *p, img) && VerifyRoundTrip(img, *p->persist))
+					s_selftestPass[mVU.index]++;
+				else
+					s_selftestFail[mVU.index]++;
+			}
+		}
+	}
+
 	static void DumpStats(u32 vuIndex)
 	{
 		if (!s_statsDump)
@@ -462,5 +655,9 @@ namespace aVUPersist
 			(unsigned long long)st.fixBlock, (unsigned long long)st.fixAdrp,
 			(unsigned long long)st.fixBranchArena, (unsigned long long)st.fixBranchImage,
 			(unsigned long long)st.fixUnclassifiable);
+		if (s_selftestPass[vuIndex] || s_selftestFail[vuIndex])
+			Console.WriteLn("aVUPersist[VU%u]: round-trip selftest pass=%llu fail=%llu",
+				vuIndex, (unsigned long long)s_selftestPass[vuIndex],
+				(unsigned long long)s_selftestFail[vuIndex]);
 	}
 } // namespace aVUPersist

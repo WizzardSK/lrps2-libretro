@@ -603,6 +603,7 @@ void mVUreset(microVU& mVU, bool resetReserve)
 // Free Allocated Resources
 void mVUclose(microVU& mVU)
 {
+	aVUPersist::RoundTripSelfTest(mVU);
 	aVUPersist::DumpStats(mVU.index);
 	// Delete Programs and Block Managers
 	for (u32 i = 0; i < (mVU.progSize / 2); i++)
