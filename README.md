@@ -108,13 +108,14 @@ Native ALU incl. the trapping forms ADDI/ADD/SUB (this interpreter drops the ove
 
 **microVU0 runs VU0 micro programs** (VCALLMS) natively; **COP2 macro ALU ops emit native NEON directly into EE JIT blocks** (aVU_Macro single-op emitters) with **real flag liveness** (C.66): the analysis runs over a run of consecutive macro ALU ops, capped at the block end, and only the last writer of each flag category computes it -- the same flag-hack the x86 rec ships by default (its `COP2FlagHackPass`, here run-local because this builder interleaves analysis with emission). Dead intermediate MAC/status pipelines (~40 host instructions per op) vanish: the hottest in-race GT3 block, VU0-macro matrix code, dropped 3068 -> 2004 host bytes. Wall-time flat (OoO absorbed the ALU); the win is code size, I-cache and x86 parity. `LRPS2_NO_COP2_LIVENESS=1` restores all-live; BC2 branches native; **the COP2 transfers (QMFC2/CFC2/QMTC2/CTC2) are native too** (C.58) -- the interlock bit is known at compile time, so the `_vu0FinishMicro`/`_vu0WaitMicro` call is only emitted when set, and CFC2's REG_R quirk (writes UL[0], leaves UL[1]) is reproduced exactly. CTC2 to FBRST/CMSAR1 (VU reset / VU1 microprogram kick) and CALLMS/CALLMSR stay on the interpreter call, faithful to x86. **C.78 macro emission quality**, on the EE critical path (VU0 macro runs in the EE thread): the COP2 transfer bodies and the conservative VU0-busy check address vuRegs through an adrp+pageoff fold instead of a 4-instruction absolute materialization each (`LRPS2_NO_COP2_ABSFOLD=1` restores them); the per-op macro bracket -- VU0-busy check, x19 repoint to &vuRegs[0], x19 restore to &cpuRegs (~11 instructions per op) -- is **hoisted to once per run** of consecutive native macro ALU ops (the C.66 liveness run): between the ops of a run nothing else is emitted, events only fire at block tails, and no run op can start a VU0 microprogram, so the bases stay valid across the run's whole extent (`LRPS2_NO_COP2_RUNHOIST=1` restores per-op brackets); and **x27 = &microVU0 is materialized inside the bracket**, so mvuAbsMem's one-instruction `[x27 + imm]` addressing of the mVU scalars and the C.75 embedded constant tables now applies in macro mode too (`LRPS2_NO_COP2_MX27=1` restores the adrp fold). FOOTGUN captured in the run predicate: VNOP/VWAITQ have EMPTY emitters (no setupMacroOp/endMacroOp), so a hoisted bracket ending on one never emits its x19 restore -- GT3's VU0->GS upload loop ends `VSQI, VSQI, VNOP, VNOP` and the following branch then read its GPRs out of VF registers (instant wedge); they are excluded from runs and emit through the per-op path. Hottest in-race block (VU0-macro matrix code) 1860 -> 1540 host bytes (-17 %); wall flat (C.49 lesson: OoO absorbs it), the win is code size, I-cache and parity. `LRPS2_NO_VU0REC=1` / `LRPS2_NO_EE_COP2MACRO=1` / `LRPS2_NO_EE_COP2XFER=1` fall back
 
-### Persisted VU program cache — in progress (recorder + serializer landed)
+### Persisted VU program cache — ~75 % (relocation core done, live wiring pending)
 
 A JIT warm cache for microVU, aimed at the ~15 s per-launch VU recompilation
 stall (the emitted code is in-memory only, so every launch re-JITs from cold).
 Off by default (`LRPS2_VU_PROGCACHE=1` enables recording; `_STATS=1` dumps the
-per-VU counters). Landed so far, each verified bit-identical against the goldens
-(GT3 1500f 106138289/860124, MMX7 1500f 111415017/800725) with recording on:
+per-VU counters; `_SELFTEST=1` runs the verifiers below). Every stage is verified
+bit-identical against the goldens (GT3 1500f 106138289/860124, MMX7 1500f
+111415017/800725) with recording on. Done:
 
 - **Recorder** — captures every aVU emission episode (code chunk + the blocks
   whose entry points live in it) onto the owning program's log. Hooks both
@@ -123,21 +124,32 @@ per-VU counters). Landed so far, each verified bit-identical against the goldens
   blocks.
 - **Fixup classifier** — decodes each recorded chunk's ARM64 stream and places
   every baked address (movz/movk materializations, ADRP pages, B/BL targets)
-  into a relocation class against the core image / VU code-cache arena / this
-  program's `microBlock` objects. A value in no process mapping is a run-
-  invariant constant (mask/immediate), not an address, so it needs no fixup;
-  a mapped-but-unplaced pointer drops the episode (fail-safe). GT3: 100 % of the
-  recorded VU code classifies (0 unclassifiable).
+  into a relocation form + target class. Four target classes cover everything
+  the emitter bakes: the core `.so` image (including its bss statics — microVU
+  and vuRegs live in the anon mapping right after the file segments), the VU
+  code-cache arena, this program's `microBlock` objects, and the VU's Mem/Micro
+  buffers (separately mmap'd). A value in no process mapping is a run-invariant
+  constant, not an address. Recording forces canonical fixed-length movz/movk so
+  each baked absolute sits in a re-encodable slot; the value is unchanged, so the
+  goldens hold. GT3: 100 % of the recorded VU code classifies (0 unclassifiable).
 - **Serializer** — writes a program's graph to a flat content-addressed image
-  (header with the guest-microprogram hash + record-time image/arena bases,
-  block records, chunk code + fixup tables) and a round-trip verifier proving
-  the format is complete and lossless (`LRPS2_VU_PROGCACHE_SELFTEST=1`).
+  (header with the guest-microprogram hash + record-time image/arena/Mem/Micro
+  bases, block records, chunk code + fixup tables); a round-trip verifier proves
+  it is complete and lossless.
+- **Relocation core** — `PatchMovImm`/`PatchAdrp`/`PatchBranch` rewrite a baked
+  address in place, and `ResolveFixup` maps each fixup's recorded target to its
+  new location per class (base deltas for image/VuMem, the old→new block table
+  for block absolutes, per-chunk placement for cross-chunk arena refs, arena
+  delta for stubs). Two in-process verifiers — a placement-independence rebase
+  test and a full hydration-resolve test that moves chunks and remaps blocks —
+  pass on both VUs, confirming the rebase math before it touches the live cache.
 
-Still to come: hydration (copy chunks to the code cache, rebase the fixups by
-base delta, re-point block absolutes at freshly-allocated blocks), the on-disk
-INDEX/VERSION store, and the warm-up measurement. The design rebases fixups by
-delta rather than refusing on a base mismatch, so the cache survives ASLR in the
-libretro `.so` (where a fixed-base scheme would never hit).
+Still to come: live wiring (hydrate into the real code cache, allocate the
+microBlocks, register them with the block managers, and try hydration ahead of a
+recompile in `mVUsearchProg`), the on-disk INDEX/VERSION store, and the cross-
+process warm-up measurement. The design rebases fixups by delta rather than
+refusing on a base mismatch, so the cache survives ASLR in the libretro `.so`
+(where a fixed-base scheme would never hit).
 
 ### VIF unpack dynarec — ~100 %
 
