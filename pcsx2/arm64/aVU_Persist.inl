@@ -21,15 +21,43 @@
 // code.
 
 #include <cstdlib>
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <dlfcn.h>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace aVUPersist
 {
+	// A baked address the persisted code cannot use verbatim in another run.
+	// The class picks how hydration re-derives it: image/arena/code deltas are
+	// applied as a base shift, block absolutes point into the freshly-allocated
+	// block graph, ADRP pages are re-paged. `kFixUnclassifiable` never lands in
+	// a serialized chunk — it marks the whole episode non-persistable.
+	enum FixupKind : u8
+	{
+		kFixImageAbs = 0,   // movz/movk -> address in the core .so image
+		kFixArenaAbs,       // movz/movk -> address in the VU code-cache arena (stub or cross-chunk code)
+		kFixBlockAbs,       // movz/movk -> a microBlock object of this program
+		kFixAdrpPage,       // ADRP -> run-invariant page that must be re-paged
+		kFixBranchArena,    // B/BL -> arena target outside this chunk (stub / cross-chunk)
+		kFixBranchImage,    // B/BL -> image target (trampoline / helper)
+		kFixUnclassifiable, // sentinel: drop the episode
+	};
+
+	struct PersistFixup
+	{
+		u32 codeOffset; // chunk-relative byte offset of the first patched insn
+		u8 kind;
+		u64 target;     // resolved absolute (debug aid + hydration input)
+	};
+
 	struct PersistChunk
 	{
 		std::vector<u8> code;
-		// Fixups land here in phase 2.
+		std::vector<PersistFixup> fixups;
 	};
 
 	struct PersistBlockRec
@@ -52,6 +80,10 @@ struct MvuPersistLog
 	std::vector<aVUPersist::PersistBlockRec> blocks;
 	// host entry -> blocks[] index, for phase-2 cross-chunk branch resolution.
 	std::unordered_map<const void*, u32> blockByEntry;
+	// Cleared the first time a chunk holds an unclassifiable baked address; a
+	// non-persistable program is never serialized (its chunk indices stay valid
+	// for the blocks that reference them, so we keep the chunks in place).
+	bool persistable = true;
 };
 
 namespace aVUPersist
@@ -63,7 +95,104 @@ namespace aVUPersist
 		u64 chunksDropped = 0;
 		u64 blocksRecorded = 0;
 		u64 orphanBlocks = 0; // block registered with no episode open
+		// Fixup classification (phase 2 measurement).
+		u64 fixImage = 0;
+		u64 fixArena = 0;
+		u64 fixBlock = 0;
+		u64 fixAdrp = 0;
+		u64 fixBranchArena = 0;
+		u64 fixBranchImage = 0;
+		u64 fixUnclassifiable = 0; // mapped pointers we could not place -> drops
 	};
+
+	// Run-invariant-under-rebase ranges, resolved once per process.
+	struct Ranges
+	{
+		uptr imgBegin = 0, imgEnd = 0; // the core .so's mapped image
+		std::vector<std::pair<uptr, uptr>> mapped; // every mapping, sorted by begin
+		bool valid = false;
+	};
+	static Ranges s_ranges;
+
+	// True if `v` points into any current process mapping. A movz/movk that
+	// materializes a value outside every mapping is a run-invariant constant
+	// (mask, immediate, packed field), not an address — it needs no fixup and
+	// must not drop the episode. A value inside a mapping is a real pointer.
+	static bool IsMapped(uptr v)
+	{
+		const auto& m = s_ranges.mapped;
+		// binary search: last range whose begin <= v
+		size_t lo = 0, hi = m.size();
+		while (lo < hi)
+		{
+			size_t mid = (lo + hi) / 2;
+			if (m[mid].first <= v)
+				lo = mid + 1;
+			else
+				hi = mid;
+		}
+		return lo > 0 && v < m[lo - 1].second;
+	}
+
+	// Resolve the core .so image span from /proc/self/maps using dladdr to find
+	// any address inside it (a function of this TU). Best-effort: on failure the
+	// scanner treats would-be image absolutes as unclassifiable, which only
+	// costs cache coverage, never correctness.
+	static void ResolveRanges()
+	{
+		if (s_ranges.valid)
+			return;
+		s_ranges.valid = true; // attempt once regardless of outcome
+		Dl_info info;
+		if (!dladdr(reinterpret_cast<const void*>(&ResolveRanges), &info) || !info.dli_fbase)
+			return;
+		const uptr anchor = reinterpret_cast<uptr>(info.dli_fbase);
+		std::FILE* maps = std::fopen("/proc/self/maps", "r");
+		if (!maps)
+			return;
+		// First pass: find the pathname of the mapping holding the anchor.
+		char line[512];
+		char anchorPath[256] = {};
+		while (std::fgets(line, sizeof(line), maps))
+		{
+			unsigned long long b = 0, e = 0;
+			int off = 0;
+			if (std::sscanf(line, "%llx-%llx %*s %*s %*s %*s %n", &b, &e, &off) < 2)
+				continue;
+			if (anchor >= (uptr)b && anchor < (uptr)e)
+			{
+				const char* p = line + off;
+				const char* nl = std::strchr(p, '\n');
+				size_t len = nl ? (size_t)(nl - p) : std::strlen(p);
+				if (len >= sizeof(anchorPath))
+					len = sizeof(anchorPath) - 1;
+				std::memcpy(anchorPath, p, len);
+				anchorPath[len] = 0;
+				break;
+			}
+		}
+		// Second pass: union every mapping of that same file (text/rodata/data/bss)
+		// for the image span, and record every mapping for the pointer test.
+		std::rewind(maps);
+		while (std::fgets(line, sizeof(line), maps))
+		{
+			unsigned long long b = 0, e = 0;
+			int off = 0;
+			if (std::sscanf(line, "%llx-%llx %*s %*s %*s %*s %n", &b, &e, &off) < 2)
+				continue;
+			s_ranges.mapped.emplace_back((uptr)b, (uptr)e);
+			const char* p = line + off;
+			if (anchorPath[0] && std::strncmp(p, anchorPath, std::strlen(anchorPath)) == 0)
+			{
+				if (s_ranges.imgBegin == 0 || (uptr)b < s_ranges.imgBegin)
+					s_ranges.imgBegin = (uptr)b;
+				if ((uptr)e > s_ranges.imgEnd)
+					s_ranges.imgEnd = (uptr)e;
+			}
+		}
+		std::fclose(maps);
+		std::sort(s_ranges.mapped.begin(), s_ranges.mapped.end());
+	}
 
 	static bool s_enabled = false;
 	static bool s_statsDump = false;
@@ -112,6 +241,127 @@ namespace aVUPersist
 		s_stats[mVU.index].episodes++;
 	}
 
+	// True if `v` points inside one of this program's recorded microBlock
+	// objects (its &pState = the object base, since pState is the first member).
+	static bool IsBlockAbs(const MvuPersistLog& log, uptr v)
+	{
+		for (const PersistBlockRec& b : log.blocks)
+		{
+			const uptr base = reinterpret_cast<uptr>(b.live);
+			if (v >= base && v < base + sizeof(microBlock))
+				return true;
+		}
+		return false;
+	}
+
+	// Decode the chunk's ARM64 stream and classify every baked address into a
+	// fixup. movz/movk immediate materializations, ADRP pages, and B/BL targets
+	// are the only run-variant forms the aVU emitter produces; anything whose
+	// resolved value falls outside the known image / arena / block ranges marks
+	// the episode non-persistable (returns false). `chunkBase` is the address
+	// the code was emitted at (needed to resolve PC-relative operands).
+	static bool ScanChunkForFixups(microVU& mVU, const MvuPersistLog& log, PersistChunk& chunk, uptr chunkBase)
+	{
+		ResolveRanges();
+		Stats& st = s_stats[mVU.index];
+		const uptr arenaBegin = reinterpret_cast<uptr>(mVU.cache);
+		const uptr arenaEnd = reinterpret_cast<uptr>(mVU.prog.codeReserveEnd);
+		const uptr chunkEnd = chunkBase + chunk.code.size();
+
+		bool ok = true;
+		auto classifyAbs = [&](u32 off, uptr v) {
+			if (v == 0)
+				return; // not an address
+			if (s_ranges.imgBegin && v >= s_ranges.imgBegin && v < s_ranges.imgEnd)
+			{ chunk.fixups.push_back({off, kFixImageAbs, v}); st.fixImage++; return; }
+			if (v >= arenaBegin && v < arenaEnd)
+			{ chunk.fixups.push_back({off, kFixArenaAbs, v}); st.fixArena++; return; }
+			if (IsBlockAbs(log, v))
+			{ chunk.fixups.push_back({off, kFixBlockAbs, v}); st.fixBlock++; return; }
+			if (!IsMapped(v))
+				return; // run-invariant constant (mask/immediate), not an address
+			// Mapped but unplaced: a real pointer into a region we do not yet
+			// rebase (guest mem, a struct outside the x19/x27 pins). Drop safely.
+			st.fixUnclassifiable++; ok = false;
+		};
+
+		const u8* code = chunk.code.data();
+		const size_t n = chunk.code.size() / 4;
+		int curReg = -1;
+		uptr curVal = 0;
+		u32 curOff = 0;
+		for (size_t i = 0; i < n; i++)
+		{
+			u32 insn;
+			std::memcpy(&insn, code + i * 4, 4);
+			const u32 off = static_cast<u32>(i * 4);
+			const int rd = insn & 0x1F;
+			const bool isMovz = (insn & 0x7F800000u) == 0x52800000u; // 32/64-bit MOVZ
+			const bool isMovk = (insn & 0x7F800000u) == 0x72800000u; // 32/64-bit MOVK
+			const bool is64 = (insn >> 31) & 1;
+
+			if (isMovz)
+			{
+				if (curReg >= 0)
+					classifyAbs(curOff, curVal); // previous sequence ended
+				const u32 hw = (insn >> 21) & 0x3;
+				const u64 imm = (insn >> 5) & 0xFFFF;
+				curReg = rd;
+				curVal = static_cast<uptr>(imm << (hw * 16));
+				curOff = off;
+				(void)is64;
+				continue;
+			}
+			if (isMovk && curReg == rd)
+			{
+				const u32 hw = (insn >> 21) & 0x3;
+				const u64 imm = (insn >> 5) & 0xFFFF;
+				curVal &= ~(static_cast<uptr>(0xFFFF) << (hw * 16));
+				curVal |= static_cast<uptr>(imm << (hw * 16));
+				continue;
+			}
+			// Any other instruction terminates a pending mov-immediate sequence.
+			if (curReg >= 0)
+			{
+				classifyAbs(curOff, curVal);
+				curReg = -1;
+			}
+
+			// ADRP: op | immlo(2) | 10000 | immhi(19) | Rd
+			if ((insn & 0x9F000000u) == 0x90000000u)
+			{
+				const s64 immlo = (insn >> 29) & 0x3;
+				s64 immhi = (insn >> 5) & 0x7FFFF;
+				if (immhi & 0x40000) immhi |= ~0x7FFFFll; // sign-extend 19 bits
+				const s64 page = (immhi << 2) | immlo;
+				const uptr pc = chunkBase + off;
+				const uptr target = (pc & ~static_cast<uptr>(0xFFF)) + static_cast<uptr>(page << 12);
+				chunk.fixups.push_back({off, kFixAdrpPage, target});
+				st.fixAdrp++;
+				continue;
+			}
+			// B (0x14000000) / BL (0x94000000): imm26 << 2, PC-relative.
+			if ((insn & 0x7C000000u) == 0x14000000u)
+			{
+				s64 imm26 = insn & 0x03FFFFFF;
+				if (imm26 & 0x02000000) imm26 |= ~0x03FFFFFFll; // sign-extend
+				const uptr pc = chunkBase + off;
+				const uptr target = pc + static_cast<uptr>(imm26 << 2);
+				if (target >= chunkBase && target < chunkEnd)
+					continue; // intra-chunk: invariant when the chunk moves as a unit
+				if (target >= arenaBegin && target < arenaEnd)
+				{ chunk.fixups.push_back({off, kFixBranchArena, target}); st.fixBranchArena++; continue; }
+				if (s_ranges.imgBegin && target >= s_ranges.imgBegin && target < s_ranges.imgEnd)
+				{ chunk.fixups.push_back({off, kFixBranchImage, target}); st.fixBranchImage++; continue; }
+				st.fixUnclassifiable++; ok = false;
+				continue;
+			}
+		}
+		if (curReg >= 0)
+			classifyAbs(curOff, curVal);
+		return ok;
+	}
+
 	// armEndBlock finalized at `end`: capture the chunk onto the owning
 	// program's log, or account a drop. Empty episodes (search hit, nothing
 	// emitted) are ignored.
@@ -135,6 +385,16 @@ namespace aVUPersist
 		// ep.base under chunkIndex == chunks.size(); commit the code bytes.
 		PersistChunk& chunk = log.chunks.emplace_back();
 		chunk.code.assign(ep.base, end);
+		if (!ScanChunkForFixups(mVU, log, chunk, reinterpret_cast<uptr>(ep.base)))
+		{
+			// Unclassifiable baked address: this chunk is not safely relocatable,
+			// so the whole program becomes non-persistable. Keep the chunk in
+			// place (its index is referenced by recorded blocks); serialization
+			// (phase 3) refuses a non-persistable log.
+			log.persistable = false;
+			s_stats[mVU.index].chunksDropped++;
+			return;
+		}
 		s_stats[mVU.index].chunksRecorded++;
 	}
 
@@ -197,5 +457,10 @@ namespace aVUPersist
 			vuIndex, (unsigned long long)st.episodes, (unsigned long long)st.chunksRecorded,
 			(unsigned long long)st.chunksDropped, (unsigned long long)st.blocksRecorded,
 			(unsigned long long)st.orphanBlocks);
+		Console.WriteLn("aVUPersist[VU%u]: fixups img=%llu arena=%llu block=%llu adrp=%llu bra=%llu bimg=%llu UNCLASS=%llu",
+			vuIndex, (unsigned long long)st.fixImage, (unsigned long long)st.fixArena,
+			(unsigned long long)st.fixBlock, (unsigned long long)st.fixAdrp,
+			(unsigned long long)st.fixBranchArena, (unsigned long long)st.fixBranchImage,
+			(unsigned long long)st.fixUnclassifiable);
 	}
 } // namespace aVUPersist
