@@ -230,8 +230,6 @@ enum AnalogButtons
 
 static void process_analog(int &axis_x, int &axis_y, float sensitivity, u16 deadzone)
 {
-	constexpr float MAX_RANGE = 32767.0f;
-
 	/* Identity fast path -- the default configuration (no deadzone, unit
 	 * sensitivity). The general path below is an int->float->int roundtrip
 	 * whose result, at these settings, is just a clamp to [-32767, 32767];
@@ -248,13 +246,13 @@ static void process_analog(int &axis_x, int &axis_y, float sensitivity, u16 dead
 	if (deadzone > 0)
 	{
 		float magnitude = std::sqrt(axis_x * axis_x + axis_y * axis_y);
-		magnitude = std::min(magnitude, MAX_RANGE);
+		magnitude = std::min(magnitude, 32767.0f);
 
 		if (magnitude > deadzone)
 		{
 			// If we're past the deadzone, scale our values so we can still
 			// use slow movements when the stick is not fully pushed
-			const float scaled_mag = (magnitude - deadzone) / (MAX_RANGE - deadzone);
+			const float scaled_mag = (magnitude - deadzone) / (32767 - deadzone);
 			axis_x *= scaled_mag;
 			axis_y *= scaled_mag;
 		}
@@ -267,13 +265,12 @@ static void process_analog(int &axis_x, int &axis_y, float sensitivity, u16 dead
 	}
 
 	// Apply sensitivity
-	axis_x = static_cast<int>(std::clamp(axis_x * sensitivity, -MAX_RANGE, MAX_RANGE));
-	axis_y = static_cast<int>(std::clamp(axis_y * sensitivity, -MAX_RANGE, MAX_RANGE));
+	axis_x = static_cast<int>(std::clamp(axis_x * sensitivity, -32767.0f, 32767.0f));
+	axis_y = static_cast<int>(std::clamp(axis_y * sensitivity, -32767.0f, 32767.0f));
 }
 
 static u8 process_button(u16 deadzone, u32 port, int id, u32 mask)
 {
-	constexpr u16 MAX_RANGE = 32767;
 	u16 value = input_cb(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_BUTTON, id);
 
 	// If value is 0, either it's really not pressed or
@@ -289,11 +286,10 @@ static u8 process_button(u16 deadzone, u32 port, int id, u32 mask)
 	// Apply deadzone
 	if (deadzone > 0)
 	{
-		if (value > deadzone)
-			// Scale the range
-			value = (value - deadzone) * MAX_RANGE / (MAX_RANGE - deadzone);
-		else
+		if (value <= deadzone)
 			return 0;
+		// Scale the range
+		value = (value - deadzone) * 32767 / (32767 - deadzone);
 	}
 
 	// 0..32767 -> 0..255
