@@ -79,6 +79,14 @@ libretro-build-linux-x64:
   variables:
     EXTRA_PATH: bin
 
+# Linux 64-bit arm
+libretro-build-linux-aarch64:
+  extends:
+    - .libretro-linux-cmake-aarch64
+    - .core-defs
+  variables:
+    EXTRA_PATH: bin
+
 # MacOS 64-bit
 libretro-build-osx-x64:
   tags:
