@@ -3372,6 +3372,7 @@ namespace {
 		}
 
 		int n = 0;
+		u32 p = pc; // guest pc cursor advanced across the translated run
 		int cyc = 0; // raw sum of the leading translated ops' cycle costs
 		bool done = false;
 		bool branch_end = false; // ended via EmitBranch: branch + delay slot baked
