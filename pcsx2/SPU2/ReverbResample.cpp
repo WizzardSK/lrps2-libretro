@@ -59,16 +59,24 @@ static constexpr std::array<s16, 48> make_up_coefs()
 
 static constexpr std::array<s16, 48> filter_up_coefs alignas(32) = make_up_coefs();
 
-s32 __forceinline ReverbDownsample_reference(V_Core& core, bool right)
-{
-	int index = (core.RevbSampleBufPos - NUM_TAPS) & 63;
-	s32 out = 0;
-
-	for (u32 i = 0; i < NUM_TAPS; i++)
-		out += core.RevbDownBuf[right][index + i] * filter_down_coefs[i];
-
-	return std::clamp(out >> 15, -0x8000, 0x7fff);
-}
+/*
+ * Reverb resampling is a 39-tap symmetric FIR (filter_down_coefs /
+ * filter_up_coefs, Q15) converting between the core rate and the reverb rate.
+ * The SPU2 evaluates it on a 16-bit saturating accumulator, so the SIMD paths
+ * below are the authoritative implementations: each tap is a rounding
+ * fixed-point multiply (mul16hrs) and the running sum saturates at every step
+ * (adds16 / hadds16). A naive full-precision scalar accumulate, i.e.
+ *
+ *     s32 out = 0;
+ *     for (i = 0; i < NUM_TAPS; i++)
+ *         out += RevbDownBuf[right][index + i] * filter_down_coefs[i];
+ *     out = clamp(out >> 15);
+ *
+ * reads more clearly but is NOT bit-exact: it drops the intermediate
+ * saturation and rounds differently, diverging by up to ~7 LSB. It is
+ * therefore intentionally not kept as a callable "reference". The SSE and AVX
+ * paths are bit-identical to each other.
+ */
 
 #if _M_SSE >= 0x501
 s32 __forceinline ReverbDownsample_avx(V_Core& core, bool right)
@@ -137,22 +145,12 @@ s32 ReverbDownsample(V_Core& core, bool right)
 #endif
 }
 
-StereoOut32 __forceinline ReverbUpsample_reference(V_Core& core)
-{
-	StereoOut32 val;
-	int index = (core.RevbSampleBufPos - NUM_TAPS) & 63;
-	s32 l = 0, r = 0;
-
-	for (u32 i = 0; i < NUM_TAPS; i++)
-	{
-		l += core.RevbUpBuf[0][index + i] * filter_up_coefs[i];
-		r += core.RevbUpBuf[1][index + i] * filter_up_coefs[i];
-	}
-
-	val.Left  = std::clamp(l >> 15, -0x8000, 0x7fff);
-	val.Right = std::clamp(r >> 15, -0x8000, 0x7fff);
-	return val;
-}
+/*
+ * Upsample counterpart of the FIR above (filter_up_coefs = filter_down_coefs*2,
+ * the 2x gain compensating for zero-stuffing). Same reasoning as the downsample
+ * comment: the SIMD paths below are the hardware-faithful, saturating
+ * implementation; a full-precision scalar accumulate would not be bit-exact.
+ */
 
 #if _M_SSE >= 0x501
 StereoOut32 __forceinline ReverbUpsample_avx(V_Core& core)
