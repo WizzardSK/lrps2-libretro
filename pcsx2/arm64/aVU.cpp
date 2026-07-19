@@ -159,6 +159,11 @@ static void mVUcacheProg(microVU& mVU, microProgram& prog);
 // are deliberately NOT ported here — they make VIXL/regAlloc calls and come over
 // with the 7.4 compile driver.
 
+// Persisted-JIT cache recorder (phase 1: capture only, LRPS2_VU_PROGCACHE=1).
+// Needs the microVU/microBlock/microProgram types above and hooks into
+// mVUblockFetch's emission episode + microBlockManager::add's call site below.
+#include "arm64/aVU_Persist.inl"
+
 // Used by mVUsetupRange — re-cache the program if the guest micro memory changed.
 __fi void mVUcheckIsSame(mV)
 {
@@ -504,6 +509,7 @@ __fi void mVUinitFirstPass(microVU& mVU, uptr pState, u8* thisPtr)
 	}
 	mVUblock.codeStart = thisPtr;
 	mVUpBlock = mVUblocks[mVUstartPC / 2]->add(mVU, &mVUblock); // Add this block to block manager
+	aVUPersist::OnBlockAdded(mVU, mVU.prog.cur, mVUpBlock, (u8*)thisPtr, mVUstartPC * 4);
 	mVUregs.needExactMatch = (mVUpBlock->pState.blockType) ? 7 : 0; // ToDo: Fix 1-Op block flag linking (MGS2:Demo/Sly Cooper)
 	mVUregs.blockType = 0;
 	mVUregs.viBackUp  = 0;
@@ -597,6 +603,7 @@ void mVUreset(microVU& mVU, bool resetReserve)
 // Free Allocated Resources
 void mVUclose(microVU& mVU)
 {
+	aVUPersist::DumpStats(mVU.index);
 	// Delete Programs and Block Managers
 	for (u32 i = 0; i < (mVU.progSize / 2); i++)
 	{
@@ -632,6 +639,7 @@ void mVUclear(microVU& mVU, u32 addr, u32 size)
 // Deletes a program
 static void mVUdeleteProg(microVU& mVU, microProgram*& prog)
 {
+	aVUPersist::OnProgramDeleted(*prog);
 	for (u32 i = 0; i < (mVU.progSize / 2); i++)
 	{
 		safe_delete(prog->block[i]);
@@ -1258,8 +1266,10 @@ static void* mVUexecute(u32 startPC, u32 cycles)
 	// catches that case before paying for the session).
 	armSetAsmPtr(mVU.prog.codePtr, mVU.prog.codeReserveEnd - mVU.prog.codePtr, nullptr);
 	armStartBlock();
+	aVUPersist::BeginEpisode(mVU, mVU.prog.codePtr);
 	void* const entry = mVUsearchProg<vuIndex>(spc, (uptr)&mVU.prog.lpState);
 	mVU.prog.codePtr = armEndBlock();
+	aVUPersist::EndEpisode(mVU, mVU.prog.codePtr);
 	return entry;
 }
 

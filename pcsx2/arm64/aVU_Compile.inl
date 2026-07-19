@@ -731,6 +731,7 @@ _mVUt void* mVUcompileJIT(u32 startPC, uptr ptr)
 
 	armSetAsmPtr(mVU.prog.codePtr, mVU.prog.codeReserveEnd - mVU.prog.codePtr, nullptr);
 	armStartBlock();
+	aVUPersist::BeginEpisode(mVU, mVU.prog.codePtr);
 	void* result;
 
 	if (doJumpAsSameProgram) // Treat jump as part of same microProgram
@@ -765,5 +766,6 @@ _mVUt void* mVUcompileJIT(u32 startPC, uptr ptr)
 	}
 
 	mVU.prog.codePtr = armEndBlock();
+	aVUPersist::EndEpisode(mVU, mVU.prog.codePtr);
 	return result;
 }

@@ -269,11 +269,14 @@ struct microRange
 };
 
 #define mProgSize (0x4000 / 4)
+struct MvuPersistLog;
+
 struct microProgram
 {
 	u32                data [mProgSize];     // Holds a copy of the VU microProgram
 	microBlockManager* block[mProgSize / 2]; // Array of Block Managers
 	std::deque<microRange>* ranges;          // The ranges of the microProgram that have already been recompiled
+	MvuPersistLog*     persist;              // Recorder log for the persisted-JIT cache (aVU_Persist.inl); null unless recording
 	u32 startPC; // Start PC of this program
 	int idx;     // Program index
 };
