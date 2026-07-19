@@ -548,6 +548,11 @@ void mVUinit(microVU& mVU, uint vuIndex)
 	mVU.prog.codeEnd = mVU.prog.codeReserveEnd - (mVUcacheSafeZone * _1mb);
 
 	mVU.regAlloc.reset(new microRegAlloc(mVU.index));
+
+	// Persisted-JIT cache: scan + verify any on-disk programs for this VU so a
+	// future process can hydrate them (LRPS2_VU_PROGCACHE_DIR). No-op unless
+	// recording + a cache dir are configured.
+	aVUPersist::LoadDiskCache(mVU.index);
 }
 
 // Resets Rec Data
@@ -604,6 +609,7 @@ void mVUreset(microVU& mVU, bool resetReserve)
 void mVUclose(microVU& mVU)
 {
 	aVUPersist::RoundTripSelfTest(mVU);
+	aVUPersist::SaveAllToDisk(mVU);
 	aVUPersist::DumpStats(mVU.index);
 	// Delete Programs and Block Managers
 	for (u32 i = 0; i < (mVU.progSize / 2); i++)

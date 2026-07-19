@@ -25,7 +25,9 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <dirent.h>
 #include <dlfcn.h>
+#include <unistd.h>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -613,8 +615,10 @@ namespace aVUPersist
 		{
 			const u32 codeSize = static_cast<u32>(c.code.size());
 			const u32 fixupCount = static_cast<u32>(c.fixups.size());
+			const u64 recordBase = c.recordBase;
 			AppendPod(out, codeSize);
 			AppendPod(out, fixupCount);
+			AppendPod(out, recordBase);
 			out.insert(out.end(), c.code.begin(), c.code.end());
 			for (const PersistFixup& f : c.fixups)
 				AppendPod(out, f);
@@ -660,12 +664,12 @@ namespace aVUPersist
 		}
 		for (u32 i = 0; i < hdr.chunkCount; i++)
 		{
-			if (pos + 8 > img.size())
+			if (pos + 16 > img.size())
 				return false;
 			u32 codeSize, fixupCount;
 			std::memcpy(&codeSize, img.data() + pos, 4);
 			std::memcpy(&fixupCount, img.data() + pos + 4, 4);
-			pos += 8;
+			pos += 16; // codeSize + fixupCount + recordBase(u64)
 			const PersistChunk& c = log.chunks[i];
 			if (codeSize != c.code.size() || fixupCount != c.fixups.size())
 				return false;
@@ -684,6 +688,120 @@ namespace aVUPersist
 			}
 		}
 		return pos == img.size();
+	}
+
+	//------------------------------------------------------------------
+	// On-disk store (phase 3c): persist serialized programs to a per-VU cache
+	// directory (LRPS2_VU_PROGCACHE_DIR) so a future process can hydrate them.
+	// Content-addressed by the guest-microprogram hash. This step writes and
+	// verifies (parse + payload-hash) across processes; live hydration wiring is
+	// the next step.
+	//------------------------------------------------------------------
+
+	static u64 s_diskSaved[2] = {};
+	static u64 s_diskLoaded[2] = {};
+	static u64 s_diskRejected[2] = {};
+
+	static const char* CacheDir()
+	{
+		static const char* dir = getenv("LRPS2_VU_PROGCACHE_DIR");
+		return dir;
+	}
+
+	static void MakeCachePath(char* out, size_t cap, u32 vuIndex, u64 hash)
+	{
+		std::snprintf(out, cap, "%s/vu%u_%016llx.vuprog", CacheDir(), vuIndex,
+			(unsigned long long)hash);
+	}
+
+	// Serialize `prog` and write it to the cache dir (tmp + rename for atomicity).
+	static void SaveProgramToDisk(microVU& mVU, const microProgram& prog)
+	{
+		if (!CacheDir())
+			return;
+		std::vector<u8> img;
+		if (!SerializeProgram(mVU, prog, img))
+			return;
+		u64 hash;
+		std::memcpy(&hash, img.data() + offsetof(ImageHeader, contentHash), sizeof(hash));
+		char path[512], tmp[520];
+		MakeCachePath(path, sizeof(path), mVU.index, hash);
+		std::snprintf(tmp, sizeof(tmp), "%s.tmp%d", path, (int)getpid());
+		std::FILE* fp = std::fopen(tmp, "wb");
+		if (!fp)
+			return;
+		const bool okw = std::fwrite(img.data(), 1, img.size(), fp) == img.size();
+		std::fclose(fp);
+		if (okw && std::rename(tmp, path) == 0)
+			s_diskSaved[mVU.index]++;
+		else
+			std::remove(tmp);
+	}
+
+	static void SaveAllToDisk(microVU& mVU)
+	{
+		if (!s_enabled || !CacheDir())
+			return;
+		for (u32 i = 0; i < (mVU.progSize / 2); i++)
+		{
+			if (!mVU.prog.prog[i])
+				continue;
+			for (microProgram* p : *mVU.prog.prog[i])
+				if (p && p->persist && p->persist->persistable && !p->persist->blocks.empty())
+					SaveProgramToDisk(mVU, *p);
+		}
+	}
+
+	// Read one .vuprog and check it is a well-formed, uncorrupted image (magic,
+	// version, payload hash). Cross-process proof that the store survives a
+	// restart. Returns true if the image is loadable.
+	static bool LoadAndVerifyImage(const char* path)
+	{
+		std::FILE* fp = std::fopen(path, "rb");
+		if (!fp)
+			return false;
+		std::fseek(fp, 0, SEEK_END);
+		long sz = std::ftell(fp);
+		std::fseek(fp, 0, SEEK_SET);
+		if (sz < (long)sizeof(ImageHeader))
+		{ std::fclose(fp); return false; }
+		std::vector<u8> img(sz);
+		const bool okr = std::fread(img.data(), 1, sz, fp) == (size_t)sz;
+		std::fclose(fp);
+		if (!okr)
+			return false;
+		ImageHeader hdr;
+		std::memcpy(&hdr, img.data(), sizeof(hdr));
+		if (hdr.magic != kImageMagic || hdr.version != kImageVersion)
+			return false;
+		return HashBytes(img.data() + sizeof(ImageHeader), img.size() - sizeof(ImageHeader)) == hdr.payloadHash;
+	}
+
+	// Scan the cache dir at startup and verify every vu<index>_*.vuprog. Counts
+	// loaded/rejected for the stats. Called once per VU from mVUinit.
+	static void LoadDiskCache(u32 vuIndex)
+	{
+		Init();
+		if (!s_enabled || !CacheDir())
+			return;
+		DIR* d = opendir(CacheDir());
+		if (!d)
+			return;
+		char prefix[16];
+		std::snprintf(prefix, sizeof(prefix), "vu%u_", vuIndex);
+		struct dirent* e;
+		while ((e = readdir(d)) != nullptr)
+		{
+			if (std::strncmp(e->d_name, prefix, std::strlen(prefix)) != 0)
+				continue;
+			char path[512];
+			std::snprintf(path, sizeof(path), "%s/%s", CacheDir(), e->d_name);
+			if (LoadAndVerifyImage(path))
+				s_diskLoaded[vuIndex]++;
+			else
+				s_diskRejected[vuIndex]++;
+		}
+		closedir(d);
 	}
 
 	//------------------------------------------------------------------
@@ -999,6 +1117,11 @@ namespace aVUPersist
 			(unsigned long long)st.fixBlock, (unsigned long long)st.fixVuMem, (unsigned long long)st.fixAdrp,
 			(unsigned long long)st.fixBranchArena, (unsigned long long)st.fixBranchImage,
 			(unsigned long long)st.fixUnclassifiable);
+		if (s_diskSaved[vuIndex] || s_diskLoaded[vuIndex] || s_diskRejected[vuIndex])
+			Console.WriteLn("aVUPersist[VU%u]: disk saved=%llu loaded=%llu rejected=%llu",
+				vuIndex, (unsigned long long)s_diskSaved[vuIndex],
+				(unsigned long long)s_diskLoaded[vuIndex],
+				(unsigned long long)s_diskRejected[vuIndex]);
 		if (s_selftestPass[vuIndex] || s_selftestFail[vuIndex])
 			Console.WriteLn("aVUPersist[VU%u]: selftest roundtrip=%llu/%llu rebase=%llu/%llu hydrate=%llu/%llu (pass/fail)",
 				vuIndex, (unsigned long long)s_selftestPass[vuIndex],
