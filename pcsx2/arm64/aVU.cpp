@@ -768,6 +768,109 @@ static bool mVUcmpProg(microVU& mVU, microProgram& prog)
 	return true;
 }
 
+// Persisted-JIT cache: try to hydrate the program for this (VU, startPC) from
+// the on-disk store instead of recompiling it. Returns the entry point on a hit,
+// or nullptr to fall back to a normal compile. Opt-in (LRPS2_VU_PROGCACHE_HYDRATE)
+// and fail-safe: any mismatch or placement failure returns nullptr.
+static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
+	microProgramList* list, microProgramQuick& quick)
+{
+	using namespace aVUPersist;
+	if (!HydrateEnabled())
+		return nullptr;
+	const u32 entryPC = (mVU.regs().start_pc / 8) * 8; // program entry, in bytes
+	static const bool dbg = getenv("LRPS2_VU_PROGCACHE_DUMP") != nullptr;
+	ParsedImage img;
+	if (!TryReadProgram(mVU, entryPC, img))
+	{
+		if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: miss entryPC=%x key=%llx", mVU.index,
+			entryPC, (unsigned long long)LookupKey(mVU, entryPC));
+		return nullptr;
+	}
+	if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: HIT entryPC=%x chunks=%zu blocks=%zu", mVU.index,
+		entryPC, img.chunks.size(), img.blocks.size());
+
+	// Place the chunks contiguously at the current code cursor.
+	ResolveRangesPublic();
+	u8* cursor = mVU.prog.codePtr;
+	std::vector<uptr> chunkNewBase(img.chunks.size());
+	uptr place = reinterpret_cast<uptr>(cursor);
+	for (size_t i = 0; i < img.chunks.size(); i++)
+	{
+		place = (place + 15) & ~(uptr)15;
+		chunkNewBase[i] = place;
+		place += img.chunks[i].code.size();
+	}
+	if (place >= reinterpret_cast<uptr>(mVU.prog.codeEnd))
+		return nullptr; // would overflow the cache; let the caller reset+recompile
+
+	microProgram* prog = mVUcreateProg(mVU, mVU.regs().start_pc / 8);
+	mVU.prog.cur = prog;
+	mVU.prog.cleared = 0;
+	mVU.prog.isSame = 1;
+
+	// Allocate the blocks first (their new addresses feed the block-class fixups).
+	HydrationPlan plan;
+	plan.imageDelta = (s64)CurrentImageBegin() - (s64)img.hdr.imageBase;
+	plan.recMemBase = img.hdr.memBase; plan.newMemBase = reinterpret_cast<u64>(mVU.regs().Mem); plan.memSize = mVU.vuMemSize;
+	plan.recMicroBase = img.hdr.microBase; plan.newMicroBase = reinterpret_cast<u64>(mVU.regs().Micro); plan.microSize = mVU.microMemSize;
+	plan.recArenaBase = img.hdr.arenaBase; plan.newArenaBase = reinterpret_cast<u64>(mVU.cache);
+	if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: dImg=%llx dArena=%llx dMem=%llx dMicro=%llx",
+		mVU.index, (unsigned long long)plan.imageDelta,
+		(unsigned long long)(plan.newArenaBase - plan.recArenaBase),
+		(unsigned long long)(plan.newMemBase - plan.recMemBase),
+		(unsigned long long)(plan.newMicroBase - plan.recMicroBase));
+	for (size_t i = 0; i < img.chunks.size(); i++)
+	{
+		plan.chunkRecordBase.push_back(img.chunks[i].recordBase);
+		plan.chunkNewBase.push_back(chunkNewBase[i]);
+		plan.chunkSize.push_back(img.chunks[i].code.size());
+	}
+	void* entry = nullptr;
+	for (const auto& db : img.blocks)
+	{
+		blockCreate(db.startPC / 8);
+		microBlock tmp;
+		std::memcpy(&tmp.pState, db.pState, sizeof(microRegInfo));
+		std::memcpy(&tmp.pStateEnd, db.pStateEnd, sizeof(microRegInfo));
+		tmp.codeStart = reinterpret_cast<u8*>(chunkNewBase[db.chunkIndex] + db.entryOffset);
+		tmp.jumpCache = nullptr;
+		microBlock* nb = mVU.prog.cur->block[db.startPC / 8]->add(mVU, &tmp);
+		plan.blockRemap.emplace_back(db.liveBase, reinterpret_cast<uptr>(nb));
+		if (db.startPC == entryPC)
+			entry = nb->codeStart;
+	}
+	if (!entry)
+		return nullptr; // no entry block matched; fall back
+
+	// Rebase each chunk and write it into the code cache.
+	HostSys::BeginCodeWrite();
+	bool ok = true;
+	for (size_t i = 0; i < img.chunks.size(); i++)
+	{
+		std::vector<u8> rebased = img.chunks[i].code;
+		if (!RebaseChunkInto(rebased.data(), chunkNewBase[i], img.chunks[i],
+				[&](const PersistFixup& f) { return ResolveFixup(plan, f); }))
+		{ ok = false; break; }
+		std::memcpy(reinterpret_cast<void*>(chunkNewBase[i]), rebased.data(), rebased.size());
+	}
+	HostSys::EndCodeWrite();
+	if (!ok)
+		return nullptr;
+	HostSys::FlushInstructionCache(cursor, (u32)(place - reinterpret_cast<uptr>(cursor)));
+	mVU.prog.codePtr = reinterpret_cast<u8*>(place);
+	if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: codePtr=%llx nb0=%llx sz=%zu entry=%llx word0=%08x",
+		mVU.index, (unsigned long long)reinterpret_cast<uptr>(cursor),
+		(unsigned long long)chunkNewBase[0], img.chunks[0].code.size(),
+		(unsigned long long)reinterpret_cast<uptr>(entry), *reinterpret_cast<u32*>(entry));
+
+	quick.block = mVU.prog.cur->block[startPC / 8];
+	quick.prog = mVU.prog.cur;
+	list->push_front(mVU.prog.cur);
+	NoteHydrated(mVU.index);
+	return entry;
+}
+
 // Searches for Cached Micro Program and sets prog.cur to it (returns entry-point to program)
 template <int vuIndex>
 void* mVUsearchProg(u32 startPC, uptr pState)
@@ -798,6 +901,10 @@ void* mVUsearchProg(u32 startPC, uptr pState)
 				return mVUentryGet(mVU, quick.block, startPC, pState);
 			}
 		}
+
+		// Persisted-JIT cache: try an on-disk hydrate before recompiling.
+		if (void* hy = mVUtryHydrate(mVU, startPC, pState, list, quick))
+			return hy;
 
 		// If cleared and program not found, make a new program instance
 		mVU.prog.cleared = 0;

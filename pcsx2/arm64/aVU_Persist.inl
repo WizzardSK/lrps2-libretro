@@ -97,6 +97,11 @@ struct MvuPersistLog
 	// non-persistable program is never serialized (its chunk indices stay valid
 	// for the blocks that reference them, so we keep the chunks in place).
 	bool persistable = true;
+	// Content key captured at compile time from the live full micro memory (the
+	// program's own, at dispatch), so a lookup before recompile recomputes the
+	// same value — the cached copy prog.data only holds the program's range.
+	u64 contentHash = 0;
+	bool hasHash = false;
 };
 
 namespace aVUPersist
@@ -227,6 +232,7 @@ namespace aVUPersist
 
 	static bool s_enabled = false;
 	static bool s_statsDump = false;
+	static bool s_hydrateEnabled = false;
 	static bool s_initDone = false;
 	static Stats s_stats[2];
 
@@ -251,12 +257,24 @@ namespace aVUPersist
 		s_enabled = (env && env[0] == '1');
 		const char* stats = getenv("LRPS2_VU_PROGCACHE_STATS");
 		s_statsDump = (stats && stats[0] == '1');
+		const char* hyd = getenv("LRPS2_VU_PROGCACHE_HYDRATE");
+		s_hydrateEnabled = (hyd && hyd[0] == '1');
 	}
 
 	__fi bool Enabled()
 	{
 		return s_enabled;
 	}
+
+	// Defined later; needed by the recorder to key programs at compile time.
+	static u64 HashBytes(const void* data, size_t len, u64 seed);
+
+	// Accessors for the live-hydration glue in aVU.cpp (mVUtryHydrate).
+	static u64 s_hydrated[2] = {};
+	__fi bool HydrateEnabled() { Init(); return s_hydrateEnabled; }
+	__fi void ResolveRangesPublic() { ResolveRanges(); }
+	__fi u64 CurrentImageBegin() { return s_ranges.imgBegin; }
+	__fi void NoteHydrated(u32 vu) { s_hydrated[vu]++; }
 
 	// mVUblockFetch cold path bound armAsm at `base`: begin a chunk.
 	static void BeginEpisode(microVU& mVU, u8* base)
@@ -489,6 +507,15 @@ namespace aVUPersist
 			ep.prog = prog;
 			if (!prog->persist)
 				prog->persist = new MvuPersistLog();
+			if (!prog->persist->hasHash)
+			{
+				// Key on the live full micro memory now (compile time = the
+				// program's own micro memory) so a future lookup recomputes it.
+				const u32 entryPC = static_cast<u32>(prog->startPC) * 8u;
+				prog->persist->contentHash = HashBytes(mVU.regs().Micro, mVU.microMemSize,
+					HashBytes(&entryPC, sizeof(entryPC), 1469598103934665603ull));
+				prog->persist->hasHash = true;
+			}
 		}
 		else if (ep.prog != prog)
 		{
@@ -591,7 +618,10 @@ namespace aVUPersist
 		hdr.version = kImageVersion;
 		hdr.vuIndex = mVU.index;
 		hdr.startPC = static_cast<u32>(prog.startPC) * 8u;
-		hdr.contentHash = HashBytes(prog.data, sizeof(prog.data));
+		// The content key was captured at compile time from the live full micro
+		// memory (mVUcacheProg only snapshots the program's range into prog.data,
+		// so hashing prog.data here would not match a lookup over live memory).
+		hdr.contentHash = log->contentHash;
 		hdr.imageBase = s_ranges.imgBegin;
 		hdr.arenaBase = reinterpret_cast<u64>(mVU.cache);
 		hdr.memBase = reinterpret_cast<u64>(mVU.regs().Mem);
@@ -688,6 +718,107 @@ namespace aVUPersist
 			}
 		}
 		return pos == img.size();
+	}
+
+	// Defined in the on-disk store section below.
+	static const char* CacheDir();
+	static void MakeCachePath(char* out, size_t cap, u32 vuIndex, u64 hash);
+
+	// A parsed serialized image, ready for hydration. Mirrors the on-disk layout
+	// (header + blocks + chunks) in live vectors.
+	struct ParsedImage
+	{
+		ImageHeader hdr = {};
+		std::vector<DiskBlock> blocks;
+		std::vector<PersistChunk> chunks; // code + fixups + recordBase per chunk
+	};
+
+	// Parse + integrity-check a serialized image into `out`. Returns false on any
+	// malformed field or a payload-hash mismatch (caller falls back to recompile).
+	static bool ParseImage(const std::vector<u8>& img, ParsedImage& out)
+	{
+		if (img.size() < sizeof(ImageHeader))
+			return false;
+		std::memcpy(&out.hdr, img.data(), sizeof(ImageHeader));
+		if (out.hdr.magic != kImageMagic || out.hdr.version != kImageVersion)
+			return false;
+		if (HashBytes(img.data() + sizeof(ImageHeader), img.size() - sizeof(ImageHeader)) != out.hdr.payloadHash)
+			return false;
+		size_t pos = sizeof(ImageHeader);
+		out.blocks.resize(out.hdr.blockCount);
+		for (u32 i = 0; i < out.hdr.blockCount; i++)
+		{
+			if (pos + sizeof(DiskBlock) > img.size())
+				return false;
+			std::memcpy(&out.blocks[i], img.data() + pos, sizeof(DiskBlock));
+			pos += sizeof(DiskBlock);
+		}
+		out.chunks.resize(out.hdr.chunkCount);
+		for (u32 i = 0; i < out.hdr.chunkCount; i++)
+		{
+			if (pos + 16 > img.size())
+				return false;
+			u32 codeSize, fixupCount;
+			u64 recordBase;
+			std::memcpy(&codeSize, img.data() + pos, 4);
+			std::memcpy(&fixupCount, img.data() + pos + 4, 4);
+			std::memcpy(&recordBase, img.data() + pos + 8, 8);
+			pos += 16;
+			PersistChunk& c = out.chunks[i];
+			c.recordBase = recordBase;
+			if (pos + codeSize > img.size())
+				return false;
+			c.code.assign(img.data() + pos, img.data() + pos + codeSize);
+			pos += codeSize;
+			c.fixups.resize(fixupCount);
+			for (u32 j = 0; j < fixupCount; j++)
+			{
+				if (pos + sizeof(PersistFixup) > img.size())
+					return false;
+				std::memcpy(&c.fixups[j], img.data() + pos, sizeof(PersistFixup));
+				pos += sizeof(PersistFixup);
+			}
+		}
+		return pos == img.size();
+	}
+
+	// Compute the content-address key for the program that would be compiled at
+	// `startPC_bytes` from the live guest micro memory — the same key
+	// SerializeProgram writes into the header.
+	static u64 LookupKey(microVU& mVU, u32 startPC_bytes)
+	{
+		return HashBytes(mVU.regs().Micro, mVU.microMemSize,
+			HashBytes(&startPC_bytes, sizeof(startPC_bytes), 1469598103934665603ull));
+	}
+
+	// Read the .vuprog for (this VU, startPC) if one exists and parses cleanly,
+	// and its content key matches the live micro memory. Returns true + fills
+	// `out`. No-op (false) unless hydration is enabled with a cache dir.
+	static bool TryReadProgram(microVU& mVU, u32 startPC_bytes, ParsedImage& out)
+	{
+		if (!s_hydrateEnabled || !CacheDir())
+			return false;
+		const u64 key = LookupKey(mVU, startPC_bytes);
+		char path[512];
+		MakeCachePath(path, sizeof(path), mVU.index, key);
+		static const bool dbg = getenv("LRPS2_VU_PROGCACHE_DUMP") != nullptr;
+		std::FILE* fp = std::fopen(path, "rb");
+		if (!fp)
+		{ if (dbg) Console.WriteLn("TryReadProgram: no file %s", path); return false; }
+		std::fseek(fp, 0, SEEK_END);
+		long sz = std::ftell(fp);
+		std::fseek(fp, 0, SEEK_SET);
+		std::vector<u8> img(sz > 0 ? sz : 0);
+		const bool okr = sz > 0 && std::fread(img.data(), 1, sz, fp) == (size_t)sz;
+		std::fclose(fp);
+		if (!okr || !ParseImage(img, out))
+		{ if (dbg) Console.WriteLn("TryReadProgram: parse fail %s", path); return false; }
+		// Guard against a hash collision: the recorded key must match and the
+		// entry PC must be the one we are looking up.
+		const bool m = out.hdr.contentHash == key && out.hdr.startPC == startPC_bytes && out.hdr.vuIndex == (u32)mVU.index;
+		if (dbg && !m) Console.WriteLn("TryReadProgram: key/startPC mismatch hdrHash=%llx key=%llx hdrPC=%x wantPC=%x",
+			(unsigned long long)out.hdr.contentHash, (unsigned long long)key, out.hdr.startPC, startPC_bytes);
+		return m;
 	}
 
 	//------------------------------------------------------------------
@@ -1117,11 +1248,12 @@ namespace aVUPersist
 			(unsigned long long)st.fixBlock, (unsigned long long)st.fixVuMem, (unsigned long long)st.fixAdrp,
 			(unsigned long long)st.fixBranchArena, (unsigned long long)st.fixBranchImage,
 			(unsigned long long)st.fixUnclassifiable);
-		if (s_diskSaved[vuIndex] || s_diskLoaded[vuIndex] || s_diskRejected[vuIndex])
-			Console.WriteLn("aVUPersist[VU%u]: disk saved=%llu loaded=%llu rejected=%llu",
+		if (s_diskSaved[vuIndex] || s_diskLoaded[vuIndex] || s_diskRejected[vuIndex] || s_hydrated[vuIndex])
+			Console.WriteLn("aVUPersist[VU%u]: disk saved=%llu loaded=%llu rejected=%llu hydrated=%llu",
 				vuIndex, (unsigned long long)s_diskSaved[vuIndex],
 				(unsigned long long)s_diskLoaded[vuIndex],
-				(unsigned long long)s_diskRejected[vuIndex]);
+				(unsigned long long)s_diskRejected[vuIndex],
+				(unsigned long long)s_hydrated[vuIndex]);
 		if (s_selftestPass[vuIndex] || s_selftestFail[vuIndex])
 			Console.WriteLn("aVUPersist[VU%u]: selftest roundtrip=%llu/%llu rebase=%llu/%llu hydrate=%llu/%llu (pass/fail)",
 				vuIndex, (unsigned long long)s_selftestPass[vuIndex],
