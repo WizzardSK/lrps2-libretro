@@ -232,6 +232,19 @@ static void process_analog(int &axis_x, int &axis_y, float sensitivity, u16 dead
 {
 	constexpr float MAX_RANGE = 32767.0f;
 
+	/* Identity fast path -- the default configuration (no deadzone, unit
+	 * sensitivity). The general path below is an int->float->int roundtrip
+	 * whose result, at these settings, is just a clamp to [-32767, 32767];
+	 * do that in integer instead. The clamp is not optional: the caller
+	 * negates these axes for inversion (axis_invert_* == -1), and a raw
+	 * -32768 would otherwise become +32768 and wrap the 8-bit pad axis. */
+	if (deadzone == 0 && sensitivity == 1.0f)
+	{
+		axis_x = std::clamp(axis_x, -32767, 32767);
+		axis_y = std::clamp(axis_y, -32767, 32767);
+		return;
+	}
+
 	if (deadzone > 0)
 	{
 		float magnitude = std::sqrt(axis_x * axis_x + axis_y * axis_y);
