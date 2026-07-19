@@ -68,6 +68,7 @@ namespace aVUPersist
 	{
 		std::vector<u8> code;
 		std::vector<PersistFixup> fixups;
+		uptr recordBase = 0; // arena address the chunk was emitted at (record run)
 	};
 
 	struct PersistBlockRec
@@ -454,6 +455,7 @@ namespace aVUPersist
 		// ep.base under chunkIndex == chunks.size(); commit the code bytes.
 		PersistChunk& chunk = log.chunks.emplace_back();
 		chunk.code.assign(ep.base, end);
+		chunk.recordBase = reinterpret_cast<uptr>(ep.base);
 		if (!ScanChunkForFixups(mVU, log, chunk, reinterpret_cast<uptr>(ep.base)))
 		{
 			// Unclassifiable baked address: this chunk is not safely relocatable,
@@ -680,11 +682,159 @@ namespace aVUPersist
 		return pos == img.size();
 	}
 
+	//------------------------------------------------------------------
+	// Rebase primitives (phase 3b-2): rewrite a baked address in a copy of the
+	// chunk so it points at the target's new location. The canonical forms make
+	// each an in-place edit of a fixed instruction slot.
+	//------------------------------------------------------------------
+
+	// Rewrite the canonical movz+movk*3 quartet at `off` to materialize `newVal`
+	// into the same Rd the original used.
+	static void PatchMovImm(u8* code, u32 off, u64 newVal)
+	{
+		u32 first;
+		std::memcpy(&first, code + off, 4);
+		const u32 rd = first & 0x1F;
+		const u32 q[4] = {
+			0xD2800000u | (0u << 21) | ((u32)((newVal >> 0) & 0xFFFF) << 5) | rd,  // movz
+			0xF2800000u | (1u << 21) | ((u32)((newVal >> 16) & 0xFFFF) << 5) | rd, // movk 16
+			0xF2800000u | (2u << 21) | ((u32)((newVal >> 32) & 0xFFFF) << 5) | rd, // movk 32
+			0xF2800000u | (3u << 21) | ((u32)((newVal >> 48) & 0xFFFF) << 5) | rd, // movk 48
+		};
+		std::memcpy(code + off, q, sizeof(q));
+	}
+
+	// Re-page the ADRP at `off` (whose runtime pc is `pcAtOff`) to `newTarget`.
+	// The low-12 offset in the paired add/ldr is invariant. False if the new page
+	// displacement does not fit ADRP's signed 21-bit range.
+	static bool PatchAdrp(u8* code, u32 off, uptr pcAtOff, uptr newTarget)
+	{
+		const s64 disp = ((s64)(newTarget & ~(uptr)0xFFF) - (s64)(pcAtOff & ~(uptr)0xFFF)) >> 12;
+		if (disp < -(1LL << 20) || disp >= (1LL << 20))
+			return false;
+		u32 insn;
+		std::memcpy(&insn, code + off, 4);
+		const u32 immlo = (u32)(disp & 0x3);
+		const u32 immhi = (u32)((disp >> 2) & 0x7FFFF);
+		insn = (insn & 0x9F00001Fu) | (immlo << 29) | (immhi << 5);
+		std::memcpy(code + off, &insn, 4);
+		return true;
+	}
+
+	// Re-target the B/BL at `off` (runtime pc `pcAtOff`) to `newTarget`. False if
+	// out of imm26 (+/-128 MB) range.
+	static bool PatchBranch(u8* code, u32 off, uptr pcAtOff, uptr newTarget)
+	{
+		const s64 disp = ((s64)newTarget - (s64)pcAtOff) >> 2;
+		if (disp < -(1LL << 25) || disp >= (1LL << 25))
+			return false;
+		u32 insn;
+		std::memcpy(&insn, code + off, 4);
+		insn = (insn & 0xFC000000u) | ((u32)disp & 0x03FFFFFFu);
+		std::memcpy(code + off, &insn, 4);
+		return true;
+	}
+
+	// Decode helpers to read a materialized value back for verification.
+	static u64 DecodeMovImm(const u8* code, u32 off)
+	{
+		u64 v = 0;
+		for (u32 k = 0; k < 4; k++)
+		{
+			u32 insn;
+			std::memcpy(&insn, code + off + k * 4, 4);
+			const u32 hw = (insn >> 21) & 0x3;
+			const u64 imm = (insn >> 5) & 0xFFFF;
+			v |= imm << (hw * 16);
+		}
+		return v;
+	}
+	static uptr DecodeAdrpPage(const u8* code, u32 off, uptr pcAtOff)
+	{
+		u32 insn;
+		std::memcpy(&insn, code + off, 4);
+		const s64 immlo = (insn >> 29) & 0x3;
+		s64 immhi = (insn >> 5) & 0x7FFFF;
+		if (immhi & 0x40000) immhi |= ~0x7FFFFll;
+		const s64 page = (immhi << 2) | immlo;
+		return (pcAtOff & ~(uptr)0xFFF) + (uptr)(page << 12);
+	}
+	static uptr DecodeBranch(const u8* code, u32 off, uptr pcAtOff)
+	{
+		u32 insn;
+		std::memcpy(&insn, code + off, 4);
+		s64 imm26 = insn & 0x03FFFFFF;
+		if (imm26 & 0x02000000) imm26 |= ~0x03FFFFFFll;
+		return pcAtOff + (uptr)(imm26 << 2);
+	}
+
+	// Copy a chunk's code into `dst` (placed at runtime address `dstBase`) and
+	// rewrite each fixup to the target `resolve` returns for it. `resolve`
+	// receives the fixup and yields the address the fixup should now point at.
+	template <typename Resolve>
+	static bool RebaseChunkInto(u8* dst, uptr dstBase, const PersistChunk& chunk, Resolve resolve)
+	{
+		std::memcpy(dst, chunk.code.data(), chunk.code.size());
+		for (const PersistFixup& f : chunk.fixups)
+		{
+			const uptr newTarget = resolve(f);
+			const uptr pcAtOff = dstBase + f.codeOffset;
+			switch (f.form)
+			{
+				case kFormMovzMovk: PatchMovImm(dst, f.codeOffset, newTarget); break;
+				case kFormAdrp: if (!PatchAdrp(dst, f.codeOffset, pcAtOff, newTarget)) return false; break;
+				case kFormBranch: if (!PatchBranch(dst, f.codeOffset, pcAtOff, newTarget)) return false; break;
+				default: return false;
+			}
+		}
+		return true;
+	}
+
+	// In-process rebase self-test: copy each chunk into a scratch buffer at a
+	// *different* address than it was recorded at, rewrite every fixup to its
+	// unchanged target (delta 0, but a fresh placement), then decode the patched
+	// instructions and confirm they resolve to that target. This proves the
+	// re-encode math is placement-independent — the property hydration relies on
+	// — without touching the live code cache. Returns true on full agreement.
+	static bool RebaseSelfTest(const MvuPersistLog& log)
+	{
+		for (const PersistChunk& c : log.chunks)
+		{
+			// Rewrite into a heap copy but reckon addresses as if the chunk sat at
+			// a page-shifted-but-still-in-range placement (the code moved, the
+			// targets did not). The ADRP/branch operands are recomputed from this
+			// virtual base; decoding them must recover the unchanged targets — the
+			// placement-independence hydration needs. A small shift keeps every
+			// PC-relative operand inside its encodable range.
+			const uptr virtBase = c.recordBase + 0x10000;
+			std::vector<u8> dst = c.code;
+			if (!RebaseChunkInto(dst.data(), virtBase, c, [](const PersistFixup& f) { return (uptr)f.target; }))
+				return false;
+			for (const PersistFixup& f : c.fixups)
+			{
+				const uptr pcAtOff = virtBase + f.codeOffset;
+				uptr got = 0;
+				switch (f.form)
+				{
+					case kFormMovzMovk: got = (uptr)DecodeMovImm(dst.data(), f.codeOffset); break;
+					case kFormAdrp: got = DecodeAdrpPage(dst.data(), f.codeOffset, pcAtOff); break;
+					case kFormBranch: got = DecodeBranch(dst.data(), f.codeOffset, pcAtOff); break;
+				}
+				const uptr want = (f.form == kFormAdrp) ? (f.target & ~(uptr)0xFFF) : (uptr)f.target;
+				if (got != want)
+					return false;
+			}
+		}
+		return true;
+	}
+
 	// Walk every recorded program and round-trip serialize/verify it. Called
 	// from mVUclose before programs are freed. Gated by
 	// LRPS2_VU_PROGCACHE_SELFTEST; counts pass/fail into the stats.
 	static u64 s_selftestPass[2] = {};
 	static u64 s_selftestFail[2] = {};
+	static u64 s_rebasePass[2] = {};
+	static u64 s_rebaseFail[2] = {};
 	static void RoundTripSelfTest(microVU& mVU)
 	{
 		if (!s_enabled)
@@ -705,6 +855,10 @@ namespace aVUPersist
 					s_selftestPass[mVU.index]++;
 				else
 					s_selftestFail[mVU.index]++;
+				if (RebaseSelfTest(*p->persist))
+					s_rebasePass[mVU.index]++;
+				else
+					s_rebaseFail[mVU.index]++;
 			}
 		}
 	}
@@ -724,8 +878,10 @@ namespace aVUPersist
 			(unsigned long long)st.fixBranchArena, (unsigned long long)st.fixBranchImage,
 			(unsigned long long)st.fixUnclassifiable);
 		if (s_selftestPass[vuIndex] || s_selftestFail[vuIndex])
-			Console.WriteLn("aVUPersist[VU%u]: round-trip selftest pass=%llu fail=%llu",
+			Console.WriteLn("aVUPersist[VU%u]: round-trip selftest pass=%llu fail=%llu | rebase pass=%llu fail=%llu",
 				vuIndex, (unsigned long long)s_selftestPass[vuIndex],
-				(unsigned long long)s_selftestFail[vuIndex]);
+				(unsigned long long)s_selftestFail[vuIndex],
+				(unsigned long long)s_rebasePass[vuIndex],
+				(unsigned long long)s_rebaseFail[vuIndex]);
 	}
 } // namespace aVUPersist
