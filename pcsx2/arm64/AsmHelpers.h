@@ -88,6 +88,16 @@ void armAlignAsmPtr();
 u8* armStartBlock();
 u8* armEndBlock();
 
+// When set, address materializations (armEmitCall's far-call target load and
+// armMoveAddressToReg's Mov fallback) emit the canonical fixed 4-instruction
+// movz+movk*3 form instead of VIXL's length-optimized sequence. The persisted
+// VU cache turns this on while recording so a baked absolute occupies a known,
+// re-encodable slot at hydration; the materialized value is identical, so guest
+// output is unchanged. Thread-local: only the VU emit thread that set it is
+// affected.
+extern thread_local bool g_armCanonicalAddrForms;
+void armMovImmCanonical(const vixl::aarch64::Register& reg, uint64_t imm);
+
 void armDisassembleAndDumpCode(const void* ptr, size_t size);
 void armEmitJmp(const void* ptr, bool force_inline = false);
 void armEmitCall(const void* ptr, bool force_inline = false);

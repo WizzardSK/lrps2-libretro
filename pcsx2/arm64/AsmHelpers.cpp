@@ -181,6 +181,20 @@ void armEmitJmp(const void* ptr, bool force_inline)
 	}
 }
 
+thread_local bool g_armCanonicalAddrForms = false;
+
+// Emit exactly movz + movk*3 (four instructions) materializing `imm` into `reg`,
+// regardless of value. Fixed length so the persisted VU cache can rewrite the
+// baked value in place at hydration.
+void armMovImmCanonical(const vixl::aarch64::Register& reg, uint64_t imm)
+{
+	a64::SingleEmissionCheckScope guard0(armAsm);
+	armAsm->movz(reg, imm & 0xFFFF, 0);
+	{ a64::SingleEmissionCheckScope g(armAsm); armAsm->movk(reg, (imm >> 16) & 0xFFFF, 16); }
+	{ a64::SingleEmissionCheckScope g(armAsm); armAsm->movk(reg, (imm >> 32) & 0xFFFF, 32); }
+	{ a64::SingleEmissionCheckScope g(armAsm); armAsm->movk(reg, (imm >> 48) & 0xFFFF, 48); }
+}
+
 void armEmitCall(const void* ptr, bool force_inline)
 {
 	s64 displacement = GetPCDisplacement(armGetCurrentCodePointer(), ptr);
@@ -196,7 +210,10 @@ void armEmitCall(const void* ptr, bool force_inline)
 
 	if (use_blr)
 	{
-		armAsm->Mov(RXVIXLSCRATCH, reinterpret_cast<uintptr_t>(ptr));
+		if (g_armCanonicalAddrForms)
+			armMovImmCanonical(RXVIXLSCRATCH, reinterpret_cast<uintptr_t>(ptr));
+		else
+			armAsm->Mov(RXVIXLSCRATCH, reinterpret_cast<uintptr_t>(ptr));
 		armAsm->Blr(RXVIXLSCRATCH);
 	}
 	else
@@ -273,6 +290,14 @@ void armMoveAddressToReg(const vixl::aarch64::Register& reg, const void* addr)
 {
 	// psxAsm->Mov(reg, static_cast<u64>(reinterpret_cast<uintptr_t>(addr)));
 	pxAssert(reg.IsX());
+
+	if (g_armCanonicalAddrForms)
+	{
+		// Fixed movz+movk*3 so the persisted VU cache rewrites this absolute in
+		// place at hydration (no ADRP page to re-derive, one uniform form).
+		armMovImmCanonical(reg, reinterpret_cast<uintptr_t>(addr));
+		return;
+	}
 
 	const void* current_code_ptr_page = reinterpret_cast<const void*>(
 		reinterpret_cast<uintptr_t>(armGetCurrentCodePointer()) & ~static_cast<uintptr_t>(0xFFF));

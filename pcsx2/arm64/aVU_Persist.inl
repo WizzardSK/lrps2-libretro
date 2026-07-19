@@ -37,22 +37,31 @@ namespace aVUPersist
 	// applied as a base shift, block absolutes point into the freshly-allocated
 	// block graph, ADRP pages are re-paged. `kFixUnclassifiable` never lands in
 	// a serialized chunk — it marks the whole episode non-persistable.
-	enum FixupKind : u8
+	// Which memory region a baked address lands in — picks the rebase delta at
+	// hydration (each region loads at its own ASLR base in a future process).
+	enum TargetClass : u8
 	{
-		kFixImageAbs = 0,   // movz/movk -> address in the core .so image
-		kFixArenaAbs,       // movz/movk -> address in the VU code-cache arena (stub or cross-chunk code)
-		kFixBlockAbs,       // movz/movk -> a microBlock object of this program
-		kFixAdrpPage,       // ADRP -> run-invariant page that must be re-paged
-		kFixBranchArena,    // B/BL -> arena target outside this chunk (stub / cross-chunk)
-		kFixBranchImage,    // B/BL -> image target (trampoline / helper)
-		kFixUnclassifiable, // sentinel: drop the episode
+		kClassImage = 0, // the core .so image incl. its bss statics (microVU/vuRegs)
+		kClassArena,     // the VU code-cache arena (stubs + cross-chunk code)
+		kClassBlock,     // a microBlock object of this program (heap)
+		kClassVuMem,     // this VU's Mem/Micro buffer (separately mmap'd)
+	};
+
+	// How the address is encoded in the instruction stream — picks the patch.
+	enum RelocForm : u8
+	{
+		kFormMovzMovk = 0, // canonical movz+movk*3 quartet at codeOffset
+		kFormAdrp,         // ADRP (page) at codeOffset; low-12 offset is invariant
+		kFormBranch,       // B/BL imm26 at codeOffset (code target, arena or image)
 	};
 
 	struct PersistFixup
 	{
-		u32 codeOffset; // chunk-relative byte offset of the first patched insn
-		u8 kind;
-		u64 target;     // resolved absolute (debug aid + hydration input)
+		u32 codeOffset;  // chunk-relative byte offset of the patched insn
+		u8 form;         // RelocForm
+		u8 targetClass;  // TargetClass
+		u16 _pad;
+		u64 target;      // resolved absolute (debug aid + hydration input)
 	};
 
 	struct PersistChunk
@@ -103,6 +112,7 @@ namespace aVUPersist
 		u64 fixAdrp = 0;
 		u64 fixBranchArena = 0;
 		u64 fixBranchImage = 0;
+		u64 fixVuMem = 0;
 		u64 fixUnclassifiable = 0; // mapped pointers we could not place -> drops
 	};
 
@@ -173,7 +183,11 @@ namespace aVUPersist
 			}
 		}
 		// Second pass: union every mapping of that same file (text/rodata/data/bss)
-		// for the image span, and record every mapping for the pointer test.
+		// for the image span, record every mapping for the pointer test, and find
+		// the mapping that holds &microVU0 (a .so bss static) so the bss can be
+		// folded into the image span below.
+		const uptr bssAnchor = reinterpret_cast<uptr>(&microVU0);
+		uptr bssBegin = 0, bssEnd = 0;
 		std::rewind(maps);
 		while (std::fgets(line, sizeof(line), maps))
 		{
@@ -182,8 +196,13 @@ namespace aVUPersist
 			if (std::sscanf(line, "%llx-%llx %*s %*s %*s %*s %n", &b, &e, &off) < 2)
 				continue;
 			s_ranges.mapped.emplace_back((uptr)b, (uptr)e);
+			if (bssAnchor >= (uptr)b && bssAnchor < (uptr)e)
+			{
+				bssBegin = (uptr)b;
+				bssEnd = (uptr)e;
+			}
 			const char* p = line + off;
-			if (anchorPath[0] && std::strncmp(p, anchorPath, std::strlen(anchorPath)) == 0)
+			if (anchorPath[0] && (p[0] == '/' || p[0] == '[') && std::strncmp(p, anchorPath, std::strlen(anchorPath)) == 0)
 			{
 				if (s_ranges.imgBegin == 0 || (uptr)b < s_ranges.imgBegin)
 					s_ranges.imgBegin = (uptr)b;
@@ -192,6 +211,14 @@ namespace aVUPersist
 			}
 		}
 		std::fclose(maps);
+		// The .so's .bss is the anonymous mapping directly after its last file-
+		// backed segment; static globals (microVU0/microVU1, vuRegs, the VU
+		// register files, emit-constant tables) live there and rebase with the
+		// same load delta as the image. Fold it into the image span only when it
+		// is contiguous with the image (so a stray heap/arena mapping cannot be
+		// mistaken for it).
+		if (bssBegin && bssBegin <= s_ranges.imgEnd && bssEnd > s_ranges.imgEnd)
+			s_ranges.imgEnd = bssEnd;
 		std::sort(s_ranges.mapped.begin(), s_ranges.mapped.end());
 	}
 
@@ -239,6 +266,10 @@ namespace aVUPersist
 		ep.dropped = false;
 		ep.base = base;
 		ep.prog = nullptr;
+		// Force canonical fixed-length address materializations so every baked
+		// absolute occupies a re-encodable slot for hydration. Identical values,
+		// so guest output is unchanged.
+		g_armCanonicalAddrForms = true;
 		s_stats[mVU.index].episodes++;
 	}
 
@@ -268,22 +299,51 @@ namespace aVUPersist
 		const uptr arenaBegin = reinterpret_cast<uptr>(mVU.cache);
 		const uptr arenaEnd = reinterpret_cast<uptr>(mVU.prog.codeReserveEnd);
 		const uptr chunkEnd = chunkBase + chunk.code.size();
+		// This VU's memory + microprogram buffers (VURegs::Mem/Micro are pointers
+		// to separately-mmap'd regions the JIT bakes absolute addresses into).
+		const uptr vuMemBegin = reinterpret_cast<uptr>(mVU.regs().Mem);
+		const uptr vuMemEnd = vuMemBegin + mVU.vuMemSize;
+		const uptr vuMicroBegin = reinterpret_cast<uptr>(mVU.regs().Micro);
+		const uptr vuMicroEnd = vuMicroBegin + mVU.microMemSize;
 
 		bool ok = true;
-		auto classifyAbs = [&](u32 off, uptr v) {
+		// Place a resolved absolute into a target class; -1 = run-invariant
+		// constant (no fixup), -2 = mapped but unplaceable (drop the episode).
+		auto classify = [&](uptr v) -> int {
 			if (v == 0)
-				return; // not an address
+				return -1;
 			if (s_ranges.imgBegin && v >= s_ranges.imgBegin && v < s_ranges.imgEnd)
-			{ chunk.fixups.push_back({off, kFixImageAbs, v}); st.fixImage++; return; }
+				return kClassImage;
 			if (v >= arenaBegin && v < arenaEnd)
-			{ chunk.fixups.push_back({off, kFixArenaAbs, v}); st.fixArena++; return; }
+				return kClassArena;
 			if (IsBlockAbs(log, v))
-			{ chunk.fixups.push_back({off, kFixBlockAbs, v}); st.fixBlock++; return; }
+				return kClassBlock;
+			if ((v >= vuMemBegin && v < vuMemEnd) || (v >= vuMicroBegin && v < vuMicroEnd))
+				return kClassVuMem;
 			if (!IsMapped(v))
-				return; // run-invariant constant (mask/immediate), not an address
-			// Mapped but unplaced: a real pointer into a region we do not yet
-			// rebase (guest mem, a struct outside the x19/x27 pins). Drop safely.
-			st.fixUnclassifiable++; ok = false;
+				return -1; // constant (mask/immediate), not an address
+			return -2;     // mapped but unplaced
+		};
+		auto bumpClass = [&](int cls) {
+			switch (cls)
+			{
+				case kClassImage: st.fixImage++; break;
+				case kClassArena: st.fixArena++; break;
+				case kClassBlock: st.fixBlock++; break;
+				case kClassVuMem: st.fixVuMem++; break;
+			}
+		};
+		auto classifyAbs = [&](u32 off, uptr v) {
+			const int cls = classify(v);
+			if (cls == -1)
+				return;
+			if (cls == -2)
+			{
+				st.fixUnclassifiable++; ok = false;
+				return;
+			}
+			chunk.fixups.push_back({off, (u8)kFormMovzMovk, (u8)cls, 0, v});
+			bumpClass(cls);
 		};
 
 		const u8* code = chunk.code.data();
@@ -328,7 +388,9 @@ namespace aVUPersist
 				curReg = -1;
 			}
 
-			// ADRP: op | immlo(2) | 10000 | immhi(19) | Rd
+			// ADRP: op | immlo(2) | 10000 | immhi(19) | Rd. Page target must land
+			// in a rebasable region (the low-12 offset in the paired add/ldr is
+			// invariant); classify it so hydration picks the right delta.
 			if ((insn & 0x9F000000u) == 0x90000000u)
 			{
 				const s64 immlo = (insn >> 29) & 0x3;
@@ -337,7 +399,12 @@ namespace aVUPersist
 				const s64 page = (immhi << 2) | immlo;
 				const uptr pc = chunkBase + off;
 				const uptr target = (pc & ~static_cast<uptr>(0xFFF)) + static_cast<uptr>(page << 12);
-				chunk.fixups.push_back({off, kFixAdrpPage, target});
+				const int cls = classify(target);
+				if (cls == -1)
+					continue; // page of a constant pool that moves with the chunk? leave it
+				if (cls == -2)
+				{ st.fixUnclassifiable++; ok = false; continue; }
+				chunk.fixups.push_back({off, (u8)kFormAdrp, (u8)cls, 0, target});
 				st.fixAdrp++;
 				continue;
 			}
@@ -350,10 +417,10 @@ namespace aVUPersist
 				const uptr target = pc + static_cast<uptr>(imm26 << 2);
 				if (target >= chunkBase && target < chunkEnd)
 					continue; // intra-chunk: invariant when the chunk moves as a unit
-				if (target >= arenaBegin && target < arenaEnd)
-				{ chunk.fixups.push_back({off, kFixBranchArena, target}); st.fixBranchArena++; continue; }
-				if (s_ranges.imgBegin && target >= s_ranges.imgBegin && target < s_ranges.imgEnd)
-				{ chunk.fixups.push_back({off, kFixBranchImage, target}); st.fixBranchImage++; continue; }
+				const int cls = classify(target);
+				if (cls == kClassArena || cls == kClassImage)
+				{ chunk.fixups.push_back({off, (u8)kFormBranch, (u8)cls, 0, target});
+				  (cls == kClassArena ? st.fixBranchArena : st.fixBranchImage)++; continue; }
 				st.fixUnclassifiable++; ok = false;
 				continue;
 			}
@@ -374,6 +441,7 @@ namespace aVUPersist
 		if (!ep.open)
 			return;
 		ep.open = false;
+		g_armCanonicalAddrForms = false;
 		if (end == ep.base)
 			return; // nothing emitted
 		if (ep.dropped || !ep.prog || !ep.prog->persist)
@@ -605,7 +673,7 @@ namespace aVUPersist
 				PersistFixup f;
 				std::memcpy(&f, img.data() + pos, sizeof(f));
 				pos += sizeof(f);
-				if (f.codeOffset != c.fixups[j].codeOffset || f.kind != c.fixups[j].kind || f.target != c.fixups[j].target)
+				if (f.codeOffset != c.fixups[j].codeOffset || f.form != c.fixups[j].form || f.targetClass != c.fixups[j].targetClass || f.target != c.fixups[j].target)
 					return false;
 			}
 		}
@@ -650,9 +718,9 @@ namespace aVUPersist
 			vuIndex, (unsigned long long)st.episodes, (unsigned long long)st.chunksRecorded,
 			(unsigned long long)st.chunksDropped, (unsigned long long)st.blocksRecorded,
 			(unsigned long long)st.orphanBlocks);
-		Console.WriteLn("aVUPersist[VU%u]: fixups img=%llu arena=%llu block=%llu adrp=%llu bra=%llu bimg=%llu UNCLASS=%llu",
+		Console.WriteLn("aVUPersist[VU%u]: fixups img=%llu arena=%llu block=%llu vumem=%llu adrp=%llu bra=%llu bimg=%llu UNCLASS=%llu",
 			vuIndex, (unsigned long long)st.fixImage, (unsigned long long)st.fixArena,
-			(unsigned long long)st.fixBlock, (unsigned long long)st.fixAdrp,
+			(unsigned long long)st.fixBlock, (unsigned long long)st.fixVuMem, (unsigned long long)st.fixAdrp,
 			(unsigned long long)st.fixBranchArena, (unsigned long long)st.fixBranchImage,
 			(unsigned long long)st.fixUnclassifiable);
 		if (s_selftestPass[vuIndex] || s_selftestFail[vuIndex])
