@@ -251,7 +251,7 @@ void GSSetupPrimCodeGenerator2::Depth_YMM()
 
 			// local.d8.p.f = GSVector4i(tstep).extract32<3>();
 			vmulps(xmm0, xmm1, xmm3);
-			cvtps2dq(xmm0, xmm0);
+			cvttps2dq(xmm0, xmm0);
 			movd(_rip_local_d_p(f), xmm0);
 
 			for (int i = 0; i < (m_sel.notest ? 1 : dsize); i++)
