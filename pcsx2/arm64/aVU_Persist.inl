@@ -537,11 +537,13 @@ namespace aVUPersist
 		u64 contentHash;  // hash of the guest microprogram this was compiled from
 		u64 imageBase;    // s_ranges.imgBegin at record time
 		u64 arenaBase;    // mVU.cache at record time
+		u64 memBase;      // mVU.regs().Mem at record time
+		u64 microBase;    // mVU.regs().Micro at record time
 		u32 blockCount;
 		u32 chunkCount;
 		u64 payloadHash;  // hash of every byte after this header (bit-rot guard)
 	};
-	static_assert(sizeof(ImageHeader) == 56);
+	static_assert(sizeof(ImageHeader) == 72);
 
 	struct DiskBlock
 	{
@@ -590,6 +592,8 @@ namespace aVUPersist
 		hdr.contentHash = HashBytes(prog.data, sizeof(prog.data));
 		hdr.imageBase = s_ranges.imgBegin;
 		hdr.arenaBase = reinterpret_cast<u64>(mVU.cache);
+		hdr.memBase = reinterpret_cast<u64>(mVU.regs().Mem);
+		hdr.microBase = reinterpret_cast<u64>(mVU.regs().Micro);
 		hdr.blockCount = static_cast<u32>(log->blocks.size());
 		hdr.chunkCount = static_cast<u32>(log->chunks.size());
 		AppendPod(out, hdr); // payloadHash filled in after the body
@@ -828,6 +832,53 @@ namespace aVUPersist
 		return true;
 	}
 
+	//------------------------------------------------------------------
+	// Hydration resolve (phase 3b-2b): map a fixup's recorded target to the
+	// address it must point at in this run, given where everything now lives.
+	//------------------------------------------------------------------
+	struct HydrationPlan
+	{
+		s64 imageDelta = 0;   // newImageBase - record imageBase
+		u64 recMemBase = 0, newMemBase = 0, memSize = 0;
+		u64 recMicroBase = 0, newMicroBase = 0, microSize = 0;
+		u64 recArenaBase = 0, newArenaBase = 0;
+		std::vector<uptr> chunkRecordBase; // per chunk, record-run address
+		std::vector<uptr> chunkNewBase;    // per chunk, this-run address
+		std::vector<uptr> chunkSize;       // per chunk, code size in bytes
+		std::vector<std::pair<uptr, uptr>> blockRemap; // old microBlock base -> new
+	};
+
+	// Resolve one fixup's target under a plan.
+	static uptr ResolveFixup(const HydrationPlan& p, const PersistFixup& f)
+	{
+		const uptr V = static_cast<uptr>(f.target);
+		switch (f.targetClass)
+		{
+			case kClassImage:
+				return static_cast<uptr>(static_cast<s64>(V) + p.imageDelta);
+			case kClassVuMem:
+				if (V >= p.recMemBase && V < p.recMemBase + p.memSize)
+					return p.newMemBase + (V - p.recMemBase);
+				return p.newMicroBase + (V - p.recMicroBase);
+			case kClassBlock:
+				for (const auto& m : p.blockRemap)
+					if (V >= m.first && V < m.first + sizeof(microBlock))
+						return m.second + (V - m.first);
+				return V; // unreachable: recorded block absolutes are always known
+			case kClassArena:
+			default:
+				// Cross-chunk code of this program moves to its new placement;
+				// a dispatcher stub elsewhere in the arena shifts by the arena delta.
+				for (size_t i = 0; i < p.chunkRecordBase.size(); i++)
+				{
+					const uptr rb = p.chunkRecordBase[i];
+					if (V >= rb && V < rb + p.chunkSize[i])
+						return p.chunkNewBase[i] + (V - rb);
+				}
+				return V + (p.newArenaBase - p.recArenaBase);
+		}
+	}
+
 	// Walk every recorded program and round-trip serialize/verify it. Called
 	// from mVUclose before programs are freed. Gated by
 	// LRPS2_VU_PROGCACHE_SELFTEST; counts pass/fail into the stats.
@@ -835,6 +886,73 @@ namespace aVUPersist
 	static u64 s_selftestFail[2] = {};
 	static u64 s_rebasePass[2] = {};
 	static u64 s_rebaseFail[2] = {};
+	static u64 s_hydratePass[2] = {};
+	static u64 s_hydrateFail[2] = {};
+
+	// End-to-end hydration self-test exercising the full resolve. Builds a plan
+	// that moves the program's chunks to a fresh (shifted, in-range) placement
+	// and remaps its blocks to fresh addresses — so cross-chunk arena refs and
+	// block absolutes take *non-zero* rebases even in-process — then rewrites
+	// each chunk through ResolveFixup and decodes every fixup to confirm it
+	// resolves to the planned target. Image/VuMem deltas are zero in-process
+	// (same bases), so this isolates the placement/remap logic; the disk path
+	// reuses the same ResolveFixup with real cross-process deltas.
+	static bool HydrateSelfTest(microVU& mVU, const MvuPersistLog& log)
+	{
+		HydrationPlan p;
+		p.imageDelta = 0;
+		p.recMemBase = p.newMemBase = reinterpret_cast<u64>(mVU.regs().Mem);
+		p.memSize = mVU.vuMemSize;
+		p.recMicroBase = p.newMicroBase = reinterpret_cast<u64>(mVU.regs().Micro);
+		p.microSize = mVU.microMemSize;
+		p.recArenaBase = p.newArenaBase = reinterpret_cast<u64>(mVU.cache);
+
+		// Place the chunks contiguously at a shifted-but-in-range virtual base.
+		uptr cursor = (log.chunks.empty() ? 0 : log.chunks[0].recordBase) + 0x20000;
+		for (const PersistChunk& c : log.chunks)
+		{
+			p.chunkRecordBase.push_back(c.recordBase);
+			p.chunkNewBase.push_back(cursor);
+			p.chunkSize.push_back(c.code.size());
+			cursor += (c.code.size() + 15) & ~(uptr)15;
+		}
+		// Remap each recorded block to a fresh synthetic address (a distinct
+		// region so block absolutes visibly differ from their originals).
+		std::vector<std::vector<u8>> newBlockStorage;
+		newBlockStorage.reserve(log.blocks.size());
+		for (const PersistBlockRec& b : log.blocks)
+		{
+			newBlockStorage.emplace_back(sizeof(microBlock));
+			p.blockRemap.emplace_back(reinterpret_cast<uptr>(b.live),
+				reinterpret_cast<uptr>(newBlockStorage.back().data()));
+		}
+
+		for (size_t ci = 0; ci < log.chunks.size(); ci++)
+		{
+			const PersistChunk& c = log.chunks[ci];
+			const uptr newBase = p.chunkNewBase[ci];
+			std::vector<u8> dst = c.code;
+			if (!RebaseChunkInto(dst.data(), newBase, c, [&](const PersistFixup& f) { return ResolveFixup(p, f); }))
+				return false;
+			for (const PersistFixup& f : c.fixups)
+			{
+				const uptr pcAtOff = newBase + f.codeOffset;
+				const uptr want = ResolveFixup(p, f);
+				uptr got = 0;
+				switch (f.form)
+				{
+					case kFormMovzMovk: got = (uptr)DecodeMovImm(dst.data(), f.codeOffset); break;
+					case kFormAdrp: got = DecodeAdrpPage(dst.data(), f.codeOffset, pcAtOff); break;
+					case kFormBranch: got = DecodeBranch(dst.data(), f.codeOffset, pcAtOff); break;
+				}
+				const uptr wantCmp = (f.form == kFormAdrp) ? (want & ~(uptr)0xFFF) : want;
+				if (got != wantCmp)
+					return false;
+			}
+		}
+		return true;
+	}
+
 	static void RoundTripSelfTest(microVU& mVU)
 	{
 		if (!s_enabled)
@@ -859,6 +977,10 @@ namespace aVUPersist
 					s_rebasePass[mVU.index]++;
 				else
 					s_rebaseFail[mVU.index]++;
+				if (HydrateSelfTest(mVU, *p->persist))
+					s_hydratePass[mVU.index]++;
+				else
+					s_hydrateFail[mVU.index]++;
 			}
 		}
 	}
@@ -878,10 +1000,12 @@ namespace aVUPersist
 			(unsigned long long)st.fixBranchArena, (unsigned long long)st.fixBranchImage,
 			(unsigned long long)st.fixUnclassifiable);
 		if (s_selftestPass[vuIndex] || s_selftestFail[vuIndex])
-			Console.WriteLn("aVUPersist[VU%u]: round-trip selftest pass=%llu fail=%llu | rebase pass=%llu fail=%llu",
+			Console.WriteLn("aVUPersist[VU%u]: selftest roundtrip=%llu/%llu rebase=%llu/%llu hydrate=%llu/%llu (pass/fail)",
 				vuIndex, (unsigned long long)s_selftestPass[vuIndex],
 				(unsigned long long)s_selftestFail[vuIndex],
 				(unsigned long long)s_rebasePass[vuIndex],
-				(unsigned long long)s_rebaseFail[vuIndex]);
+				(unsigned long long)s_rebaseFail[vuIndex],
+				(unsigned long long)s_hydratePass[vuIndex],
+				(unsigned long long)s_hydrateFail[vuIndex]);
 	}
 } // namespace aVUPersist
