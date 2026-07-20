@@ -815,11 +815,6 @@ static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
 	plan.recMemBase = img.hdr.memBase; plan.newMemBase = reinterpret_cast<u64>(mVU.regs().Mem); plan.memSize = mVU.vuMemSize;
 	plan.recMicroBase = img.hdr.microBase; plan.newMicroBase = reinterpret_cast<u64>(mVU.regs().Micro); plan.microSize = mVU.microMemSize;
 	plan.recArenaBase = img.hdr.arenaBase; plan.newArenaBase = reinterpret_cast<u64>(mVU.cache);
-	if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: dImg=%llx dArena=%llx dMem=%llx dMicro=%llx",
-		mVU.index, (unsigned long long)plan.imageDelta,
-		(unsigned long long)(plan.newArenaBase - plan.recArenaBase),
-		(unsigned long long)(plan.newMemBase - plan.recMemBase),
-		(unsigned long long)(plan.newMicroBase - plan.recMicroBase));
 	for (size_t i = 0; i < img.chunks.size(); i++)
 	{
 		plan.chunkRecordBase.push_back(img.chunks[i].recordBase);
@@ -834,7 +829,10 @@ static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
 		std::memcpy(&tmp.pState, db.pState, sizeof(microRegInfo));
 		std::memcpy(&tmp.pStateEnd, db.pStateEnd, sizeof(microRegInfo));
 		tmp.codeStart = reinterpret_cast<u8*>(chunkNewBase[db.chunkIndex] + db.entryOffset);
-		tmp.jumpCache = nullptr;
+		// A JR/JALR block's baked mVUcompileJIT tail indexes block->jumpCache; the
+		// compiler allocates it lazily (aVU_Branch.inl), so re-create it here (zeroed,
+		// so every jc.prog starts null). The block manager frees it on reset/clear.
+		tmp.jumpCache = (db.flags & 1u) ? new microJumpCache[mProgSize / 2]() : nullptr;
 		microBlock* nb = mVU.prog.cur->block[db.startPC / 8]->add(mVU, &tmp);
 		plan.blockRemap.emplace_back(db.liveBase, reinterpret_cast<uptr>(nb));
 		if (db.startPC == entryPC)
@@ -859,10 +857,8 @@ static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
 		return nullptr;
 	HostSys::FlushInstructionCache(cursor, (u32)(place - reinterpret_cast<uptr>(cursor)));
 	mVU.prog.codePtr = reinterpret_cast<u8*>(place);
-	if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: codePtr=%llx nb0=%llx sz=%zu entry=%llx word0=%08x",
-		mVU.index, (unsigned long long)reinterpret_cast<uptr>(cursor),
-		(unsigned long long)chunkNewBase[0], img.chunks[0].code.size(),
-		(unsigned long long)reinterpret_cast<uptr>(entry), *reinterpret_cast<u32*>(entry));
+	if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: hydrated entryPC=%x chunks=%zu blocks=%zu -> %p",
+		mVU.index, entryPC, img.chunks.size(), img.blocks.size(), entry);
 
 	quick.block = mVU.prog.cur->block[startPC / 8];
 	quick.prog = mVU.prog.cur;
@@ -1382,7 +1378,15 @@ static void* mVUexecute(u32 startPC, u32 cycles)
 	armStartBlock();
 	aVUPersist::BeginEpisode(mVU, mVU.prog.codePtr);
 	void* const entry = mVUsearchProg<vuIndex>(spc, (uptr)&mVU.prog.lpState);
-	mVU.prog.codePtr = armEndBlock();
+	// A hydrated program writes raw code via memcpy and advances mVU.prog.codePtr
+	// itself; nothing goes through the MacroAssembler, so armEndBlock() reports the
+	// (unmoved) emitter cursor. Letting it overwrite codePtr would rewind the cursor
+	// and alias the next program on top of the hydrated one. Keep whichever cursor is
+	// further along: the compile path only ever advances the emitter (codePtr stays at
+	// the session start until here), the hydrate path only ever advances codePtr.
+	u8* const emitterEnd = armEndBlock();
+	if (emitterEnd > mVU.prog.codePtr)
+		mVU.prog.codePtr = emitterEnd;
 	aVUPersist::EndEpisode(mVU, mVU.prog.codePtr);
 	return entry;
 }

@@ -80,7 +80,7 @@ namespace aVUPersist
 		u32 startPC;     // microMem byte offset
 		microRegInfo pState;
 		microRegInfo pStateEnd;
-		const microBlock* live; // manager's copy; not serialized
+		const microBlock* live; // manager's copy; not serialized (jumpCache read from it at serialize)
 	};
 
 } // namespace aVUPersist
@@ -555,7 +555,7 @@ namespace aVUPersist
 	//------------------------------------------------------------------
 
 	static constexpr u32 kImageMagic = 0x32555641; // 'AVU2'
-	static constexpr u32 kImageVersion = 1;
+	static constexpr u32 kImageVersion = 2;
 
 	struct ImageHeader
 	{
@@ -579,7 +579,7 @@ namespace aVUPersist
 		u32 chunkIndex;
 		u32 entryOffset;
 		u32 startPC;
-		u32 _pad;
+		u32 flags; // bit0: block ends in JR/JALR (needs a jumpCache array on hydrate)
 		u64 liveBase; // record-time address of the microBlock (for kFixBlockAbs rebase)
 		u8 pState[sizeof(microRegInfo)];
 		u8 pStateEnd[sizeof(microRegInfo)];
@@ -636,6 +636,10 @@ namespace aVUPersist
 			db.chunkIndex = b.chunkIndex;
 			db.entryOffset = b.entryOffset;
 			db.startPC = b.startPC;
+			// jumpCache is allocated mid-compile (after OnBlockAdded ran), so read the
+			// final state off the manager's live block at serialize time, not the
+			// stale add-time snapshot.
+			db.flags = (b.live && b.live->jumpCache) ? 1u : 0u;
 			db.liveBase = reinterpret_cast<u64>(b.live);
 			std::memcpy(db.pState, &b.pState, sizeof(microRegInfo));
 			std::memcpy(db.pStateEnd, &b.pStateEnd, sizeof(microRegInfo));
