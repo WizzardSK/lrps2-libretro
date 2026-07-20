@@ -1131,7 +1131,9 @@ static void check_variables(bool first_run)
 		var.key = "pcsx2_mtvu";
 		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
 		{
-			const bool mtvu_on = !strcmp(var.value, "enabled");
+			bool mtvu_on = !strcmp(var.value, "enabled");
+			if (getenv("LRPS2_FORCE_NO_MTVU")) // debug override: force single-threaded VU1
+				mtvu_on = false;
 			s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vuThread", mtvu_on);
 			VMManager::g_MtvuMenuDefault = mtvu_on;
 		}
@@ -2295,6 +2297,17 @@ void retro_unload_game(void)
 
 static void update_av_info(void)
 {
+	/* SET_SYSTEM_AV_INFO makes the frontend tear down and re-negotiate the whole
+	 * video driver (context_destroy + reset). In HW-render Vulkan mode the GS
+	 * thread submits to the frontend's shared VkQueue, so any GS work still
+	 * queued when the reinit runs races that teardown and deadlocks (all threads
+	 * park waiting on the drained ring / the reinit handshake). The EE/CPU thread
+	 * is parked here (retro_run has not resumed it yet), so drain the GS ring
+	 * first, then announce — mirrors the pcee2 HW-render fix. */
+#ifdef ENABLE_VULKAN
+	if (hw_render.context_type == RETRO_HW_CONTEXT_VULKAN && MTGS::IsOpen())
+		MTGS::WaitGS(false);
+#endif
 	retro_system_av_info av_info;
 	retro_get_system_av_info(&av_info);
 	environ_cb(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av_info);
