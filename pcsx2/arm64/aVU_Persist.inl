@@ -555,7 +555,10 @@ namespace aVUPersist
 	//------------------------------------------------------------------
 
 	static constexpr u32 kImageMagic = 0x32555641; // 'AVU2'
-	static constexpr u32 kImageVersion = 2;
+	static constexpr u32 kImageVersion = 4; // v4: recorded code no longer routes far
+	                                        // calls/jumps through per-process trampolines
+	                                        // (see armEmitCall/armEmitJmp); v3 images bake
+	                                        // trampoline slots that fault after hydration.
 
 	struct ImageHeader
 	{
@@ -564,6 +567,10 @@ namespace aVUPersist
 		u32 vuIndex;
 		u32 startPC;      // microMem byte offset of the creating entry
 		u64 contentHash;  // hash of the guest microprogram this was compiled from
+		u64 codegenFingerprint; // hash of every runtime config flag the microVU codegen
+		                  // reads while emitting (MTVU, VU clamp/sync/I-bit/XGKICK hacks,
+		                  // EE cycle rate). A block baked under one fingerprint is not
+		                  // executable under another, so hydration must reject a mismatch.
 		u64 imageBase;    // s_ranges.imgBegin at record time
 		u64 arenaBase;    // mVU.cache at record time
 		u64 memBase;      // mVU.regs().Mem at record time
@@ -572,7 +579,7 @@ namespace aVUPersist
 		u32 chunkCount;
 		u64 payloadHash;  // hash of every byte after this header (bit-rot guard)
 	};
-	static_assert(sizeof(ImageHeader) == 72);
+	static_assert(sizeof(ImageHeader) == 80);
 
 	struct DiskBlock
 	{
@@ -595,6 +602,37 @@ namespace aVUPersist
 			h *= 1099511628211ull;
 		}
 		return h;
+	}
+
+	// Every runtime config flag the microVU codegen branches on while emitting a
+	// block. A .vuprog baked under one combination bakes a different VU1 interrupt
+	// path (MTVU vs instant), different clamp/overflow code and different sync
+	// cycles, so it cannot be executed under another combination — hydrating a
+	// mismatched cache deadlocks the MTVU worker. Fold this into both the cache
+	// header and the file name so mismatched flavours are rejected and coexist.
+	static u64 CodegenFingerprint()
+	{
+		const auto& R = EmuConfig.Cpu.Recompiler;
+		const auto& S = EmuConfig.Speedhacks;
+		const auto& G = EmuConfig.Gamefixes;
+		u8 f[20] = {};
+		f[0]  = (u8)R.EnableVU1;       // } together = THREAD_VU1 (MTVU): flips the VU1
+		f[1]  = (u8)S.vuThread;        // }   interrupt-signalling path in every block
+		f[2]  = (u8)S.vu1Instant;      // INSTANT_VU1
+		f[3]  = (u8)G.IbitHack;
+		f[4]  = (u8)G.VUSyncHack;
+		f[5]  = (u8)G.XgKickHack;
+		f[6]  = (u8)G.VUOverflowHack;
+		f[7]  = (u8)G.FullVU0SyncHack;
+		f[8]  = (u8)R.vu0Overflow;
+		f[9]  = (u8)R.vu1Overflow;
+		f[10] = (u8)R.vu0ExtraOverflow;
+		f[11] = (u8)R.vu1ExtraOverflow;
+		f[12] = (u8)R.vu0SignOverflow;
+		f[13] = (u8)R.vu1SignOverflow;
+		f[14] = (u8)S.EECycleRate;
+		f[15] = (u8)S.EECycleSkip;
+		return HashBytes(f, sizeof(f));
 	}
 
 	template <typename T>
@@ -622,6 +660,7 @@ namespace aVUPersist
 		// memory (mVUcacheProg only snapshots the program's range into prog.data,
 		// so hashing prog.data here would not match a lookup over live memory).
 		hdr.contentHash = log->contentHash;
+		hdr.codegenFingerprint = CodegenFingerprint();
 		hdr.imageBase = s_ranges.imgBegin;
 		hdr.arenaBase = reinterpret_cast<u64>(mVU.cache);
 		hdr.memBase = reinterpret_cast<u64>(mVU.regs().Mem);
@@ -726,7 +765,7 @@ namespace aVUPersist
 
 	// Defined in the on-disk store section below.
 	static const char* CacheDir();
-	static void MakeCachePath(char* out, size_t cap, u32 vuIndex, u64 hash);
+	static void MakeCachePath(char* out, size_t cap, u32 vuIndex, u64 hash, u64 fingerprint);
 
 	// A parsed serialized image, ready for hydration. Mirrors the on-disk layout
 	// (header + blocks + chunks) in live vectors.
@@ -803,8 +842,9 @@ namespace aVUPersist
 		if (!s_hydrateEnabled || !CacheDir())
 			return false;
 		const u64 key = LookupKey(mVU, startPC_bytes);
+		const u64 fpr = CodegenFingerprint();
 		char path[512];
-		MakeCachePath(path, sizeof(path), mVU.index, key);
+		MakeCachePath(path, sizeof(path), mVU.index, key, fpr);
 		static const bool dbg = getenv("LRPS2_VU_PROGCACHE_DUMP") != nullptr;
 		std::FILE* fp = std::fopen(path, "rb");
 		if (!fp)
@@ -819,9 +859,11 @@ namespace aVUPersist
 		{ if (dbg) Console.WriteLn("TryReadProgram: parse fail %s", path); return false; }
 		// Guard against a hash collision: the recorded key must match and the
 		// entry PC must be the one we are looking up.
-		const bool m = out.hdr.contentHash == key && out.hdr.startPC == startPC_bytes && out.hdr.vuIndex == (u32)mVU.index;
-		if (dbg && !m) Console.WriteLn("TryReadProgram: key/startPC mismatch hdrHash=%llx key=%llx hdrPC=%x wantPC=%x",
-			(unsigned long long)out.hdr.contentHash, (unsigned long long)key, out.hdr.startPC, startPC_bytes);
+		const bool m = out.hdr.contentHash == key && out.hdr.startPC == startPC_bytes
+			&& out.hdr.vuIndex == (u32)mVU.index && out.hdr.codegenFingerprint == fpr;
+		if (dbg && !m) Console.WriteLn("TryReadProgram: mismatch hdrHash=%llx key=%llx hdrPC=%x wantPC=%x hdrFp=%llx wantFp=%llx",
+			(unsigned long long)out.hdr.contentHash, (unsigned long long)key, out.hdr.startPC, startPC_bytes,
+			(unsigned long long)out.hdr.codegenFingerprint, (unsigned long long)fpr);
 		return m;
 	}
 
@@ -843,10 +885,12 @@ namespace aVUPersist
 		return dir;
 	}
 
-	static void MakeCachePath(char* out, size_t cap, u32 vuIndex, u64 hash)
+	static void MakeCachePath(char* out, size_t cap, u32 vuIndex, u64 hash, u64 fingerprint)
 	{
-		std::snprintf(out, cap, "%s/vu%u_%016llx.vuprog", CacheDir(), vuIndex,
-			(unsigned long long)hash);
+		// fingerprint segregates codegen flavours (e.g. MTVU on vs off) into distinct
+		// files so a config toggle between launches does not overwrite the other's cache.
+		std::snprintf(out, cap, "%s/vu%u_%016llx_%016llx.vuprog", CacheDir(), vuIndex,
+			(unsigned long long)hash, (unsigned long long)fingerprint);
 	}
 
 	// Serialize `prog` and write it to the cache dir (tmp + rename for atomicity).
@@ -857,10 +901,11 @@ namespace aVUPersist
 		std::vector<u8> img;
 		if (!SerializeProgram(mVU, prog, img))
 			return;
-		u64 hash;
+		u64 hash, fpr;
 		std::memcpy(&hash, img.data() + offsetof(ImageHeader, contentHash), sizeof(hash));
-		char path[512], tmp[520];
-		MakeCachePath(path, sizeof(path), mVU.index, hash);
+		std::memcpy(&fpr, img.data() + offsetof(ImageHeader, codegenFingerprint), sizeof(fpr));
+		char path[512], tmp[540];
+		MakeCachePath(path, sizeof(path), mVU.index, hash, fpr);
 		std::snprintf(tmp, sizeof(tmp), "%s.tmp%d", path, (int)getpid());
 		std::FILE* fp = std::fopen(tmp, "wb");
 		if (!fp)
@@ -1206,6 +1251,141 @@ namespace aVUPersist
 		return true;
 	}
 
+	static u64 s_residualHits[2] = {};
+
+	// Independent missed-relocation detector. Unlike HydrateSelfTest (which only
+	// checks that RECORDED fixups re-encode correctly), this rebases each chunk
+	// with *nonzero* deltas for every class and then re-decodes EVERY address the
+	// code materializes, flagging any that still points into a record-time region.
+	// A correctly-relocated address moves out of the record range into its shifted
+	// new range; one that stays put is an address the scanner never turned into a
+	// fixup (misclassified as a constant — e.g. via the stale IsMapped snapshot —
+	// or emitted in a form the scanner does not recognize). Those are exactly the
+	// pointers that fault after a real cross-process hydration. Writes findings to
+	// `out` (may be null). Returns the number of residuals found.
+	static u32 ResidualScan(microVU& mVU, const microProgram& prog, const MvuPersistLog& log, std::FILE* out)
+	{
+		ResolveRanges();
+		const uptr imgB = s_ranges.imgBegin, imgE = s_ranges.imgEnd;
+		const uptr arB = reinterpret_cast<uptr>(mVU.cache);
+		const uptr arE = reinterpret_cast<uptr>(mVU.prog.codeReserveEnd);
+		const uptr memB = reinterpret_cast<uptr>(mVU.regs().Mem), memE = memB + mVU.vuMemSize;
+		const uptr micB = reinterpret_cast<uptr>(mVU.regs().Micro), micE = micB + mVU.microMemSize;
+
+		// Deltas large enough that a relocated address never lands back in its own
+		// record range (each span is << its shift), and within ADRP/branch reach.
+		HydrationPlan p;
+		p.imageDelta   = 0x40000000;                       // +1 GiB (image refs: movz/adrp)
+		p.recMemBase   = memB; p.newMemBase   = memB + 0x02000000; p.memSize   = mVU.vuMemSize;
+		p.recMicroBase = micB; p.newMicroBase = micB + 0x04000000; p.microSize = mVU.microMemSize;
+		p.recArenaBase = arB;  p.newArenaBase = arB + 0x00400000;  // +4 MiB (dispatcher stubs)
+		for (const PersistChunk& c : log.chunks)
+		{
+			p.chunkRecordBase.push_back(c.recordBase);
+			p.chunkNewBase.push_back(c.recordBase + 0x00400000);
+			p.chunkSize.push_back(c.code.size());
+		}
+		std::vector<std::vector<u8>> blockStore;
+		blockStore.reserve(log.blocks.size());
+		for (const PersistBlockRec& b : log.blocks)
+		{
+			blockStore.emplace_back(sizeof(microBlock));
+			p.blockRemap.emplace_back(reinterpret_cast<uptr>(b.live),
+				reinterpret_cast<uptr>(blockStore.back().data()));
+		}
+		auto inRec = [&](uptr v) -> const char* {
+			if (imgB && v >= imgB && v < imgE) return "IMAGE";
+			if (v >= arB && v < arE) return "ARENA";
+			if (v >= memB && v < memE) return "VUMEM";
+			if (v >= micB && v < micE) return "VUMICRO";
+			for (const PersistBlockRec& b : log.blocks)
+			{ const uptr lb = reinterpret_cast<uptr>(b.live);
+			  if (v >= lb && v < lb + sizeof(microBlock)) return "BLOCK"; }
+			return nullptr;
+		};
+		// A FRESH read of the live mappings (not the stale ResolveRanges snapshot):
+		// any unchanged pointer into a live mapping is a baked address that never got
+		// relocated, even into a region no fixup class tracks (e.g. a GS/MTGS buffer
+		// mmap'd after the snapshot) — exactly the misclassified-as-constant bug.
+		std::vector<std::pair<uptr, uptr>> live;
+		if (std::FILE* mf = std::fopen("/proc/self/maps", "r"))
+		{
+			char ln[512];
+			while (std::fgets(ln, sizeof(ln), mf))
+			{
+				unsigned long long b, e;
+				if (std::sscanf(ln, "%llx-%llx", &b, &e) == 2)
+					live.emplace_back((uptr)b, (uptr)e);
+			}
+			std::fclose(mf);
+			std::sort(live.begin(), live.end());
+		}
+		auto liveMapped = [&](uptr v) -> bool {
+			size_t lo = 0, hi = live.size();
+			while (lo < hi) { size_t m = (lo + hi) / 2; if (live[m].first <= v) lo = m + 1; else hi = m; }
+			return lo > 0 && v < live[lo - 1].second;
+		};
+
+		u32 hits = 0;
+		for (size_t ci = 0; ci < log.chunks.size(); ci++)
+		{
+			const PersistChunk& c = log.chunks[ci];
+			const uptr newBase = p.chunkNewBase[ci];
+			std::vector<u8> dst = c.code;
+			if (!RebaseChunkInto(dst.data(), newBase, c, [&](const PersistFixup& f) { return ResolveFixup(p, f); }))
+				continue;
+			const u8* code = dst.data();          // rebased
+			const u8* orig = c.code.data();       // record-time
+			const size_t n = c.code.size() / 4;
+			int curReg = -1; u32 curOff = 0;
+			// Flag only when the rebased address is UNCHANGED from record — i.e. no
+			// fixup moved it — AND it still points into a record region. A correctly
+			// relocated arena ref changes value (even if it lands back inside the
+			// arena span), so comparing new-vs-orig avoids the false positive of a
+			// small arena shift keeping a moved address in range.
+			auto check = [&](u32 off, uptr vnew, uptr vorig) {
+				if (vnew != vorig) return;        // relocated -> fine
+				if (vorig >= c.recordBase && vorig < c.recordBase + c.code.size()) return; // intra-chunk
+				const char* reg = inRec(vorig);
+				if (!reg)
+				{
+					// Not in a tracked class. If it is a live-mapped, pointer-like value
+					// it is a missed relocation into an untracked region; a small/unmapped
+					// value is a genuine constant (mask/immediate) — ignore those.
+					if (vorig < 0x10000 || !liveMapped(vorig)) return;
+					reg = "UNTRACKED";
+				}
+				hits++;
+				if (out)
+					std::fprintf(out, "  VU%u prog@%x chunk%zu +%#x -> %#llx (stale %s)\n",
+						mVU.index, (unsigned)prog.startPC * 8u, ci, off, (unsigned long long)vorig, reg);
+			};
+			for (size_t i = 0; i < n; i++)
+			{
+				u32 insn; std::memcpy(&insn, code + i * 4, 4);
+				const u32 off = static_cast<u32>(i * 4);
+				const int rd = insn & 0x1F;
+				const bool isMovz = (insn & 0x7F800000u) == 0x52800000u;
+				const bool isMovk = (insn & 0x7F800000u) == 0x72800000u;
+				if (isMovz)
+				{
+					if (curReg >= 0) check(curOff, DecodeMovImm(code, curOff), DecodeMovImm(orig, curOff));
+					curReg = rd; curOff = off; continue;
+				}
+				if (isMovk && curReg == rd)
+					continue;
+				if (curReg >= 0) { check(curOff, DecodeMovImm(code, curOff), DecodeMovImm(orig, curOff)); curReg = -1; }
+				if ((insn & 0x9F000000u) == 0x90000000u) // ADRP
+					check(off, DecodeAdrpPage(code, off, newBase + off), DecodeAdrpPage(orig, off, c.recordBase + off));
+				else if ((insn & 0x7C000000u) == 0x14000000u) // B/BL
+					check(off, DecodeBranch(code, off, newBase + off), DecodeBranch(orig, off, c.recordBase + off));
+			}
+			if (curReg >= 0) check(curOff, DecodeMovImm(code, curOff), DecodeMovImm(orig, curOff));
+		}
+		s_residualHits[mVU.index] += hits;
+		return hits;
+	}
+
 	static void RoundTripSelfTest(microVU& mVU)
 	{
 		if (!s_enabled)
@@ -1213,6 +1393,15 @@ namespace aVUPersist
 		static const bool run = getenv("LRPS2_VU_PROGCACHE_SELFTEST") != nullptr;
 		if (!run)
 			return;
+		// Findings file for the nonzero-delta residual detector (headless-friendly:
+		// survives even when the frontend swallows Console output).
+		std::FILE* residualOut = nullptr;
+		if (CacheDir())
+		{
+			char rp[600];
+			std::snprintf(rp, sizeof(rp), "%s/selftest_residuals_vu%u.txt", CacheDir(), mVU.index);
+			residualOut = std::fopen(rp, "a");
+		}
 		for (u32 i = 0; i < (mVU.progSize / 2); i++)
 		{
 			if (!mVU.prog.prog[i])
@@ -1234,7 +1423,14 @@ namespace aVUPersist
 					s_hydratePass[mVU.index]++;
 				else
 					s_hydrateFail[mVU.index]++;
+				ResidualScan(mVU, *p, *p->persist, residualOut);
 			}
+		}
+		if (residualOut)
+		{
+			std::fprintf(residualOut, "== VU%u total residual (missed-relocation) hits: %llu ==\n",
+				mVU.index, (unsigned long long)s_residualHits[mVU.index]);
+			std::fclose(residualOut);
 		}
 	}
 
@@ -1266,5 +1462,8 @@ namespace aVUPersist
 				(unsigned long long)s_rebaseFail[vuIndex],
 				(unsigned long long)s_hydratePass[vuIndex],
 				(unsigned long long)s_hydrateFail[vuIndex]);
+		if (s_residualHits[vuIndex])
+			Console.WriteLn("aVUPersist[VU%u]: selftest MISSED-RELOCATION residuals=%llu (see selftest_residuals_vu%u.txt)",
+				vuIndex, (unsigned long long)s_residualHits[vuIndex], vuIndex);
 	}
 } // namespace aVUPersist

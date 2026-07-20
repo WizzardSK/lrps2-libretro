@@ -778,6 +778,18 @@ static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
 	using namespace aVUPersist;
 	if (!HydrateEnabled())
 		return nullptr;
+	// VU1 cross-process hydration is disabled by default: its programs reach the
+	// XGKICK/GS path, which still carries a mis-relocation (a fixup rewritten to a
+	// wrong value, or a literal-pool pointer neither the scanner nor the nonzero-
+	// delta self-test models) that faults (MTVU on) or deadlocks (MTVU off) after
+	// hydration. VU0 never touches that path and round-trips cleanly, so it stays
+	// enabled. Set LRPS2_VU_PROGCACHE_VU1=1 to force-enable VU1 for debugging.
+	if (mVU.index == 1)
+	{
+		static const bool allowVU1 = getenv("LRPS2_VU_PROGCACHE_VU1") != nullptr;
+		if (!allowVU1)
+			return nullptr;
+	}
 	const u32 entryPC = (mVU.regs().start_pc / 8) * 8; // program entry, in bytes
 	static const bool dbg = getenv("LRPS2_VU_PROGCACHE_DUMP") != nullptr;
 	ParsedImage img;
@@ -789,6 +801,18 @@ static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
 	}
 	if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: HIT entryPC=%x chunks=%zu blocks=%zu", mVU.index,
 		entryPC, img.chunks.size(), img.blocks.size());
+
+	// Single-chunk programs only: multi-chunk hydration exercises the cross-chunk
+	// kClassArena relocation path, which passes the in-process self-test but is not
+	// yet verified bit-exact in a live run and hangs GT3 in real gameplay. Restrict
+	// hydration to the validated single-chunk case and let multi-chunk fall back to
+	// a normal recompile until the cross-chunk rebase is debugged.
+	if (img.chunks.size() != 1)
+	{
+		if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: skip multi-chunk (chunks=%zu) -> recompile",
+			mVU.index, img.chunks.size());
+		return nullptr;
+	}
 
 	// Place the chunks contiguously at the current code cursor.
 	ResolveRangesPublic();

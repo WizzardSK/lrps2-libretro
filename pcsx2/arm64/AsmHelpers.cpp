@@ -160,7 +160,13 @@ void armEmitJmp(const void* ptr, bool force_inline)
 {
 	s64 displacement = GetPCDisplacement(armGetCurrentCodePointer(), ptr);
 	bool use_blr = !vixl::IsInt26(displacement);
-	if (use_blr && armConstantPool && !force_inline)
+	// While recording for the persisted VU cache (g_armCanonicalAddrForms), never
+	// route through a constant-pool jump trampoline: the trampoline lives in a
+	// per-process pool whose slot layout is assigned in call order, so a baked
+	// `b trampoline` would point at a different target's slot after hydration in
+	// another process. Emit a canonical movz/movk absolute instead, which the
+	// fixup scanner captures and rebases directly.
+	if (use_blr && armConstantPool && !force_inline && !g_armCanonicalAddrForms)
 	{
 		if (u8* trampoline = armConstantPool->GetJumpTrampoline(ptr); trampoline)
 		{
@@ -171,7 +177,10 @@ void armEmitJmp(const void* ptr, bool force_inline)
 
 	if (use_blr)
 	{
-		armAsm->Mov(RXVIXLSCRATCH, reinterpret_cast<uintptr_t>(ptr));
+		if (g_armCanonicalAddrForms)
+			armMovImmCanonical(RXVIXLSCRATCH, reinterpret_cast<uintptr_t>(ptr));
+		else
+			armAsm->Mov(RXVIXLSCRATCH, reinterpret_cast<uintptr_t>(ptr));
 		armAsm->Br(RXVIXLSCRATCH);
 	}
 	else
@@ -199,7 +208,10 @@ void armEmitCall(const void* ptr, bool force_inline)
 {
 	s64 displacement = GetPCDisplacement(armGetCurrentCodePointer(), ptr);
 	bool use_blr = !vixl::IsInt26(displacement);
-	if (use_blr && armConstantPool && !force_inline)
+	// See armEmitJmp: skip the jump trampoline while recording the VU cache so the
+	// call target is a canonical, per-block relocatable movz/movk absolute rather
+	// than a pointer into a per-process trampoline pool.
+	if (use_blr && armConstantPool && !force_inline && !g_armCanonicalAddrForms)
 	{
 		if (u8* trampoline = armConstantPool->GetJumpTrampoline(ptr); trampoline)
 		{
