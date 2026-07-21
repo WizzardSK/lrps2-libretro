@@ -27,6 +27,7 @@
 #include <cstring>
 #include <dirent.h>
 #include <dlfcn.h>
+#include <link.h>
 #include <unistd.h>
 #include <unordered_map>
 #include <utility>
@@ -268,6 +269,61 @@ namespace aVUPersist
 
 	// Defined later; needed by the recorder to key programs at compile time.
 	static u64 HashBytes(const void* data, size_t len, u64 seed);
+
+	// Identity of the running core build, folded from the .so's GNU build-id
+	// note. Baked image offsets are only meaningful inside the exact build that
+	// recorded them (the hydration rebase shifts every image reference by one
+	// delta, assuming an identical layout), so images written by any other
+	// build must be rejected. 0 when the note is absent; such builds only
+	// accept caches that were also written without one.
+	struct BuildIdCtx
+	{
+		uptr base;
+		u64 id;
+	};
+
+	static int BuildIdPhdrCb(struct dl_phdr_info* info, size_t, void* data)
+	{
+		BuildIdCtx* ctx = static_cast<BuildIdCtx*>(data);
+		if (info->dlpi_addr != ctx->base)
+			return 0;
+		for (int i = 0; i < info->dlpi_phnum; i++)
+		{
+			const ElfW(Phdr)& ph = info->dlpi_phdr[i];
+			if (ph.p_type != PT_NOTE)
+				continue;
+			const u8* p = reinterpret_cast<const u8*>(info->dlpi_addr + ph.p_vaddr);
+			const u8* end = p + ph.p_memsz;
+			while (p + sizeof(ElfW(Nhdr)) <= end)
+			{
+				const ElfW(Nhdr)* nh = reinterpret_cast<const ElfW(Nhdr)*>(p);
+				const u8* name = p + sizeof(ElfW(Nhdr));
+				const u8* desc = name + ((nh->n_namesz + 3) & ~3u);
+				if (desc + nh->n_descsz > end)
+					break;
+				if (nh->n_type == NT_GNU_BUILD_ID && nh->n_namesz == 4 && !std::memcmp(name, "GNU", 4))
+				{
+					ctx->id = HashBytes(desc, nh->n_descsz, 1469598103934665603ull);
+					return 1;
+				}
+				p = desc + ((nh->n_descsz + 3) & ~3u);
+			}
+		}
+		return 1; // reached our module and found no note: stop, id stays 0
+	}
+
+	static u64 OwnBuildId()
+	{
+		static const u64 s_id = []() -> u64 {
+			Dl_info info;
+			if (!dladdr(reinterpret_cast<const void*>(&ResolveRanges), &info) || !info.dli_fbase)
+				return 0;
+			BuildIdCtx ctx{reinterpret_cast<uptr>(info.dli_fbase), 0};
+			dl_iterate_phdr(&BuildIdPhdrCb, &ctx);
+			return ctx.id;
+		}();
+		return s_id;
+	}
 
 	// Accessors for the live-hydration glue in aVU.cpp (mVUtryHydrate).
 	static u64 s_hydrated[2] = {};
@@ -555,7 +611,9 @@ namespace aVUPersist
 	//------------------------------------------------------------------
 
 	static constexpr u32 kImageMagic = 0x32555641; // 'AVU2'
-	static constexpr u32 kImageVersion = 4; // v4: recorded code no longer routes far
+	static constexpr u32 kImageVersion = 5; // v5: header carries the writer's buildId
+	                                        // (image offsets don't survive a relink).
+	                                        // v4: recorded code no longer routes far
 	                                        // calls/jumps through per-process trampolines
 	                                        // (see armEmitCall/armEmitJmp); v3 images bake
 	                                        // trampoline slots that fault after hydration.
@@ -571,6 +629,8 @@ namespace aVUPersist
 		                  // reads while emitting (MTVU, VU clamp/sync/I-bit/XGKICK hacks,
 		                  // EE cycle rate). A block baked under one fingerprint is not
 		                  // executable under another, so hydration must reject a mismatch.
+		u64 buildId;      // OwnBuildId() of the writing core (folded GNU build-id);
+		                  // image offsets don't survive a relink, reject any other build
 		u64 imageBase;    // s_ranges.imgBegin at record time
 		u64 arenaBase;    // mVU.cache at record time
 		u64 memBase;      // mVU.regs().Mem at record time
@@ -579,7 +639,7 @@ namespace aVUPersist
 		u32 chunkCount;
 		u64 payloadHash;  // hash of every byte after this header (bit-rot guard)
 	};
-	static_assert(sizeof(ImageHeader) == 80);
+	static_assert(sizeof(ImageHeader) == 88);
 
 	struct DiskBlock
 	{
@@ -661,6 +721,7 @@ namespace aVUPersist
 		// so hashing prog.data here would not match a lookup over live memory).
 		hdr.contentHash = log->contentHash;
 		hdr.codegenFingerprint = CodegenFingerprint();
+		hdr.buildId = OwnBuildId();
 		hdr.imageBase = s_ranges.imgBegin;
 		hdr.arenaBase = reinterpret_cast<u64>(mVU.cache);
 		hdr.memBase = reinterpret_cast<u64>(mVU.regs().Mem);
@@ -714,7 +775,7 @@ namespace aVUPersist
 			return false;
 		ImageHeader hdr;
 		std::memcpy(&hdr, img.data(), sizeof(hdr));
-		if (hdr.magic != kImageMagic || hdr.version != kImageVersion)
+		if (hdr.magic != kImageMagic || hdr.version != kImageVersion || hdr.buildId != OwnBuildId())
 			return false;
 		if (hdr.blockCount != log.blocks.size() || hdr.chunkCount != log.chunks.size())
 			return false;
@@ -783,7 +844,7 @@ namespace aVUPersist
 		if (img.size() < sizeof(ImageHeader))
 			return false;
 		std::memcpy(&out.hdr, img.data(), sizeof(ImageHeader));
-		if (out.hdr.magic != kImageMagic || out.hdr.version != kImageVersion)
+		if (out.hdr.magic != kImageMagic || out.hdr.version != kImageVersion || out.hdr.buildId != OwnBuildId())
 			return false;
 		if (HashBytes(img.data() + sizeof(ImageHeader), img.size() - sizeof(ImageHeader)) != out.hdr.payloadHash)
 			return false;
@@ -952,7 +1013,7 @@ namespace aVUPersist
 			return false;
 		ImageHeader hdr;
 		std::memcpy(&hdr, img.data(), sizeof(hdr));
-		if (hdr.magic != kImageMagic || hdr.version != kImageVersion)
+		if (hdr.magic != kImageMagic || hdr.version != kImageVersion || hdr.buildId != OwnBuildId())
 			return false;
 		return HashBytes(img.data() + sizeof(ImageHeader), img.size() - sizeof(ImageHeader)) == hdr.payloadHash;
 	}
