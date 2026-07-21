@@ -108,7 +108,7 @@ Native ALU incl. the trapping forms ADDI/ADD/SUB (this interpreter drops the ove
 
 **microVU0 runs VU0 micro programs** (VCALLMS) natively; **COP2 macro ALU ops emit native NEON directly into EE JIT blocks** (aVU_Macro single-op emitters) with **real flag liveness** (C.66): the analysis runs over a run of consecutive macro ALU ops, capped at the block end, and only the last writer of each flag category computes it -- the same flag-hack the x86 rec ships by default (its `COP2FlagHackPass`, here run-local because this builder interleaves analysis with emission). Dead intermediate MAC/status pipelines (~40 host instructions per op) vanish: the hottest in-race GT3 block, VU0-macro matrix code, dropped 3068 -> 2004 host bytes. Wall-time flat (OoO absorbed the ALU); the win is code size, I-cache and x86 parity. `LRPS2_NO_COP2_LIVENESS=1` restores all-live; BC2 branches native; **the COP2 transfers (QMFC2/CFC2/QMTC2/CTC2) are native too** (C.58) -- the interlock bit is known at compile time, so the `_vu0FinishMicro`/`_vu0WaitMicro` call is only emitted when set, and CFC2's REG_R quirk (writes UL[0], leaves UL[1]) is reproduced exactly. CTC2 to FBRST/CMSAR1 (VU reset / VU1 microprogram kick) and CALLMS/CALLMSR stay on the interpreter call, faithful to x86. **C.78 macro emission quality**, on the EE critical path (VU0 macro runs in the EE thread): the COP2 transfer bodies and the conservative VU0-busy check address vuRegs through an adrp+pageoff fold instead of a 4-instruction absolute materialization each (`LRPS2_NO_COP2_ABSFOLD=1` restores them); the per-op macro bracket -- VU0-busy check, x19 repoint to &vuRegs[0], x19 restore to &cpuRegs (~11 instructions per op) -- is **hoisted to once per run** of consecutive native macro ALU ops (the C.66 liveness run): between the ops of a run nothing else is emitted, events only fire at block tails, and no run op can start a VU0 microprogram, so the bases stay valid across the run's whole extent (`LRPS2_NO_COP2_RUNHOIST=1` restores per-op brackets); and **x27 = &microVU0 is materialized inside the bracket**, so mvuAbsMem's one-instruction `[x27 + imm]` addressing of the mVU scalars and the C.75 embedded constant tables now applies in macro mode too (`LRPS2_NO_COP2_MX27=1` restores the adrp fold). FOOTGUN captured in the run predicate: VNOP/VWAITQ have EMPTY emitters (no setupMacroOp/endMacroOp), so a hoisted bracket ending on one never emits its x19 restore -- GT3's VU0->GS upload loop ends `VSQI, VSQI, VNOP, VNOP` and the following branch then read its GPRs out of VF registers (instant wedge); they are excluded from runs and emit through the per-op path. Hottest in-race block (VU0-macro matrix code) 1860 -> 1540 host bytes (-17 %); wall flat (C.49 lesson: OoO absorbs it), the win is code size, I-cache and parity. `LRPS2_NO_VU0REC=1` / `LRPS2_NO_EE_COP2MACRO=1` / `LRPS2_NO_EE_COP2XFER=1` fall back
 
-### Persisted VU program cache — ~90 % (recorder + relocation + live cross-process hydration done)
+### Persisted VU program cache — ~95 % (recorder + relocation + live cross-process hydration done; single-chunk programs only)
 
 A JIT warm cache for microVU, aimed at the ~15 s per-launch VU recompilation
 stall (the emitted code is in-memory only, so every launch re-JITs from cold).
@@ -156,9 +156,42 @@ with recording *and* hydration on. Done:
   base mismatch, so the cache survives ASLR in the libretro `.so` (where a fixed-
   base scheme would never hit).
 
-Still to come: broaden validation across more titles, and promote the on-disk
-cache from opt-in to a managed store (index/versioning, size cap, invalidation)
-so it can drive the default warm-start.
+  A warm start is safe to *replay* but not to *extend*: hydration and recording
+  must not both be on, since a run that re-records while hydrated programs exist
+  saves episodes whose branches reach into foreign chunks. Use `_HYDRATE=1`
+  alone for warm starts.
+- **Correctness fixes that made it work in real gameplay** — three bugs kept
+  cross-process VU1 hydration crashing (MTVU on) or deadlocking (MTVU off) until
+  a deterministic in-race repro pinned them. (1) `mVUcompileJIT`'s epilogue set
+  `codePtr = armEndBlock()` unconditionally; when its nested search *hydrated* a
+  program, that rewound the cursor onto the freshly written chunks and the next
+  compile aliased live code. (2) The entry block was picked by `startPC` alone,
+  so a caller could be handed a block baked for a different pipeline state —
+  silent corruption until a `JR` read a stale `VI` and branched out of the arena.
+  (3) Fixing (2) by refusing to hydrate on a pState miss cost a third of the
+  coverage. All three share one cause: the caller's emit session is still open at
+  the pre-hydration cursor. Closing and reopening it at the post-hydration
+  `codePtr` — a pure move, since hydration emits nothing through the assembler —
+  makes compiling after hydrating safe, so the entry now goes through the normal
+  `mVUblockFetch`, which matches the caller's pState and compiles the variant
+  into the hydrated program when the recording never produced it. GT3 in-race
+  hydrates 58 programs per warm start, bit-exact across repeated runs.
+- **Build identity** — the header carries the writing core's GNU build-id and
+  hydration rejects any other build's images: the rebase shifts every image
+  reference by one delta, which only holds for the exact layout that recorded
+  them. A rebuild therefore invalidates the cache by design.
+
+Measured on GT3 in-race (600 frames): total wall time is unchanged — emulation,
+not VU compilation, dominates — while the compile hitches it removes show up in
+the tail: stalls ≥50 ms drop 10 → 5, p99 55.7 → 51.4 ms, and the first frame
+falls 370 → 319 ms (hydrating is cheaper than the compile burst it replaces).
+
+Still to come: multi-chunk programs (a program compiled across several emission
+episodes) are skipped and recompiled — enabling them renders incorrectly and
+stalls for seconds at a time, so the cross-chunk path needs its mis-execution
+root-caused first; broadening validation across more titles; and promoting the
+on-disk cache from opt-in to a managed store (index/versioning, size cap,
+invalidation) so it can drive the default warm-start.
 
 ### VIF unpack dynarec — ~100 %
 
@@ -246,7 +279,7 @@ Tracing/logging:
 | `LRPS2_SPU_STATS=1` / `LRPS2_SPU_MUTE=1` | SPU voice-shape statistics / mute the mixer to re-measure its wall-time ceiling |
 | `LRPS2_SPU_SYNC_STATS=1` | SPU worker-thread feasibility: register read/write/DMA rates, armed-IRQ tick fraction, and which site (mixer/reverb/ADMA-input/DMA/register) each IRQA match came from |
 | `LRPS2_MTVU_STATS=1` | C.80 lazy-kick effect: VIF unpack packets deferred vs MTVU notifies issued |
-| `LRPS2_VU_PROGCACHE=1` (+`_HYDRATE=1`, `_DIR=<path>`, `_STATS=1`, `_SELFTEST=1`) | Persisted VU program cache: enable emit-time recording (+ load the on-disk cache instead of recompiling; + cache directory; + per-VU episode/fixup counters; + serializer round-trip self-test) |
+| `LRPS2_VU_PROGCACHE=1` (+`_HYDRATE=1`, `_VU1=1`, `_DIR=<path>`, `_STATS=1`, `_DUMP=1`, `_SELFTEST=1`) | Persisted VU program cache: enable emit-time recording (+ load the on-disk cache instead of recompiling; + include VU1, off by default; + cache directory, **required** — no default, so a missing `_DIR` silently makes a "warm" run cold; + per-VU episode/fixup counters; + per-hydration tracing; + serializer round-trip self-test). Record and hydrate are separate on purpose: populate with `_PROGCACHE=1`, warm-start with `_HYDRATE=1` alone |
 | `LRPS2_DUMP_HOST=<pc>` / `LRPS2_DUMP_HOST_IOP=<pc>` / `LRPS2_DUMP_HOST_MVU=<pc>` | Write a compiled block's host code (+ guest words) for offline `objdump -D -b binary -m aarch64` |
 | `MVU_DIFF=1` | microVU1-vs-interpreter register-exact shadow differential (needs instant VU1 — even an empty `LRPS2_NO_VU1_INSTANT=` disables it and poisons the log) |
 
