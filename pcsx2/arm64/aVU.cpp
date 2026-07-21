@@ -558,6 +558,8 @@ void mVUinit(microVU& mVU, uint vuIndex)
 // Resets Rec Data
 void mVUreset(microVU& mVU, bool resetReserve)
 {
+	if (getenv("LRPS2_VU_PROGCACHE_DUMP"))
+		Console.WriteLn("mVUreset[VU%u] resetReserve=%d codePtr=%p", mVU.index, (int)resetReserve, mVU.prog.codePtr);
 	if (THREAD_VU1)
 	{
 		DevCon.Warning("mVU Reset");
@@ -881,8 +883,9 @@ static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
 		return nullptr;
 	HostSys::FlushInstructionCache(cursor, (u32)(place - reinterpret_cast<uptr>(cursor)));
 	mVU.prog.codePtr = reinterpret_cast<u8*>(place);
-	if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: hydrated entryPC=%x chunks=%zu blocks=%zu -> %p",
-		mVU.index, entryPC, img.chunks.size(), img.blocks.size(), entry);
+	if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: hydrated entryPC=%x chunks=%zu blocks=%zu -> %p (cursor=%p place=%p sz=%zx)",
+		mVU.index, entryPC, img.chunks.size(), img.blocks.size(), entry,
+		cursor, reinterpret_cast<void*>(place), img.chunks[0].code.size());
 
 	quick.block = mVU.prog.cur->block[startPC / 8];
 	quick.prog = mVU.prog.cur;

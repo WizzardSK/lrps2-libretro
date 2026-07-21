@@ -765,7 +765,16 @@ _mVUt void* mVUcompileJIT(u32 startPC, uptr ptr)
 		}
 	}
 
-	mVU.prog.codePtr = armEndBlock();
+	// The nested mVUsearchProg above may have HYDRATED a program: raw code was
+	// memcpy'd at the (aligned) session cursor and mVU.prog.codePtr advanced past
+	// it, while this session's emitter never moved. Overwriting codePtr with
+	// armEndBlock() unconditionally would rewind the cursor onto the hydrated
+	// chunk and the next compile/hydration would alias live code on top of it
+	// (observed as the VU1 warm-start SIGSEGV/deadlock). Keep whichever cursor is
+	// further along — same guard as the mVUcaller glue in aVU.cpp.
+	u8* const emitterEnd = armEndBlock();
+	if (emitterEnd > mVU.prog.codePtr)
+		mVU.prog.codePtr = emitterEnd;
 	aVUPersist::EndEpisode(mVU, mVU.prog.codePtr);
 	return result;
 }
