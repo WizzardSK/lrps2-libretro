@@ -776,5 +776,12 @@ _mVUt void* mVUcompileJIT(u32 startPC, uptr ptr)
 	if (emitterEnd > mVU.prog.codePtr)
 		mVU.prog.codePtr = emitterEnd;
 	aVUPersist::EndEpisode(mVU, mVU.prog.codePtr);
+	{
+		static const bool dbg = getenv("LRPS2_VU_PROGCACHE_DUMP") != nullptr;
+		if (dbg)
+			Console.WriteLn("mVUcompileJIT[VU%u]: startPC=%x sameProg=%d jc=%d -> %p (codeStart=%p codePtr=%p)",
+				mVU.index, startPC, (int)doJumpAsSameProgram, (int)doJumpCaching, result,
+				mVU.prog.codeStart, mVU.prog.codePtr);
+	}
 	return result;
 }

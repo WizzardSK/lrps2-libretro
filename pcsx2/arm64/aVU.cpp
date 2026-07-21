@@ -804,15 +804,66 @@ static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
 	if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: HIT entryPC=%x chunks=%zu blocks=%zu", mVU.index,
 		entryPC, img.chunks.size(), img.blocks.size());
 
-	// Single-chunk programs only: multi-chunk hydration exercises the cross-chunk
-	// kClassArena relocation path, which passes the in-process self-test but is not
-	// yet verified bit-exact in a live run and hangs GT3 in real gameplay. Restrict
-	// hydration to the validated single-chunk case and let multi-chunk fall back to
-	// a normal recompile until the cross-chunk rebase is debugged.
+	// Single-chunk programs only. Multi-chunk hydration still aborts GT3 in-race
+	// (3/3 runs) even with the cursor-aliasing and pState-entry fixes in place,
+	// so the cross-chunk path stays gated off. What is ruled out so far: the
+	// chunk placement/rebase arithmetic (self-tested), cross-chunk kClassArena
+	// targets (the only foreign branch targets in the recorded images are the
+	// two dispatcher stubs at arena+0x98/+0x26c, which take the stub delta), and
+	// entry-variant selection (fixed below). Prime remaining suspect: a later
+	// episode's chunk holds blocks whose baked jumpCache/block-link tails
+	// reference blocks the plan remaps only within this program, while the
+	// recorded arena also moved other programs' code that those tails reach.
 	if (img.chunks.size() != 1)
 	{
 		if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: skip multi-chunk (chunks=%zu) -> recompile",
 			mVU.index, img.chunks.size());
+		return nullptr;
+	}
+
+	// Pick the entry variant the CALLER asked for. A program can hold several
+	// blocks at the same startPC that differ only in pipeline state (later
+	// compile episodes add variants), so "last block with a matching startPC"
+	// can hand back code baked for different flag/register assumptions —
+	// harmless-looking until a JR reads a stale VI and branches into nothing.
+	// Mirror microBlockManager::search against the on-disk pStates, and when
+	// the caller's state has no recorded variant bail out *before* creating
+	// anything so the normal compile path handles it.
+	const microRegInfo* const want = reinterpret_cast<const microRegInfo*>(pState);
+	size_t entryIdx = img.blocks.size();
+	for (size_t i = 0; i < img.blocks.size(); i++)
+	{
+		const auto& db = img.blocks[i];
+		if (db.startPC != startPC)
+			continue;
+		microRegInfo* const have = reinterpret_cast<microRegInfo*>(const_cast<u8*>(db.pState));
+		if (want->needExactMatch)
+		{
+			if (mVU.compareState(const_cast<microRegInfo*>(want), have) != 0)
+				continue;
+		}
+		else
+		{
+			const u64 q = want->quick64[0], h = have->quick64[0];
+			if (mVU.prog.IRinfo.sFlagHack)
+			{
+				if ((h & ~0x0C04ull) != (q & ~0x0C04ull))
+					continue;
+			}
+			else if (h != q)
+				continue;
+			if (doConstProp && (have->vi15 != want->vi15))
+				continue;
+			if (doConstProp && (have->vi15v != want->vi15v))
+				continue;
+		}
+		entryIdx = i;
+		break;
+	}
+	if (entryIdx == img.blocks.size())
+	{
+		if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: no pState match at startPC=%x -> recompile",
+			mVU.index, startPC);
 		return nullptr;
 	}
 
@@ -848,8 +899,9 @@ static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
 		plan.chunkSize.push_back(img.chunks[i].code.size());
 	}
 	void* entry = nullptr;
-	for (const auto& db : img.blocks)
+	for (size_t bi = 0; bi < img.blocks.size(); bi++)
 	{
+		const auto& db = img.blocks[bi];
 		blockCreate(db.startPC / 8);
 		microBlock tmp;
 		std::memcpy(&tmp.pState, db.pState, sizeof(microRegInfo));
@@ -861,7 +913,7 @@ static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
 		tmp.jumpCache = (db.flags & 1u) ? new microJumpCache[mProgSize / 2]() : nullptr;
 		microBlock* nb = mVU.prog.cur->block[db.startPC / 8]->add(mVU, &tmp);
 		plan.blockRemap.emplace_back(db.liveBase, reinterpret_cast<uptr>(nb));
-		if (db.startPC == entryPC)
+		if (bi == entryIdx)
 			entry = nb->codeStart;
 	}
 	if (!entry)
