@@ -821,52 +821,6 @@ static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
 		return nullptr;
 	}
 
-	// Pick the entry variant the CALLER asked for. A program can hold several
-	// blocks at the same startPC that differ only in pipeline state (later
-	// compile episodes add variants), so "last block with a matching startPC"
-	// can hand back code baked for different flag/register assumptions —
-	// harmless-looking until a JR reads a stale VI and branches into nothing.
-	// Mirror microBlockManager::search against the on-disk pStates, and when
-	// the caller's state has no recorded variant bail out *before* creating
-	// anything so the normal compile path handles it.
-	const microRegInfo* const want = reinterpret_cast<const microRegInfo*>(pState);
-	size_t entryIdx = img.blocks.size();
-	for (size_t i = 0; i < img.blocks.size(); i++)
-	{
-		const auto& db = img.blocks[i];
-		if (db.startPC != startPC)
-			continue;
-		microRegInfo* const have = reinterpret_cast<microRegInfo*>(const_cast<u8*>(db.pState));
-		if (want->needExactMatch)
-		{
-			if (mVU.compareState(const_cast<microRegInfo*>(want), have) != 0)
-				continue;
-		}
-		else
-		{
-			const u64 q = want->quick64[0], h = have->quick64[0];
-			if (mVU.prog.IRinfo.sFlagHack)
-			{
-				if ((h & ~0x0C04ull) != (q & ~0x0C04ull))
-					continue;
-			}
-			else if (h != q)
-				continue;
-			if (doConstProp && (have->vi15 != want->vi15))
-				continue;
-			if (doConstProp && (have->vi15v != want->vi15v))
-				continue;
-		}
-		entryIdx = i;
-		break;
-	}
-	if (entryIdx == img.blocks.size())
-	{
-		if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: no pState match at startPC=%x -> recompile",
-			mVU.index, startPC);
-		return nullptr;
-	}
-
 	// Place the chunks contiguously at the current code cursor.
 	ResolveRangesPublic();
 	u8* cursor = mVU.prog.codePtr;
@@ -898,10 +852,8 @@ static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
 		plan.chunkNewBase.push_back(chunkNewBase[i]);
 		plan.chunkSize.push_back(img.chunks[i].code.size());
 	}
-	void* entry = nullptr;
-	for (size_t bi = 0; bi < img.blocks.size(); bi++)
+	for (const auto& db : img.blocks)
 	{
-		const auto& db = img.blocks[bi];
 		blockCreate(db.startPC / 8);
 		microBlock tmp;
 		std::memcpy(&tmp.pState, db.pState, sizeof(microRegInfo));
@@ -913,11 +865,7 @@ static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
 		tmp.jumpCache = (db.flags & 1u) ? new microJumpCache[mProgSize / 2]() : nullptr;
 		microBlock* nb = mVU.prog.cur->block[db.startPC / 8]->add(mVU, &tmp);
 		plan.blockRemap.emplace_back(db.liveBase, reinterpret_cast<uptr>(nb));
-		if (bi == entryIdx)
-			entry = nb->codeStart;
 	}
-	if (!entry)
-		return nullptr; // no entry block matched; fall back
 
 	// Rebase each chunk and write it into the code cache.
 	HostSys::BeginCodeWrite();
@@ -935,6 +883,28 @@ static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
 		return nullptr;
 	HostSys::FlushInstructionCache(cursor, (u32)(place - reinterpret_cast<uptr>(cursor)));
 	mVU.prog.codePtr = reinterpret_cast<u8*>(place);
+
+	// Re-point the emitter past the hydrated code. The caller opened its emit
+	// session at the pre-hydration cursor and nothing has been emitted into it
+	// (hydration writes raw bytes itself), so closing and reopening the session
+	// here is a pure move — and it is what makes the entry lookup below safe:
+	// anything compiled from now on lands after the hydrated chunks instead of
+	// on top of them.
+	if (armAsm)
+	{
+		aVUPersist::EndEpisode(mVU, armEndBlock());
+		armSetAsmPtr(mVU.prog.codePtr, mVU.prog.codeReserveEnd - mVU.prog.codePtr, nullptr);
+		armStartBlock();
+		aVUPersist::BeginEpisode(mVU, mVU.prog.codePtr);
+	}
+
+	// Let the normal entry lookup pick the block: it matches the caller's
+	// pipeline state (blocks at one startPC differ by pState, and running a
+	// variant baked for a different state is silent corruption), and compiles
+	// the variant into the hydrated program when the recorded run never
+	// produced it — which a recorded run often hasn't, since it entered the
+	// program from a different predecessor.
+	void* const entry = mVUblockFetch(mVU, startPC, pState);
 	if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: hydrated entryPC=%x chunks=%zu blocks=%zu -> %p (cursor=%p place=%p sz=%zx)",
 		mVU.index, entryPC, img.chunks.size(), img.blocks.size(), entry,
 		cursor, reinterpret_cast<void*>(place), img.chunks[0].code.size());
