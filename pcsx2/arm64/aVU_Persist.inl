@@ -379,6 +379,11 @@ namespace aVUPersist
 		const uptr arenaBegin = reinterpret_cast<uptr>(mVU.cache);
 		const uptr arenaEnd = reinterpret_cast<uptr>(mVU.prog.codeReserveEnd);
 		const uptr chunkEnd = chunkBase + chunk.code.size();
+		// The dispatchers and helper thunks sit at the head of the arena, ahead of
+		// all program code (mVUgenerateDispatchers), so they are at a fixed arena
+		// offset and rebase by the arena delta. Everything past it belongs to some
+		// program, and only this program's own chunks can be resolved from here.
+		const uptr dispEnd = reinterpret_cast<uptr>(mVU.prog.codeStart);
 		// This VU's memory + microprogram buffers (VURegs::Mem/Micro are pointers
 		// to separately-mmap'd regions the JIT bakes absolute addresses into).
 		const uptr vuMemBegin = reinterpret_cast<uptr>(mVU.regs().Mem);
@@ -395,7 +400,22 @@ namespace aVUPersist
 			if (s_ranges.imgBegin && v >= s_ranges.imgBegin && v < s_ranges.imgEnd)
 				return kClassImage;
 			if (v >= arenaBegin && v < arenaEnd)
-				return kClassArena;
+			{
+				if (v < dispEnd)
+					return kClassArena; // dispatcher/thunk: fixed arena offset
+				// Program code. Hydration only knows where THIS program's recorded
+				// chunks land, so a reference into another program's code (or into
+				// chunks this program hydrated rather than recorded, which is what a
+				// run with recording and hydration both on produces) cannot be
+				// resolved in a later process -- it would rebase by the arena delta
+				// onto whatever happens to sit there. Refuse the episode instead.
+				for (const PersistChunk& c : log.chunks)
+					if (v >= c.recordBase && v < c.recordBase + c.code.size())
+						return kClassArena;
+				if (v >= chunkBase && v < chunkEnd)
+					return kClassArena; // current chunk, not yet given its recordBase
+				return -2;
+			}
 			if (IsBlockAbs(log, v))
 				return kClassBlock;
 			if ((v >= vuMemBegin && v < vuMemEnd) || (v >= vuMicroBegin && v < vuMicroEnd))
