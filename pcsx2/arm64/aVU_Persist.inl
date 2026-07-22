@@ -505,10 +505,15 @@ namespace aVUPersist
 		std::sort(chunk.fixups.begin(), chunk.fixups.end(),
 			[](const PersistFixup& a, const PersistFixup& b) { return a.codeOffset < b.codeOffset; });
 
-		// Guard: is the address this instruction bakes covered by a fixup?
+		// Guard: is the address this instruction bakes covered by a fixup? The
+		// fixups are sorted by offset above, and a chunk can hold hundreds of them
+		// against tens of thousands of instructions, so this has to be a search
+		// rather than a walk.
 		auto covered = [&](u32 off, u8 form) -> bool {
-			for (const PersistFixup& f : chunk.fixups)
-				if (f.codeOffset == off && f.form == form)
+			const auto it = std::lower_bound(chunk.fixups.begin(), chunk.fixups.end(), off,
+				[](const PersistFixup& f, u32 v) { return f.codeOffset < v; });
+			for (auto f = it; f != chunk.fixups.end() && f->codeOffset == off; ++f)
+				if (f->form == form)
 					return true;
 			st.fixUncovered++;
 			ok = false;
