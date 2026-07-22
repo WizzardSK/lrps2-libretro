@@ -94,104 +94,208 @@ table.
 
 ### EE (R5900) JIT — ~89 %
 
-Native ALU, loads/stores incl. LQ/SQ (inline vtlb fast path) + unaligned family, branches + likely branches + BC0x/BC1x, block linking/chaining, MULT/DIV/MADD + HI/LO (both pipelines), **complete COP1 (FPU)** — data moves + all S-format arithmetic + CVT + C.cond, interpreter-exact clamp/flag semantics, **CFC1/CTC1 native** (C.65: `fs` is a compile-time constant, so CFC1 specializes to FCR31 load / revision constant / zero, and CTC1 to a non-FCR31 register is a nop), bit-exact MMI subset → NEON, MFSA/MTSA(B/H), kernel idle-loop skip, block revalidation cache, write-back GPR register cache with direct-to-cache emission, event tests gated on `cycle >= nextEventCycle` in block tails (the upstream-rec dispatcher rule; ~23 % faster wall clock on GT3, `LRPS2_NO_EVTGATE=1` restores every-branch tests), default-rate cycle bookkeeping inlined into block tails (`LRPS2_NO_INLINE_UPD=1` restores the helper call), block chaining keeps the frame live across hops (no per-block frame pop/push or x19 rematerialization; same on the IOP side). ADDI/DADDI (overflow trap dropped, exactly like the x86 rec), COP0 EI/DI, LQC2/SQC2 (128-bit VU0-register load/store, native since C.59: vu0Sync plus a 128-bit access straight into vuRegs[0].VF[ft], so the EE register cache survives an op MMX7 runs ~827K times; `LRPS2_NO_EE_VUQMEM=1` restores the interpreter call). **Memory goes through the vtlb fastmem area** (C.50): the 4 GB host mapping in which every memory-backed guest page sits at its own guest address, so a load/store is one instruction (`ldr/str <data>, [x28, w<addr>, UXTW]`) with no vmap indirection. Hardware registers and unmapped pages are absent from the area, so touching one faults; the faulting instruction is rewritten into a branch to a slow stub emitted next to it at compile time, and the guest pc is blacklisted so later compiles of that op skip fastmem (`LRPS2_NO_FASTMEM=1` restores the old inline vmap path, `LRPS2_FASTMEM_LOG=1` traces the patches). Emitted-code quality: cpuRegs fields are reached through the x19 guest-reg base instead of a 4-instruction absolute address per access (C.46); load/store displacements fold into the address add (C.48); the vmap/fastmem base is pinned in x28 for the life of the block frame (C.49); the backpatch stubs (C.51), the misalign cancel paths (C.53), the event-due tails and the frame pop/ret (C.54) all live out of line past the epilogue, so the hot instruction stream carries no cold code; the chain epilogue folds the mirror mask and RAM range check into one test (C.52); an exit whose successor is known at compile time chains through a constant LUT slot with no pc read at all, on the event gate's not-due path where pc provably has not been redirected (C.54); the tail's cycle bookkeeping and cycle update are fused into one sequence (C.55); the FP loads/stores use fastmem too (C.56); and ADDIU/DADDIU fold their immediate into the add (C.57); the canonical unaligned pairs (LDL/LDR, LWL/LWR, SDL/SDR, SWL/SWR -- adjacent, left-then-right, matching registers and offsets) fuse into ONE host unaligned access through fastmem instead of two helper calls each, with a fault stub that replays the exact two-access guest-order semantics for hw pages (C.67, `LRPS2_NO_EE_UPAIR=1` restores the helpers). **Handoff coverage (C.63-C.65), measured from an in-race GT3 save state rather than an intro movie:** ADD/SUB (trap dropped like ADDI), PLZCW (= `CLS` per 32-bit half), PREVH (= `REV64 .8H`) and CFC1/CTC1 are native, and a **likely branch is no longer refused by an untranslatable delay slot** -- GT3 is full of `beql ..., panic; break` asserts whose slot only runs when taken, i.e. never; the not-taken path is emitted natively and the taken path hands control to the interpreter at the branch (C.64). **ERET is native too (C.77)**: the interrupt/exception return was the single biggest remaining breaker (196k per 600 in-race frames -- every interrupt return broke its block); it is a branch with no delay slot (pc from ErrorEPC/EPC by Status.ERL, clear that bit, pull nextEventCycle), and its tail deliberately does NO cycle flush and NO event test, mirroring the interpreter-handoff runner it replaces (a plain `do execI while (!branch2)` loop) -- the next block's gated tail delivers the pending interrupt; adding a flush+test here instead shifted MMX7's FMV frame phase (`LRPS2_NO_EE_ERET=1` restores the handoff). **The remaining MMI stragglers are native too (C.79)**: PPAC5 (per-word RGB1555 pack → NEON shift/mask), and the full-128-bit HI/LO moves PMFHI/PMFLO (`rd <- HI/LO`) and PMTHI/PMTLO (`HI/LO <- rs`), all bit-exact (`LRPS2_NO_EE_MMIHL=1` restores the handoff). With those gone the only EE ops that still break a block are SYSCALL and the TLB/exception path — everything else GT3 and MMX7 execute is translated. (PMFHL/PMTHL stay with the interpreter deliberately: they never fire in the reference titles, so a native path could not be golden-verified.) Interpreter handoffs in-race: 887k -> 136k breakers per 600 frames (-85 % from the C.62 start), and what remains is SYSCALL (123k, exception path). Translating PLZCW also FIXED a timing deviation: a block that breaks at an untranslatable op flushes its cycle count there, a rounding point the interpreter does not have -- with PLZCW native, MMX7's frame-3000 framebuffer now matches the pure interpreter (88190948), which the old JIT did not. The bit-exactness reference for MMX7 moved accordingly. `LRPS2_DUMP_RANGE=lo:hi` dumps the guest ops a pc range compiles from with their translatability, and `LRPS2_DUMP_HOST=<pc>` writes a block's emitted host code out for `objdump -D -b binary -m aarch64`. Missing: SYSCALL/TLB (interpreter forever); PMFHL/PMTHL (never fire in the reference titles)
+Everything GT3 and Mega Man X7 execute is translated except SYSCALL and the
+TLB/exception path. Interpreter handoffs in-race fell 887k → 136k per 600 frames
+across C.62-C.79, and what is left is SYSCALL (123k).
+
+- **Integer/memory**: ALU, loads/stores incl. LQ/SQ and the unaligned family,
+  branches incl. likely branches and BC0x/BC1x, MULT/DIV/MADD + HI/LO on both
+  pipelines, MFSA/MTSA, ADDI/DADDI and ADD/SUB with the overflow trap dropped
+  exactly as the x86 rec does. A likely branch is no longer refused by an
+  untranslatable delay slot (C.64): GT3 is full of `beql ..., panic; break`
+  asserts whose slot only runs when taken, i.e. never — the not-taken path is
+  native, the taken path hands off at the branch.
+- **COP1 (FPU) complete**: data moves, all S-format arithmetic, CVT, C.cond with
+  interpreter-exact clamp/flag semantics, and native CFC1/CTC1 (C.65: `fs` is a
+  compile-time constant, so CFC1 specializes to an FCR31 load / revision constant
+  / zero and CTC1 to a non-FCR31 register is a nop).
+- **MMI → NEON**, bit-exact, now including PPAC5 (per-word RGB1555 pack) and the
+  full-128-bit PMFHI/PMFLO/PMTHI/PMTLO (C.79, `LRPS2_NO_EE_MMIHL=1` restores the
+  handoff), plus PLZCW (`CLS` per half) and PREVH (`REV64 .8H`). PMFHL/PMTHL stay
+  with the interpreter deliberately — they never fire in the reference titles, so
+  a native path could not be golden-verified.
+- **LQC2/SQC2 native** (C.59): vu0Sync plus a 128-bit access straight into
+  `vuRegs[0].VF[ft]`, so the EE register cache survives an op MMX7 runs ~827K
+  times (`LRPS2_NO_EE_VUQMEM=1`).
+- **ERET native** (C.77) — the single biggest remaining breaker at 196k per 600
+  in-race frames, since every interrupt return broke its block. It is a branch
+  with no delay slot (pc from ErrorEPC/EPC by `Status.ERL`, clear that bit, pull
+  `nextEventCycle`), and its tail deliberately does no cycle flush and no event
+  test, mirroring the interpreter-handoff runner it replaces; the next block's
+  gated tail delivers the pending interrupt. Adding a flush+test instead shifted
+  MMX7's FMV frame phase. `LRPS2_NO_EE_ERET=1` restores the handoff.
+- **Memory goes through the vtlb fastmem area** (C.50): the 4 GB host mapping in
+  which every memory-backed guest page sits at its own guest address, so a
+  load/store is one `ldr/str <data>, [x28, w<addr>, UXTW]` with no vmap
+  indirection. Hardware registers and unmapped pages are absent and therefore
+  fault; the faulting instruction is rewritten into a branch to a slow stub
+  emitted beside it, and the guest pc is blacklisted so later compiles skip
+  fastmem (`LRPS2_NO_FASTMEM=1`, `LRPS2_FASTMEM_LOG=1`). The canonical unaligned
+  pairs (LDL/LDR, LWL/LWR, SDL/SDR, SWL/SWR — adjacent, left-then-right, matching
+  registers and offsets) fuse into one host unaligned access, with a fault stub
+  that replays the exact two-access guest-order semantics for hw pages (C.67,
+  `LRPS2_NO_EE_UPAIR=1`).
+- **Block plumbing**: block linking/chaining that keeps the frame live across
+  hops, a block revalidation cache, a write-back GPR register cache with
+  direct-to-cache emission, kernel idle-loop skip, and event tests gated on
+  `cycle >= nextEventCycle` in block tails rather than at every branch — the
+  upstream-rec dispatcher rule, ~23 % faster wall clock on GT3
+  (`LRPS2_NO_EVTGATE=1`, `LRPS2_NO_INLINE_UPD=1`).
+- **Emitted-code quality** (C.46-C.57): cpuRegs through the x19 guest-reg base
+  instead of a 4-instruction absolute per access; displacements folded into the
+  address add; the fastmem base pinned in x28 for the life of the frame;
+  backpatch stubs, misalign cancels, event-due tails and the frame pop all moved
+  out of line past the epilogue; the chain epilogue's mirror mask and RAM range
+  check fused into one test; an exit whose successor is known at compile time
+  chains through a constant LUT slot with no pc read at all.
+
+Translating PLZCW also fixed a timing deviation: a block that breaks at an
+untranslatable op flushes its cycle count there, a rounding point the interpreter
+does not have. `LRPS2_DUMP_RANGE=lo:hi` dumps a pc range's guest ops with their
+translatability, `LRPS2_DUMP_HOST=<pc>` writes a block's host code for
+`objdump -D -b binary -m aarch64`.
 
 ### IOP (R3000A) JIT — ~98 %
 
-Native ALU incl. the trapping forms ADDI/ADD/SUB (this interpreter drops the overflow trap, so they are the U ops — same call the EE made in C.42) and RFE (pure Status bit shuffle) (C.68, `LRPS2_NO_IOP_C68=1` restores the interpreter), aligned + unaligned (LWL/LWR/SWL/SWR) loads/stores, branches + delay slots, block linking, MULT/DIV + HI/LO moves, COP0 moves (MFC0/CFC0/MTC0/CTC0), write-back GPR register cache (w22–w27, `LRPS2_NO_IOP_REGCACHE=1` to disable), inline RAM fastmem for loads (`LRPS2_NO_IOP_FASTMEM=1` to disable; the remaining helper-call traffic is genuine HW-register polling), event tests gated on `cycle >= iopNextEventCycle` in branch tails (`LRPS2_NO_IOP_EVTGATE=1` to disable); J native (only the module-import stub form `j ...; li $zero, fn` stays interpreted for the HLE hook — and that hook's resolution is cached per stub pc (C.71): the up-to-0x2000-byte backward magic scan, the `std::string` heap allocation and the library-name compare chain ran on EVERY stub execution, millions of times a minute; now a hit revalidates its inputs with three RAM reads (`LRPS2_NO_IOP_JSTUB_CACHE=1` restores the uncached path — `iopMemReadString` left the profile, ~1.5-2 % of the EE thread). A straight-line run longer than the block cap chains to the next block instead of handing its fully-translatable tail to the interpreter (C.69, the EE's C.44 rule; `LRPS2_NO_IOP_CAP_CHAIN=1` to disable), and an interpreter-tail block also covers its breaker word for SMC invalidation, so code loaded OVER what was data at compile time (IRX module loads) recompiles instead of re-handing off forever (C.70 — one stale MMX7 block was re-interpreting `lw ra` thousands of times a run). **Handoff coverage is closed:** `LRPS2_IOP_HANDOFF_STATS=1` (histogram of interpreted ops, EE-style) shows exactly two breaker classes left on both test titles — the J import stub (HLE hook, by design) and SYSCALL (exception, interpreter forever); GTE/COP2 is PS1-only and never fires. The kernel idle spin (`j <self>` + nop) is fast-forwarded to the next event or the end of the cycle budget rather than emulated an iteration at a time (C.47, `LRPS2_NO_IOP_IDLE=1` to disable) — it was 18 % of all JIT time; psxRegs fields go through the x19 base (C.46)
+Handoff coverage is closed: `LRPS2_IOP_HANDOFF_STATS=1` shows exactly two
+breaker classes left on both test titles — the J import stub (HLE hook, by
+design) and SYSCALL. GTE/COP2 is PS1-only and never fires.
+
+Native ALU including the trapping forms ADDI/ADD/SUB (this interpreter drops the
+overflow trap, so they are the U ops) and RFE (C.68, `LRPS2_NO_IOP_C68=1`),
+aligned and unaligned loads/stores, branches + delay slots, block linking,
+MULT/DIV + HI/LO, COP0 moves, a write-back GPR register cache in w22-w27
+(`LRPS2_NO_IOP_REGCACHE=1`), inline RAM fastmem for loads
+(`LRPS2_NO_IOP_FASTMEM=1`; the remaining helper traffic is genuine HW-register
+polling), and tail-gated event tests (`LRPS2_NO_IOP_EVTGATE=1`). Only the module
+-import stub form `j ...; li $zero, fn` stays interpreted, and its HLE resolution
+is cached per stub pc (C.71) — the backward magic scan, `std::string` allocation
+and library-name compare chain used to run on every stub execution, millions of
+times a minute (`LRPS2_NO_IOP_JSTUB_CACHE=1`). A straight-line run longer than
+the block cap chains to the next block instead of handing its tail to the
+interpreter (C.69, `LRPS2_NO_IOP_CAP_CHAIN=1`), and an interpreter-tail block
+covers its breaker word for SMC invalidation, so code loaded over what was data
+at compile time (IRX module loads) recompiles instead of handing off forever
+(C.70). The kernel idle spin is fast-forwarded to the next event or the end of
+the cycle budget rather than emulated an iteration at a time (C.47, was 18 % of
+all JIT time, `LRPS2_NO_IOP_IDLE=1`).
 
 ### VU1 recompiler — ~70 %
 
-**microVU1 (armsx2 aVU transplant) is the default provider**: native AArch64 VU codegen, MVU_DIFF-verified register-exact against the interpreter on both test titles, byte-identical framebuffers through 12000-frame runs. Instant-VU1 and MTVU are back to default-on with it. **In-race profile facts (GT3 save state)**: EE never waits on MTVU (SyncStats 0.00 s) so VU1 speed does not gate wall time; mvu1 is ~75 % of the MTVU thread and FLAT (150 blocks, hottest 5.6 % of JIT) — no per-block target exists, only systematic emitter quality. First such passes done: C.72 folds the page offset of absolute-address accesses (flag spills, clamp constants) into the load/store instead of a separate `add` after `adrp` (`armAbsMemOperand`), and C.73 replaces the naive copy+4×Ins `mVUshufflePS` permute with the cheap NEON form where one exists (Dup/Rev64/Ext/identity; 2-lane swaps insert only the moved lanes) — and C.74 pins `&mVU` in x27 (`RVUMVU`, micro mode only — macro mode's x27 belongs to the EE rec) with the hot per-op scalars moved ahead of the ~290KB `prog` member so they encode as scaled immediates, while `&mVU.regs()` fields ride the existing x19 — and C.75 embeds copies of the emit-constant tables (clamp bounds, FTOI/ITOF scales, EFU polynomials) in `microVU` itself so the per-clamp constant loads are one `[x27 + imm]` instruction — the hottest block dropped 1776 → 1292 host bytes (−27 %), adrp count 54 → 9, and the register-exact MVU_DIFF shadow run from the in-race save state produces a byte-identical divergence log to the pre-C.72 baseline (the 9 logged programs are the known pre-existing interp-vs-microVU last-bit FP differences). LRPS2_PROF now attributes mvu0/mvu1 samples per guest block and `LRPS2_DUMP_HOST_MVU=0x<pc>` dumps a block's host code. Fallbacks: `LRPS2_VU1REC_PAIR=1` (interp-pair rec), `LRPS2_NO_VU1REC=1` (interpreter; both restore conservative non-instant/opt-in-MTVU behavior)
+**microVU1 (armsx2 aVU transplant) is the default provider**: native AArch64 VU
+codegen, MVU_DIFF-verified register-exact against the interpreter on both test
+titles, byte-identical framebuffers through 12000-frame runs. Instant-VU1 and
+MTVU are default-on with it.
+
+In-race profile facts (GT3 save state): the EE never waits on MTVU (SyncStats
+0.00 s), so VU1 speed does not gate wall time, and mvu1 is ~75 % of the MTVU
+thread but FLAT — 150 blocks, hottest 5.6 % of JIT. There is no per-block target,
+only systematic emitter quality, and the passes done so far shrank the hottest
+block 1776 → 1292 host bytes (−27 %, adrp count 54 → 9): the page offset of
+absolute accesses folds into the load/store (C.72 `armAbsMemOperand`), the naive
+copy+4×Ins `mVUshufflePS` permute became the cheap NEON form where one exists
+(C.73), `&mVU` is pinned in x27 with the hot per-op scalars moved ahead of the
+~290KB `prog` member so they encode as scaled immediates (C.74), and the emit
+-constant tables (clamp bounds, FTOI/ITOF scales, EFU polynomials) are embedded
+in `microVU` itself so a clamp constant is one `[x27 + imm]` (C.75). The
+register-exact MVU_DIFF shadow run is byte-identical to the pre-C.72 baseline.
+`LRPS2_PROF` attributes mvu0/mvu1 samples per guest block and
+`LRPS2_DUMP_HOST_MVU=0x<pc>` dumps a block's host code. Fallbacks:
+`LRPS2_VU1REC_PAIR=1` (interp-pair rec), `LRPS2_NO_VU1REC=1` (interpreter).
 
 ### VU0 / COP2 — ~78 %
 
-**microVU0 runs VU0 micro programs** (VCALLMS) natively; **COP2 macro ALU ops emit native NEON directly into EE JIT blocks** (aVU_Macro single-op emitters) with **real flag liveness** (C.66): the analysis runs over a run of consecutive macro ALU ops, capped at the block end, and only the last writer of each flag category computes it -- the same flag-hack the x86 rec ships by default (its `COP2FlagHackPass`, here run-local because this builder interleaves analysis with emission). Dead intermediate MAC/status pipelines (~40 host instructions per op) vanish: the hottest in-race GT3 block, VU0-macro matrix code, dropped 3068 -> 2004 host bytes. Wall-time flat (OoO absorbed the ALU); the win is code size, I-cache and x86 parity. `LRPS2_NO_COP2_LIVENESS=1` restores all-live; BC2 branches native; **the COP2 transfers (QMFC2/CFC2/QMTC2/CTC2) are native too** (C.58) -- the interlock bit is known at compile time, so the `_vu0FinishMicro`/`_vu0WaitMicro` call is only emitted when set, and CFC2's REG_R quirk (writes UL[0], leaves UL[1]) is reproduced exactly. CTC2 to FBRST/CMSAR1 (VU reset / VU1 microprogram kick) and CALLMS/CALLMSR stay on the interpreter call, faithful to x86. **C.78 macro emission quality**, on the EE critical path (VU0 macro runs in the EE thread): the COP2 transfer bodies and the conservative VU0-busy check address vuRegs through an adrp+pageoff fold instead of a 4-instruction absolute materialization each (`LRPS2_NO_COP2_ABSFOLD=1` restores them); the per-op macro bracket -- VU0-busy check, x19 repoint to &vuRegs[0], x19 restore to &cpuRegs (~11 instructions per op) -- is **hoisted to once per run** of consecutive native macro ALU ops (the C.66 liveness run): between the ops of a run nothing else is emitted, events only fire at block tails, and no run op can start a VU0 microprogram, so the bases stay valid across the run's whole extent (`LRPS2_NO_COP2_RUNHOIST=1` restores per-op brackets); and **x27 = &microVU0 is materialized inside the bracket**, so mvuAbsMem's one-instruction `[x27 + imm]` addressing of the mVU scalars and the C.75 embedded constant tables now applies in macro mode too (`LRPS2_NO_COP2_MX27=1` restores the adrp fold). FOOTGUN captured in the run predicate: VNOP/VWAITQ have EMPTY emitters (no setupMacroOp/endMacroOp), so a hoisted bracket ending on one never emits its x19 restore -- GT3's VU0->GS upload loop ends `VSQI, VSQI, VNOP, VNOP` and the following branch then read its GPRs out of VF registers (instant wedge); they are excluded from runs and emit through the per-op path. Hottest in-race block (VU0-macro matrix code) 1860 -> 1540 host bytes (-17 %); wall flat (C.49 lesson: OoO absorbs it), the win is code size, I-cache and parity. `LRPS2_NO_VU0REC=1` / `LRPS2_NO_EE_COP2MACRO=1` / `LRPS2_NO_EE_COP2XFER=1` fall back
+**microVU0 runs VU0 micro programs** (VCALLMS) natively, and **COP2 macro ALU
+ops emit native NEON directly into EE JIT blocks** (aVU_Macro single-op emitters)
+with real flag liveness (C.66): the analysis runs over a run of consecutive macro
+ALU ops, capped at the block end, and only the last writer of each flag category
+computes it — the x86 rec's `COP2FlagHackPass`, here run-local because this
+builder interleaves analysis with emission. Dead intermediate MAC/status
+pipelines (~40 host instructions per op) vanish (`LRPS2_NO_COP2_LIVENESS=1`).
+BC2 branches are native, and so are the COP2 transfers QMFC2/CFC2/QMTC2/CTC2
+(C.58): the interlock bit is known at compile time, so the
+`_vu0FinishMicro`/`_vu0WaitMicro` call is only emitted when set, and CFC2's REG_R
+quirk (writes UL[0], leaves UL[1]) is reproduced exactly. CTC2 to FBRST/CMSAR1
+and CALLMS/CALLMSR stay on the interpreter call, faithful to x86.
 
-### Persisted VU program cache — ~95 % (recorder + relocation + live cross-process hydration done; single-chunk programs only)
+C.78 is macro emission quality, which sits on the EE critical path (VU0 macro
+runs in the EE thread): vuRegs is addressed through an adrp+pageoff fold instead
+of a 4-instruction absolute per access (`LRPS2_NO_COP2_ABSFOLD=1`); the per-op
+macro bracket — VU0-busy check, x19 repoint to `&vuRegs[0]`, x19 restore, ~11
+instructions — is hoisted to once per run of consecutive native macro ALU ops,
+which is sound because nothing else is emitted between them, events only fire at
+block tails, and no run op can start a VU0 microprogram
+(`LRPS2_NO_COP2_RUNHOIST=1`); and x27 = `&microVU0` is materialized inside the
+bracket so mvuAbsMem's one-instruction addressing and the C.75 embedded tables
+apply in macro mode too (`LRPS2_NO_COP2_MX27=1`). Hottest in-race block 1860 →
+1540 host bytes (−17 %). **Footgun captured in the run predicate**: VNOP/VWAITQ
+have empty emitters, so a hoisted bracket ending on one never emits its x19
+restore — GT3's VU0→GS upload loop ends `VSQI, VSQI, VNOP, VNOP` and the
+following branch then read its GPRs out of VF registers (instant wedge); they are
+excluded from runs. `LRPS2_NO_VU0REC=1` / `LRPS2_NO_EE_COP2MACRO=1` /
+`LRPS2_NO_EE_COP2XFER=1` fall back.
 
-A JIT warm cache for microVU, aimed at the ~15 s per-launch VU recompilation
-stall (the emitted code is in-memory only, so every launch re-JITs from cold).
-Off by default (`LRPS2_VU_PROGCACHE=1` enables recording; `_HYDRATE=1` loads the
-on-disk cache instead of recompiling; `_STATS=1` dumps the per-VU counters;
-`_SELFTEST=1` runs the verifiers below). Every stage is verified bit-identical
-against the goldens (GT3 1500f 106138289/860124, MMX7 1500f 111415017/800725)
-with recording *and* hydration on. Done:
+### Persisted VU program cache — ~97 %
 
-- **Recorder** — captures every aVU emission episode (code chunk + the blocks
-  whose entry points live in it) onto the owning program's log. Hooks both
-  outermost emit sessions (`mVUexecute` dispatcher entry and the `mVUcompileJIT`
-  JR/JALR block-linking callback); GT3 records with 0 orphan and 0 dropped
-  blocks.
-- **Fixup classifier** — decodes each recorded chunk's ARM64 stream and places
-  every baked address (movz/movk materializations, ADRP pages, B/BL targets)
-  into a relocation form + target class. Four target classes cover everything
-  the emitter bakes: the core `.so` image (including its bss statics — microVU
-  and vuRegs live in the anon mapping right after the file segments), the VU
-  code-cache arena, this program's `microBlock` objects, and the VU's Mem/Micro
-  buffers (separately mmap'd). A value in no process mapping is a run-invariant
-  constant, not an address. Recording forces canonical fixed-length movz/movk so
-  each baked absolute sits in a re-encodable slot; the value is unchanged, so the
-  goldens hold. GT3: 100 % of the recorded VU code classifies (0 unclassifiable).
-- **Serializer** — writes a program's graph to a flat content-addressed image
-  (header with the guest-microprogram hash + record-time image/arena/Mem/Micro
-  bases, block records, chunk code + fixup tables); a round-trip verifier proves
-  it is complete and lossless.
-- **Relocation core** — `PatchMovImm`/`PatchAdrp`/`PatchBranch` rewrite a baked
-  address in place, and `ResolveFixup` maps each fixup's recorded target to its
-  new location per class (base deltas for image/VuMem, the old→new block table
-  for block absolutes, per-chunk placement for cross-chunk arena refs, arena
-  delta for stubs). Two in-process verifiers — a placement-independence rebase
-  test and a full hydration-resolve test that moves chunks and remaps blocks —
-  pass on both VUs, confirming the rebase math before it touches the live cache.
-- **On-disk store + live hydration** — each program is saved to a content-
-  addressed `.vuprog` (keyed on the guest micro memory + entry PC, captured at
-  compile time) and loaded back in a *later process* by `mVUtryHydrate`, hooked
-  ahead of the recompile in `mVUsearchProg`: it places the chunks at the code
-  cursor, re-creates the `microBlock`s (with their `jumpCache` arrays for JR/JALR
-  blocks) in the block managers, rebases every fixup by the per-class ASLR delta,
-  and returns the entry point. GT3 hydrates all four menu programs cross-process
-  (incl. a 162-block VU1 program) with the frame output bit-exact against the
-  recompile path. The design rebases fixups by delta rather than refusing on a
-  base mismatch, so the cache survives ASLR in the libretro `.so` (where a fixed-
-  base scheme would never hit).
+A JIT warm cache for microVU, aimed at the per-launch VU recompilation stall
+(the emitted code is in-memory only, so every launch re-JITs from cold). Off by
+default: `LRPS2_VU_PROGCACHE=1` records, `_HYDRATE=1` loads the on-disk cache
+instead of recompiling, `_DIR=` picks the store, `_STATS=1`/`_SELFTEST=1` dump
+counters and run the verifiers. Every stage is verified bit-identical against the
+goldens (GT3 1500f 106138289/860124, MMX7 1500f 111415017/800725).
 
-  A warm start is safe to *replay* but not to *extend*: hydration and recording
-  must not both be on, since a run that re-records while hydrated programs exist
-  saves episodes whose branches reach into foreign chunks. Use `_HYDRATE=1`
-  alone for warm starts.
-- **Correctness fixes that made it work in real gameplay** — three bugs kept
-  cross-process VU1 hydration crashing (MTVU on) or deadlocking (MTVU off) until
-  a deterministic in-race repro pinned them. (1) `mVUcompileJIT`'s epilogue set
-  `codePtr = armEndBlock()` unconditionally; when its nested search *hydrated* a
-  program, that rewound the cursor onto the freshly written chunks and the next
-  compile aliased live code. (2) The entry block was picked by `startPC` alone,
-  so a caller could be handed a block baked for a different pipeline state —
-  silent corruption until a `JR` read a stale `VI` and branched out of the arena.
-  (3) Fixing (2) by refusing to hydrate on a pState miss cost a third of the
-  coverage. All three share one cause: the caller's emit session is still open at
-  the pre-hydration cursor. Closing and reopening it at the post-hydration
-  `codePtr` — a pure move, since hydration emits nothing through the assembler —
-  makes compiling after hydrating safe, so the entry now goes through the normal
-  `mVUblockFetch`, which matches the caller's pState and compiles the variant
-  into the hydrated program when the recording never produced it. GT3 in-race
-  hydrates 58 programs per warm start, bit-exact across repeated runs.
-- **Build identity** — the header carries the writing core's GNU build-id and
-  hydration rejects any other build's images: the rebase shifts every image
-  reference by one delta, which only holds for the exact layout that recorded
-  them. A rebuild therefore invalidates the cache by design.
+A recorder captures each aVU emission episode (code chunk + the blocks entered
+inside it), a classifier decodes the chunk's ARM64 stream and turns every baked
+address into a relocation form (movz/movk quartet, ADRP page, B/BL, conditional
+branch) plus a target class — the core `.so` image (bss statics included), the
+code-cache arena, this program's `microBlock`s, or the VU's Mem/Micro buffers.
+A value in no process mapping is a constant, not an address; recording forces
+canonical fixed-length movz/movk so every absolute sits in a re-encodable slot.
+Programs serialize to content-addressed `.vuprog` images keyed on the guest
+microprogram, and `mVUtryHydrate` (hooked ahead of the recompile in
+`mVUsearchProg`) loads one in a later process: chunks are placed at the code
+cursor, `microBlock`s re-created in the block managers, every fixup rebased by
+its per-class ASLR delta. Rebasing by delta rather than refusing on a base
+mismatch is what makes it work at all in a libretro `.so`. Round-trip,
+placement-independence and hydration-resolve self-tests cover the format and the
+rebase math before either touches the live cache.
+
+Four bugs stood between that and real gameplay, all found from a deterministic
+in-race GT3 save state:
+
+- `mVUcompileJIT`'s epilogue rewound `codePtr` onto chunks a nested hydration had
+  just written, so the next compile aliased live code.
+- The entry block was chosen by `startPC` alone, handing callers a block baked
+  for a different pipeline state.
+- Both are fixed by closing and reopening the caller's emit session at the
+  post-hydration cursor (a pure move — hydration emits nothing through the
+  assembler), which makes compiling *after* hydrating safe; the entry then goes
+  through the normal `mVUblockFetch`, matching pState and compiling variants the
+  recording never produced.
+- Cross-chunk **conditional** branches were not modelled: the classifier knew
+  only B/BL imm26, so a `B.cond` reaching out of its chunk survived unrelocated.
+  Harmless while chunks were hydrated one at a time, wrong once several are
+  packed contiguously — which is why multi-chunk programs used to render
+  incorrectly and stall for seconds. They are fixups now (imm19 and imm14 forms),
+  and ADR / LDR-literal, which have no patch, drop the episode rather than be
+  persisted silently.
+
+The header also carries the writing core's GNU build-id and hydration rejects
+any other build's images — the image-relative rebase only holds for the exact
+layout that recorded them, so a rebuild invalidates the cache by design.
+
+Warm starts *replay*, they do not *extend*: do not enable recording and
+hydration together, or a run re-records episodes whose branches reach into
+foreign chunks.
 
 Measured on GT3 in-race (600 frames): total wall time is unchanged — emulation,
-not VU compilation, dominates — while the compile hitches it removes show up in
-the tail: stalls ≥50 ms drop 10 → 5, p99 55.7 → 51.4 ms, and the first frame
-falls 370 → 319 ms (hydrating is cheaper than the compile burst it replaces).
+not VU compilation, dominates — while the compile hitches show up in the tail:
+stalls ≥50 ms 10 → 5, p99 55.7 → 51.4 ms, first frame 370 → 214-312 ms. All 63
+in-race VU1 programs hydrate per warm start, bit-exact across repeated runs.
 
-Still to come: multi-chunk programs (a program compiled across several emission
-episodes) are skipped and recompiled — enabling them renders incorrectly and
-stalls for seconds at a time, so the cross-chunk path needs its mis-execution
-root-caused first; broadening validation across more titles; and promoting the
-on-disk cache from opt-in to a managed store (index/versioning, size cap,
-invalidation) so it can drive the default warm-start.
+Still to come: broader validation across titles, and promoting the store from
+opt-in to managed (index/versioning, size cap, invalidation) so it can drive the
+default warm start.
 
 ### VIF unpack dynarec — ~100 %
 
