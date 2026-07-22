@@ -1022,31 +1022,107 @@ namespace aVUPersist
 	static u64 s_diskSaved[2] = {};
 	static u64 s_diskLoaded[2] = {};
 	static u64 s_diskRejected[2] = {};
+	static u64 s_diskPruned = 0; // stale/over-cap images deleted by MaintainCacheDir
 
 	// Where the .vuprog store lives. The env var wins (debug runs point it at a
 	// scratch dir); the core option falls back to a "vujit" folder under the
 	// frontend's cache directory, created on demand -- there is deliberately no
 	// default for the env path, so a run that forgets it stays cold rather than
 	// writing somewhere unexpected.
+	static void MaintainCacheDir(const std::string& dir);
+
 	static const char* CacheDir()
 	{
 		// Resolved on first successful use, not on first call: the earliest callers
-		// run before the frontend's folders and options are set up.
+		// run before the frontend's folders and options are set up. Resolving it is
+		// also the one moment we know the store is about to be touched, so the
+		// housekeeping pass hangs off it -- before anything reads or writes.
 		static std::string s_dir;
 		if (!s_dir.empty())
 			return s_dir.c_str();
+		std::string dir;
 		if (const char* env = getenv("LRPS2_VU_PROGCACHE_DIR"))
 		{
-			s_dir = env;
-			return s_dir.c_str();
+			dir = env;
 		}
-		if (!MenuEnabled() || EmuFolders::Cache.empty())
-			return nullptr;
-		std::string dir = Path::Combine(EmuFolders::Cache, "vujit");
-		if (mkdir(dir.c_str(), 0755) != 0 && errno != EEXIST)
-			return nullptr;
+		else
+		{
+			if (!MenuEnabled() || EmuFolders::Cache.empty())
+				return nullptr;
+			dir = Path::Combine(EmuFolders::Cache, "vujit");
+			if (mkdir(dir.c_str(), 0755) != 0 && errno != EEXIST)
+				return nullptr;
+		}
 		s_dir = std::move(dir);
+		MaintainCacheDir(s_dir);
 		return s_dir.c_str();
+	}
+
+	// Housekeeping, once per run when the store is first used. Two jobs, both of
+	// which the cache cannot ship without: drop images this build can never load
+	// (every core rebuild changes the build-id and orphans the whole store, so
+	// without this the dead files accumulate forever), and keep the store under a
+	// size cap by evicting the least recently written ones. Only the 88-byte
+	// header is read per file -- the payload verification in LoadAndVerifyImage
+	// walks megabytes and is a self-test, not a startup task.
+	static void MaintainCacheDir(const std::string& dir)
+	{
+		const char* capEnv = getenv("LRPS2_VU_PROGCACHE_MAXMB");
+		const u64 capBytes = (capEnv ? (u64)std::max(1, atoi(capEnv)) : 128ull) * 1024 * 1024;
+
+		DIR* d = opendir(dir.c_str());
+		if (!d)
+			return;
+		struct Entry { std::string path; u64 size; s64 mtime; };
+		std::vector<Entry> live;
+		u64 total = 0;
+		struct dirent* e;
+		while ((e = readdir(d)) != nullptr)
+		{
+			if (std::strncmp(e->d_name, "vu", 2) != 0 || !std::strstr(e->d_name, ".vuprog"))
+				continue;
+			std::string path = dir + "/" + e->d_name;
+			struct stat st;
+			if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+				continue;
+			ImageHeader hdr{};
+			bool loadable = false;
+			if (std::FILE* fp = std::fopen(path.c_str(), "rb"))
+			{
+				loadable = std::fread(&hdr, 1, sizeof(hdr), fp) == sizeof(hdr) &&
+					hdr.magic == kImageMagic && hdr.version == kImageVersion &&
+					hdr.buildId == OwnBuildId();
+				std::fclose(fp);
+			}
+			if (!loadable)
+			{
+				// Stale format or another build's image: it would be rejected at
+				// every lookup for the rest of this store's life.
+				if (std::remove(path.c_str()) == 0)
+					s_diskPruned++;
+				continue;
+			}
+			total += (u64)st.st_size;
+			live.push_back({std::move(path), (u64)st.st_size, (s64)st.st_mtime});
+		}
+		closedir(d);
+
+		if (total <= capBytes)
+			return;
+		// Evict oldest-written first. A program re-saved this session gets a fresh
+		// mtime, so the working set of whatever is being played survives.
+		std::sort(live.begin(), live.end(),
+			[](const Entry& a, const Entry& b) { return a.mtime < b.mtime; });
+		for (const Entry& en : live)
+		{
+			if (total <= capBytes)
+				break;
+			if (std::remove(en.path.c_str()) == 0)
+			{
+				total -= en.size;
+				s_diskPruned++;
+			}
+		}
 	}
 
 	static void MakeCachePath(char* out, size_t cap, u32 vuIndex, u64 hash, u64 fingerprint)
@@ -1654,11 +1730,12 @@ namespace aVUPersist
 			(unsigned long long)st.fixBranchArena, (unsigned long long)st.fixBranchImage,
 			(unsigned long long)st.fixCondBranch, (unsigned long long)st.fixUnclassifiable);
 		if (s_diskSaved[vuIndex] || s_diskLoaded[vuIndex] || s_diskRejected[vuIndex] || s_hydrated[vuIndex])
-			Console.WriteLn("aVUPersist[VU%u]: disk saved=%llu loaded=%llu rejected=%llu hydrated=%llu",
+			Console.WriteLn("aVUPersist[VU%u]: disk saved=%llu loaded=%llu rejected=%llu hydrated=%llu pruned=%llu",
 				vuIndex, (unsigned long long)s_diskSaved[vuIndex],
 				(unsigned long long)s_diskLoaded[vuIndex],
 				(unsigned long long)s_diskRejected[vuIndex],
-				(unsigned long long)s_hydrated[vuIndex]);
+				(unsigned long long)s_hydrated[vuIndex],
+				(unsigned long long)s_diskPruned);
 		if (s_selftestPass[vuIndex] || s_selftestFail[vuIndex])
 			Console.WriteLn("aVUPersist[VU%u]: selftest roundtrip=%llu/%llu rebase=%llu/%llu hydrate=%llu/%llu (pass/fail)",
 				vuIndex, (unsigned long long)s_selftestPass[vuIndex],

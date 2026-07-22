@@ -285,7 +285,15 @@ in-race GT3 save state:
 
 The header also carries the writing core's GNU build-id and hydration rejects
 any other build's images — the image-relative rebase only holds for the exact
-layout that recorded them, so a rebuild invalidates the cache by design.
+layout that recorded them, so a rebuild invalidates the cache by design. That
+makes housekeeping mandatory rather than optional: the first time a run touches
+the store it drops every image this build can never load (otherwise each core
+update would orphan the whole store and leave it there forever) and evicts
+oldest-first while the total exceeds a soft cap, 128 MB by default
+(`LRPS2_VU_PROGCACHE_MAXMB`). Only the 88-byte header is read per file. A
+program re-saved during a session gets a fresh timestamp, so the working set of
+whatever is being played survives eviction; the cap is checked at first use, so
+a single long session can still overshoot it.
 
 Warm starts *replay*, they do not *extend*: do not enable recording and
 hydration together, or a run re-records episodes whose branches reach into
@@ -296,9 +304,11 @@ not VU compilation, dominates — while the compile hitches show up in the tail:
 stalls ≥50 ms 10 → 5, p99 55.7 → 51.4 ms, first frame 370 → 214-312 ms. All 63
 in-race VU1 programs hydrate per warm start, bit-exact across repeated runs.
 
-Still to come: broader validation across titles, and promoting the store from
-opt-in to managed (index/versioning, size cap, invalidation) so it can drive the
-default warm start.
+Still to come: validation across more titles, and turning the option on by
+default once that holds. Longer term the relocation layer should record its
+fixups from the emitter as it emits, instead of decoding the finished byte
+stream — the scanner is why cross-chunk conditional branches were missed, and
+why forms it cannot patch (ADR, LDR-literal) have to drop the episode.
 
 ### VIF unpack dynarec — ~100 %
 
