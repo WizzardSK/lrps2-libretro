@@ -248,12 +248,17 @@ vars stay for debugging and override the option: `LRPS2_VU_PROGCACHE=1` records,
 goldens (GT3 1500f 106138289/860124, MMX7 1500f 111415017/800725).
 
 A recorder captures each aVU emission episode (code chunk + the blocks entered
-inside it), a classifier decodes the chunk's ARM64 stream and turns every baked
-address into a relocation form (movz/movk quartet, ADRP page, B/BL, conditional
-branch) plus a target class — the core `.so` image (bss statics included), the
+inside it). The emitter reports every address it bakes as it bakes it, through a
+relocation sink the recorder installs for the episode, so each one arrives as a
+site + form (movz/movk quartet, ADRP page, B/BL, conditional branch) + target
+class — the core `.so` image (bss statics included), the
 code-cache arena, this program's `microBlock`s, or the VU's Mem/Micro buffers.
 A value in no process mapping is a constant, not an address; recording forces
 canonical fixed-length movz/movk so every absolute sits in a re-encodable slot.
+The finished stream is then walked as a *guard*: it produces nothing, it only
+asks whether each instruction that references outside the chunk is covered by a
+fixup, and refuses the episode when it is not — including forms it cannot decode
+at all. A missed baking site therefore costs a recompile, never wrong code.
 Programs serialize to content-addressed `.vuprog` images keyed on the guest
 microprogram, and `mVUtryHydrate` (hooked ahead of the recompile in
 `mVUsearchProg`) loads one in a later process: chunks are placed at the code
@@ -275,13 +280,14 @@ in-race GT3 save state:
   assembler), which makes compiling *after* hydrating safe; the entry then goes
   through the normal `mVUblockFetch`, matching pState and compiling variants the
   recording never produced.
-- Cross-chunk **conditional** branches were not modelled: the classifier knew
-  only B/BL imm26, so a `B.cond` reaching out of its chunk survived unrelocated.
-  Harmless while chunks were hydrated one at a time, wrong once several are
-  packed contiguously — which is why multi-chunk programs used to render
-  incorrectly and stall for seconds. They are fixups now (imm19 and imm14 forms),
-  and ADR / LDR-literal, which have no patch, drop the episode rather than be
-  persisted silently.
+- Cross-chunk **conditional** branches were not modelled: back when fixups were
+  recovered by decoding the finished bytes, the decoder knew only B/BL imm26, so
+  a `B.cond` reaching out of its chunk survived unrelocated. Harmless while
+  chunks were hydrated one at a time, wrong once several are packed contiguously
+  — which is why multi-chunk programs used to render incorrectly and stall for
+  seconds. This is the bug that moved relocation recording into the emitter: a
+  decoder has to model every form the emitter can produce, and silently mis-han‐
+  dles the ones it does not know.
 
 The header also carries the writing core's GNU build-id and hydration rejects
 any other build's images — the image-relative rebase only holds for the exact
@@ -305,10 +311,7 @@ stalls ≥50 ms 10 → 5, p99 55.7 → 51.4 ms, first frame 370 → 214-312 ms. 
 in-race VU1 programs hydrate per warm start, bit-exact across repeated runs.
 
 Still to come: validation across more titles, and turning the option on by
-default once that holds. Longer term the relocation layer should record its
-fixups from the emitter as it emits, instead of decoding the finished byte
-stream — the scanner is why cross-chunk conditional branches were missed, and
-why forms it cannot patch (ADR, LDR-literal) have to drop the episode.
+default once that holds.
 
 ### VIF unpack dynarec — ~100 %
 

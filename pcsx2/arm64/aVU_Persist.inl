@@ -124,10 +124,7 @@ namespace aVUPersist
 		u64 fixBranchArena = 0;
 		u64 fixBranchImage = 0;
 		u64 fixCondBranch = 0; // cross-chunk B.cond/CBZ/CBNZ/TBZ/TBNZ
-		// Emitter-reported vs byte-scanned fixup sets (see CheckEmitFixups): any
-		// nonzero value means one of the two is missing a baked address.
-		u64 fixEmitOnly = 0;
-		u64 fixScanOnly = 0;
+		u64 fixUncovered = 0; // baked address the emitter did not report -> episode dropped
 		u64 fixVuMem = 0;
 		u64 fixUnclassifiable = 0; // mapped pointers we could not place -> drops
 	};
@@ -407,13 +404,18 @@ namespace aVUPersist
 		return false;
 	}
 
-	// Decode the chunk's ARM64 stream and classify every baked address into a
-	// fixup. movz/movk immediate materializations, ADRP pages, and B/BL targets
-	// are the only run-variant forms the aVU emitter produces; anything whose
-	// resolved value falls outside the known image / arena / block ranges marks
-	// the episode non-persistable (returns false). `chunkBase` is the address
-	// the code was emitted at (needed to resolve PC-relative operands).
-	static bool ScanChunkForFixups(microVU& mVU, const MvuPersistLog& log, PersistChunk& chunk, uptr chunkBase)
+	// Turn the addresses the emitter reported while this chunk was being emitted
+	// into fixups, then walk the finished stream to prove none was missed.
+	//
+	// The emitter feed is the source of truth: it knows what it baked and why,
+	// which a decoder can only guess at. The walk is a guard, not a second
+	// implementation -- it never produces a fixup, it only asks "this instruction
+	// references something outside the chunk; is it covered?" and refuses the
+	// episode when the answer is no. A form the guard cannot even decode (ADR,
+	// LDR-literal) is refused for the same reason. So a missed baking site costs a
+	// recompile, never wrong code. `chunkBase` is where the code was emitted.
+	static bool BuildAndVerifyFixups(microVU& mVU, const MvuPersistLog& log, PersistChunk& chunk,
+		uptr chunkBase, const Episode& ep)
 	{
 		ResolveRanges();
 		Stats& st = s_stats[mVU.index];
@@ -474,17 +476,51 @@ namespace aVUPersist
 				case kClassVuMem: st.fixVuMem++; break;
 			}
 		};
-		auto classifyAbs = [&](u32 off, uptr v) {
+
+		// Build: every address the emitter reported inside this chunk.
+		for (const EmitSite& es : ep.emit)
+		{
+			if (es.site < chunkBase || es.site >= chunkEnd)
+				continue; // emitted outside the captured range
+			uptr t = static_cast<uptr>(es.target);
+			if (es.form == kFormAdrp)
+				t &= ~static_cast<uptr>(0xFFF); // the low 12 bits ride in the paired access
+			const bool isBranch = (es.form != kFormMovzMovk && es.form != kFormAdrp);
+			if (isBranch && t >= chunkBase && t < chunkEnd)
+				continue; // intra-chunk: the distance survives the chunk moving as a unit
+			const int cls = classify(t);
+			if (cls == -1)
+				continue; // run-invariant constant
+			if (cls == -2)
+			{ st.fixUnclassifiable++; ok = false; continue; }
+			chunk.fixups.push_back({static_cast<u32>(es.site - chunkBase), es.form, (u8)cls, 0, t});
+			switch (es.form)
+			{
+				case kFormAdrp: st.fixAdrp++; break;
+				case kFormBranch: (cls == kClassArena ? st.fixBranchArena : st.fixBranchImage)++; break;
+				case kFormMovzMovk: bumpClass(cls); break;
+				default: st.fixCondBranch++; break;
+			}
+		}
+		std::sort(chunk.fixups.begin(), chunk.fixups.end(),
+			[](const PersistFixup& a, const PersistFixup& b) { return a.codeOffset < b.codeOffset; });
+
+		// Guard: is the address this instruction bakes covered by a fixup?
+		auto covered = [&](u32 off, u8 form) -> bool {
+			for (const PersistFixup& f : chunk.fixups)
+				if (f.codeOffset == off && f.form == form)
+					return true;
+			st.fixUncovered++;
+			ok = false;
+			return false;
+		};
+		auto requireAbs = [&](u32 off, uptr v) {
 			const int cls = classify(v);
 			if (cls == -1)
 				return;
 			if (cls == -2)
-			{
-				st.fixUnclassifiable++; ok = false;
-				return;
-			}
-			chunk.fixups.push_back({off, (u8)kFormMovzMovk, (u8)cls, 0, v});
-			bumpClass(cls);
+			{ st.fixUnclassifiable++; ok = false; return; }
+			covered(off, (u8)kFormMovzMovk);
 		};
 
 		const u8* code = chunk.code.data();
@@ -505,7 +541,7 @@ namespace aVUPersist
 			if (isMovz)
 			{
 				if (curReg >= 0)
-					classifyAbs(curOff, curVal); // previous sequence ended
+					requireAbs(curOff, curVal); // previous sequence ended
 				const u32 hw = (insn >> 21) & 0x3;
 				const u64 imm = (insn >> 5) & 0xFFFF;
 				curReg = rd;
@@ -525,7 +561,7 @@ namespace aVUPersist
 			// Any other instruction terminates a pending mov-immediate sequence.
 			if (curReg >= 0)
 			{
-				classifyAbs(curOff, curVal);
+				requireAbs(curOff, curVal);
 				curReg = -1;
 			}
 
@@ -542,11 +578,10 @@ namespace aVUPersist
 				const uptr target = (pc & ~static_cast<uptr>(0xFFF)) + static_cast<uptr>(page << 12);
 				const int cls = classify(target);
 				if (cls == -1)
-					continue; // page of a constant pool that moves with the chunk? leave it
+					continue; // page of something run-invariant
 				if (cls == -2)
 				{ st.fixUnclassifiable++; ok = false; continue; }
-				chunk.fixups.push_back({off, (u8)kFormAdrp, (u8)cls, 0, target});
-				st.fixAdrp++;
+				covered(off, (u8)kFormAdrp);
 				continue;
 			}
 			// Every remaining PC-relative form. Intra-chunk targets need no fixup
@@ -602,62 +637,11 @@ namespace aVUPersist
 			const int cls = classify(target);
 			if (cls != kClassArena && cls != kClassImage)
 			{ st.fixUnclassifiable++; ok = false; continue; }
-			chunk.fixups.push_back({off, form, (u8)cls, 0, target});
-			if (form == kFormBranch)
-				(cls == kClassArena ? st.fixBranchArena : st.fixBranchImage)++;
-			else
-				st.fixCondBranch++;
+			covered(off, form);
 		}
 		if (curReg >= 0)
-			classifyAbs(curOff, curVal);
+			requireAbs(curOff, curVal);
 		return ok;
-	}
-
-	// Cross-check (transitional): the emitter reported every address it baked as
-	// it emitted it; the byte scanner rediscovered them afterwards. They must
-	// describe the same set. Any difference is counted, and is the signal for
-	// whether the scanner can be retired in favour of the emitter feed -- an
-	// emitter-only entry means the scanner cannot see that form, a scan-only entry
-	// means a baking site is not reporting itself.
-	static void CheckEmitFixups(microVU& mVU, const Episode& ep, const PersistChunk& chunk,
-		uptr chunkBase, uptr chunkEnd)
-	{
-		Stats& st = s_stats[mVU.index];
-		std::vector<std::pair<u32, u64>> mine;
-		for (const EmitSite& es : ep.emit)
-		{
-			if (es.site < chunkBase || es.site >= chunkEnd)
-				continue; // emitted outside the captured range (alignment//pool tail)
-			const uptr t = static_cast<uptr>(es.target);
-			// Branch forms whose target rides along inside this chunk keep their
-			// displacement when the chunk moves as a unit, exactly as the scanner
-			// decides; only escaping ones are fixups.
-			if (es.form != kFormMovzMovk && es.form != kFormAdrp && t >= chunkBase && t < chunkEnd)
-				continue;
-			// An ADRP fixup is stored page-aligned (the low 12 bits ride in the
-			// paired add/ldr); the emitter reports the full address it was asked
-			// for, which is strictly more information but has to be normalized to
-			// compare against what the scanner could recover.
-			const u64 cmp = (es.form == kFormAdrp) ? (t & ~static_cast<uptr>(0xFFF)) : t;
-			mine.emplace_back(static_cast<u32>(es.site - chunkBase),
-				(static_cast<u64>(es.form) << 56) ^ cmp);
-		}
-		std::vector<std::pair<u32, u64>> theirs;
-		for (const PersistFixup& f : chunk.fixups)
-			theirs.emplace_back(f.codeOffset, (static_cast<u64>(f.form) << 56) ^ static_cast<u64>(f.target));
-		std::sort(mine.begin(), mine.end());
-		std::sort(theirs.begin(), theirs.end());
-		// Count each side's entries the other does not have.
-		size_t i = 0, j = 0;
-		while (i < mine.size() || j < theirs.size())
-		{
-			if (j >= theirs.size() || (i < mine.size() && mine[i] < theirs[j]))
-			{ st.fixEmitOnly++; i++; }
-			else if (i >= mine.size() || theirs[j] < mine[i])
-			{ st.fixScanOnly++; j++; }
-			else
-			{ i++; j++; }
-		}
 	}
 
 	// armEndBlock finalized at `end`: capture the chunk onto the owning
@@ -687,7 +671,7 @@ namespace aVUPersist
 		PersistChunk& chunk = log.chunks.emplace_back();
 		chunk.code.assign(ep.base, end);
 		chunk.recordBase = reinterpret_cast<uptr>(ep.base);
-		if (!ScanChunkForFixups(mVU, log, chunk, reinterpret_cast<uptr>(ep.base)))
+		if (!BuildAndVerifyFixups(mVU, log, chunk, reinterpret_cast<uptr>(ep.base), ep))
 		{
 			// Unclassifiable baked address: this chunk is not safely relocatable,
 			// so the whole program becomes non-persistable. Keep the chunk in
@@ -697,7 +681,6 @@ namespace aVUPersist
 			s_stats[mVU.index].chunksDropped++;
 			return;
 		}
-		CheckEmitFixups(mVU, ep, chunk, reinterpret_cast<uptr>(ep.base), reinterpret_cast<uptr>(end));
 		s_stats[mVU.index].chunksRecorded++;
 	}
 
@@ -1806,9 +1789,9 @@ namespace aVUPersist
 			(unsigned long long)st.fixBlock, (unsigned long long)st.fixVuMem, (unsigned long long)st.fixAdrp,
 			(unsigned long long)st.fixBranchArena, (unsigned long long)st.fixBranchImage,
 			(unsigned long long)st.fixCondBranch, (unsigned long long)st.fixUnclassifiable);
-		if (st.fixEmitOnly || st.fixScanOnly)
-			Console.WriteLn("aVUPersist[VU%u]: fixup cross-check MISMATCH emit-only=%llu scan-only=%llu",
-				vuIndex, (unsigned long long)st.fixEmitOnly, (unsigned long long)st.fixScanOnly);
+		if (st.fixUncovered)
+			Console.WriteLn("aVUPersist[VU%u]: UNCOVERED baked addresses=%llu (episodes dropped)",
+				vuIndex, (unsigned long long)st.fixUncovered);
 		if (s_diskSaved[vuIndex] || s_diskLoaded[vuIndex] || s_diskRejected[vuIndex] || s_hydrated[vuIndex])
 			Console.WriteLn("aVUPersist[VU%u]: disk saved=%llu loaded=%llu rejected=%llu hydrated=%llu pruned=%llu",
 				vuIndex, (unsigned long long)s_diskSaved[vuIndex],
