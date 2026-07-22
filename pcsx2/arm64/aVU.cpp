@@ -27,11 +27,16 @@
 #include "SaveState.h"
 #include "Gif_Unit.h" // gifUnit + GIF_TRANS_XGKICK (XGKICK GIF transfer, aVU_Lower.inl)
 
+#include "VMManager.h" // g_VuProgCacheMenu (core-option switch for the VU program cache)
+
 #include "common/AlignedMalloc.h"
 #include "common/Perf.h"
+#include "common/Path.h" // default .vuprog store under EmuFolders::Cache
 
 #include <algorithm>
+#include <cerrno>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <vector>
 #include <string>
 #include <cstdarg>
@@ -780,15 +785,14 @@ static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
 	using namespace aVUPersist;
 	if (!HydrateEnabled())
 		return nullptr;
-	// VU1 cross-process hydration is disabled by default: its programs reach the
-	// XGKICK/GS path, which still carries a mis-relocation (a fixup rewritten to a
-	// wrong value, or a literal-pool pointer neither the scanner nor the nonzero-
-	// delta self-test models) that faults (MTVU on) or deadlocks (MTVU off) after
-	// hydration. VU0 never touches that path and round-trips cleanly, so it stays
-	// enabled. Set LRPS2_VU_PROGCACHE_VU1=1 to force-enable VU1 for debugging.
+	// VU1 hydration is on when the user asked for the cache from the core options,
+	// or via LRPS2_VU_PROGCACHE_VU1 for env-driven runs. It stays off for a bare
+	// LRPS2_VU_PROGCACHE_HYDRATE=1 so the old debug recipe (VU0 only, which never
+	// touches the XGKICK/GS path) still means what it used to.
 	if (mVU.index == 1)
 	{
-		static const bool allowVU1 = getenv("LRPS2_VU_PROGCACHE_VU1") != nullptr;
+		static const bool allowVU1 =
+			getenv("LRPS2_VU_PROGCACHE_VU1") != nullptr || MenuEnabled();
 		if (!allowVU1)
 			return nullptr;
 	}

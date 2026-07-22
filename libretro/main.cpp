@@ -1141,6 +1141,15 @@ static void check_variables(bool first_run)
 		var.key = "pcsx2_instant_vu1";
 		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
 			s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vu1Instant", !strcmp(var.value, "enabled"));
+
+#if defined(__aarch64__)
+		/* Persisted VU program cache (arm64). Read once at boot: the recorder and
+		 * the hydration path latch their state on first use, so toggling it mid-
+		 * session would leave half a run recorded. */
+		var.key = "pcsx2_vu_progcache";
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+			VMManager::g_VuProgCacheMenu = !strcmp(var.value, "enabled");
+#endif
 	}
 
 	var.key = "pcsx2_widescreen_hint";

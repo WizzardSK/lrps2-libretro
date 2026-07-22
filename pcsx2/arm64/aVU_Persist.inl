@@ -252,17 +252,31 @@ namespace aVUPersist
 	};
 	static Episode s_episode[2];
 
+	// True when the user turned the cache on from the core options rather than
+	// through the env vars. The menu switch is one knob for the whole feature:
+	// record what is missing *and* hydrate what is already there, which is what
+	// makes the cache fill itself over a few sessions.
+	__fi bool MenuEnabled() { return VMManager::g_VuProgCacheMenu; }
+
+	// The env vars are read once, but the menu switch is re-read on every Init():
+	// microVU is initialized before the frontend hands the core its options, so
+	// latching the menu state here would always see it off.
 	static void Init()
 	{
-		if (s_initDone)
-			return;
-		s_initDone = true;
-		const char* env = getenv("LRPS2_VU_PROGCACHE");
-		s_enabled = (env && env[0] == '1');
-		const char* stats = getenv("LRPS2_VU_PROGCACHE_STATS");
-		s_statsDump = (stats && stats[0] == '1');
-		const char* hyd = getenv("LRPS2_VU_PROGCACHE_HYDRATE");
-		s_hydrateEnabled = (hyd && hyd[0] == '1');
+		static bool s_envEnabled = false;
+		static bool s_envHydrate = false;
+		if (!s_initDone)
+		{
+			s_initDone = true;
+			const char* env = getenv("LRPS2_VU_PROGCACHE");
+			s_envEnabled = (env && env[0] == '1');
+			const char* stats = getenv("LRPS2_VU_PROGCACHE_STATS");
+			s_statsDump = (stats && stats[0] == '1');
+			const char* hyd = getenv("LRPS2_VU_PROGCACHE_HYDRATE");
+			s_envHydrate = (hyd && hyd[0] == '1');
+		}
+		s_enabled = s_envEnabled || MenuEnabled();
+		s_hydrateEnabled = s_envHydrate || MenuEnabled();
 	}
 
 	__fi bool Enabled()
@@ -1009,10 +1023,30 @@ namespace aVUPersist
 	static u64 s_diskLoaded[2] = {};
 	static u64 s_diskRejected[2] = {};
 
+	// Where the .vuprog store lives. The env var wins (debug runs point it at a
+	// scratch dir); the core option falls back to a "vujit" folder under the
+	// frontend's cache directory, created on demand -- there is deliberately no
+	// default for the env path, so a run that forgets it stays cold rather than
+	// writing somewhere unexpected.
 	static const char* CacheDir()
 	{
-		static const char* dir = getenv("LRPS2_VU_PROGCACHE_DIR");
-		return dir;
+		// Resolved on first successful use, not on first call: the earliest callers
+		// run before the frontend's folders and options are set up.
+		static std::string s_dir;
+		if (!s_dir.empty())
+			return s_dir.c_str();
+		if (const char* env = getenv("LRPS2_VU_PROGCACHE_DIR"))
+		{
+			s_dir = env;
+			return s_dir.c_str();
+		}
+		if (!MenuEnabled() || EmuFolders::Cache.empty())
+			return nullptr;
+		std::string dir = Path::Combine(EmuFolders::Cache, "vujit");
+		if (mkdir(dir.c_str(), 0755) != 0 && errno != EEXIST)
+			return nullptr;
+		s_dir = std::move(dir);
+		return s_dir.c_str();
 	}
 
 	static void MakeCachePath(char* out, size_t cap, u32 vuIndex, u64 hash, u64 fingerprint)

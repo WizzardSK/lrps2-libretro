@@ -134,6 +134,12 @@ namespace VMManager
 	// Set from the pcsx2_mtvu core option (libretro); read at boot by the arm64
 	// MTVU hardware-default hook. Replaces the LRPS2_MTVU/LRPS2_NO_MTVU env bridge.
 	extern bool g_MtvuMenuDefault;
+
+	// Set from the pcsx2_vu_progcache core option (libretro); read at boot by the
+	// arm64 persisted VU program cache (aVU_Persist). Turns on both recording and
+	// warm-start hydration, with the store under EmuFolders::Cache; the
+	// LRPS2_VU_PROGCACHE* env vars still override it for debugging.
+	extern bool g_VuProgCacheMenu;
 } // namespace VMManager
 
 

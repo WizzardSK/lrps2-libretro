@@ -239,9 +239,12 @@ excluded from runs. `LRPS2_NO_VU0REC=1` / `LRPS2_NO_EE_COP2MACRO=1` /
 
 A JIT warm cache for microVU, aimed at the per-launch VU recompilation stall
 (the emitted code is in-memory only, so every launch re-JITs from cold). Off by
-default: `LRPS2_VU_PROGCACHE=1` records, `_HYDRATE=1` loads the on-disk cache
-instead of recompiling, `_DIR=` picks the store, `_STATS=1`/`_SELFTEST=1` dump
-counters and run the verifiers. Every stage is verified bit-identical against the
+default; the **VU JIT Cache** core option (arm64, restart) turns the whole
+feature on — record what is missing *and* hydrate what is already there, so the
+store fills itself over a few sessions, under `<frontend cache>/vujit`. The env
+vars stay for debugging and override the option: `LRPS2_VU_PROGCACHE=1` records,
+`_HYDRATE=1` hydrates (VU0 only unless `_VU1=1`), `_DIR=` picks the store,
+`_STATS=1`/`_SELFTEST=1` dump counters and run the verifiers. Every stage is verified bit-identical against the
 goldens (GT3 1500f 106138289/860124, MMX7 1500f 111415017/800725).
 
 A recorder captures each aVU emission episode (code chunk + the blocks entered

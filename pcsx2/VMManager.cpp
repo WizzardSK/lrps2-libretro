@@ -1167,6 +1167,7 @@ void VMManager::ApplySettings()
 }
 
 bool VMManager::g_MtvuMenuDefault = true;
+bool VMManager::g_VuProgCacheMenu = false;
 
 void VMManager::SetDefaultSettings(SettingsInterface& si)
 {

@@ -598,6 +598,22 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
 #endif
    },
+#if defined(__aarch64__)
+   {
+      "pcsx2_vu_progcache",
+      "Emulation > VU JIT Cache (Restart)",
+      "VU JIT Cache (Restart)",
+      "Keeps the VU recompiler's output on disk and reuses it on the next launch, so a game does not re-JIT its VU programs from cold every time. Fills itself as you play; stored under the frontend's cache folder. Experimental (arm64).",
+      NULL,
+      "emulation",
+      {
+         { "disabled", NULL },
+         { "enabled", NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+#endif
    {
       "pcsx2_instant_vu1",
       "Emulation > Instant VU1 (Restart)",
