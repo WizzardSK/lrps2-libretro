@@ -804,24 +804,13 @@ static void* mVUtryHydrate(microVU& mVU, u32 startPC, uptr pState,
 	if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: HIT entryPC=%x chunks=%zu blocks=%zu", mVU.index,
 		entryPC, img.chunks.size(), img.blocks.size());
 
-	// Single-chunk programs only. Multi-chunk hydration still aborts GT3 in-race
-	// (3/3 runs) even with the cursor-aliasing and pState-entry fixes in place,
-	// so the cross-chunk path stays gated off. What is ruled out so far: the
-	// chunk placement/rebase arithmetic (self-tested), cross-chunk kClassArena
-	// targets (the only foreign branch targets in the recorded images are the
-	// two dispatcher stubs at arena+0x98/+0x26c, which take the stub delta), and
-	// entry-variant selection (fixed below). Prime remaining suspect: a later
-	// episode's chunk holds blocks whose baked jumpCache/block-link tails
-	// reference blocks the plan remaps only within this program, while the
-	// recorded arena also moved other programs' code that those tails reach.
-	if (img.chunks.size() != 1)
-	{
-		if (dbg) Console.WriteLn("mVUtryHydrate[VU%u]: skip multi-chunk (chunks=%zu) -> recompile",
-			mVU.index, img.chunks.size());
-		return nullptr;
-	}
-
-	// Place the chunks contiguously at the current code cursor.
+	// Place the chunks contiguously at the current code cursor. Multi-chunk
+	// programs are fine here as of image v6: a chunk recorded in a later episode
+	// can hold a conditional branch back into an earlier chunk of the same
+	// program, and packing the chunks together changes that distance. Those used
+	// to be invisible to the recorder (it only modelled B/BL imm26), so they
+	// silently pointed at the wrong instruction after hydration -- which is what
+	// made multi-chunk hydration run wrong code. They are recorded as fixups now.
 	ResolveRangesPublic();
 	u8* cursor = mVU.prog.codePtr;
 	std::vector<uptr> chunkNewBase(img.chunks.size());

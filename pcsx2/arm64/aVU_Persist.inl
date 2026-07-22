@@ -56,6 +56,8 @@ namespace aVUPersist
 		kFormMovzMovk = 0, // canonical movz+movk*3 quartet at codeOffset
 		kFormAdrp,         // ADRP (page) at codeOffset; low-12 offset is invariant
 		kFormBranch,       // B/BL imm26 at codeOffset (code target, arena or image)
+		kFormCondBranch,   // B.cond / CBZ / CBNZ imm19 (bits 23:5), +/-1 MB
+		kFormTestBranch,   // TBZ / TBNZ imm14 (bits 18:5), +/-32 KB
 	};
 
 	struct PersistFixup
@@ -121,6 +123,7 @@ namespace aVUPersist
 		u64 fixAdrp = 0;
 		u64 fixBranchArena = 0;
 		u64 fixBranchImage = 0;
+		u64 fixCondBranch = 0; // cross-chunk B.cond/CBZ/CBNZ/TBZ/TBNZ
 		u64 fixVuMem = 0;
 		u64 fixUnclassifiable = 0; // mapped pointers we could not place -> drops
 	};
@@ -485,22 +488,64 @@ namespace aVUPersist
 				st.fixAdrp++;
 				continue;
 			}
-			// B (0x14000000) / BL (0x94000000): imm26 << 2, PC-relative.
-			if ((insn & 0x7C000000u) == 0x14000000u)
+			// Every remaining PC-relative form. Intra-chunk targets need no fixup
+			// (the distance is invariant when the chunk moves as a unit), but a
+			// target outside the chunk must be re-encoded at hydration, because
+			// chunks recorded far apart are packed contiguously there.
+			const uptr pc = chunkBase + off;
+			uptr target = 0;
+			u8 form = 0;
+			if ((insn & 0x7C000000u) == 0x14000000u) // B / BL: imm26 << 2
 			{
 				s64 imm26 = insn & 0x03FFFFFF;
 				if (imm26 & 0x02000000) imm26 |= ~0x03FFFFFFll; // sign-extend
-				const uptr pc = chunkBase + off;
-				const uptr target = pc + static_cast<uptr>(imm26 << 2);
-				if (target >= chunkBase && target < chunkEnd)
-					continue; // intra-chunk: invariant when the chunk moves as a unit
-				const int cls = classify(target);
-				if (cls == kClassArena || cls == kClassImage)
-				{ chunk.fixups.push_back({off, (u8)kFormBranch, (u8)cls, 0, target});
-				  (cls == kClassArena ? st.fixBranchArena : st.fixBranchImage)++; continue; }
-				st.fixUnclassifiable++; ok = false;
+				target = pc + static_cast<uptr>(imm26 << 2);
+				form = kFormBranch;
+			}
+			// B.cond (0x54000000) / CBZ|CBNZ (0x34000000): imm19 at bits 23:5.
+			// Both share the encoding slot, so one patch form covers them.
+			else if ((insn & 0xFF000010u) == 0x54000000u || (insn & 0x7E000000u) == 0x34000000u)
+			{
+				s64 imm19 = (insn >> 5) & 0x7FFFF;
+				if (imm19 & 0x40000) imm19 |= ~0x7FFFFll;
+				target = pc + static_cast<uptr>(imm19 << 2);
+				form = kFormCondBranch;
+			}
+			// TBZ / TBNZ (0x36000000): imm14 at bits 18:5.
+			else if ((insn & 0x7E000000u) == 0x36000000u)
+			{
+				s64 imm14 = (insn >> 5) & 0x3FFF;
+				if (imm14 & 0x2000) imm14 |= ~0x3FFFll;
+				target = pc + static_cast<uptr>(imm14 << 2);
+				form = kFormTestBranch;
+			}
+			// ADR (0x10000000) and LDR-literal (0x18000000) are PC-relative forms
+			// the aVU emitter is not known to produce. There is no patch for them,
+			// so an escaping one must not be silently persisted: drop the episode.
+			else if ((insn & 0x9F000000u) == 0x10000000u || (insn & 0x3B000000u) == 0x18000000u)
+			{
+				s64 imm = (insn >> 5) & 0x7FFFF;
+				if (imm & 0x40000) imm |= ~0x7FFFFll;
+				const uptr t = ((insn & 0x9F000000u) == 0x10000000u)
+					? pc + static_cast<uptr>((imm << 2) | ((insn >> 29) & 0x3))
+					: pc + static_cast<uptr>(imm << 2);
+				if (t < chunkBase || t >= chunkEnd)
+				{ st.fixUnclassifiable++; ok = false; }
 				continue;
 			}
+			else
+				continue;
+
+			if (target >= chunkBase && target < chunkEnd)
+				continue; // intra-chunk: invariant when the chunk moves as a unit
+			const int cls = classify(target);
+			if (cls != kClassArena && cls != kClassImage)
+			{ st.fixUnclassifiable++; ok = false; continue; }
+			chunk.fixups.push_back({off, form, (u8)cls, 0, target});
+			if (form == kFormBranch)
+				(cls == kClassArena ? st.fixBranchArena : st.fixBranchImage)++;
+			else
+				st.fixCondBranch++;
 		}
 		if (curReg >= 0)
 			classifyAbs(curOff, curVal);
@@ -611,7 +656,11 @@ namespace aVUPersist
 	//------------------------------------------------------------------
 
 	static constexpr u32 kImageMagic = 0x32555641; // 'AVU2'
-	static constexpr u32 kImageVersion = 5; // v5: header carries the writer's buildId
+	static constexpr u32 kImageVersion = 6; // v6: cross-chunk conditional branches
+	                                        // (B.cond/CBZ/TBZ) are recorded as fixups.
+	                                        // v5 images have none, so their multi-chunk
+	                                        // programs mis-execute once chunks are packed.
+	                                        // v5: header carries the writer's buildId
 	                                        // (image offsets don't survive a relink).
 	                                        // v4: recorded code no longer routes far
 	                                        // calls/jumps through per-process trampolines
@@ -1098,6 +1147,25 @@ namespace aVUPersist
 		return true;
 	}
 
+	// Re-target a conditional branch at `off` (runtime pc `pcAtOff`). `imm19` picks
+	// the field: B.cond/CBZ/CBNZ carry imm19 at bits 23:5 (+/-1 MB), TBZ/TBNZ carry
+	// imm14 at bits 18:5 (+/-32 KB). False if the new displacement does not fit --
+	// hydration then falls back to a normal recompile.
+	static bool PatchCondBranch(u8* code, u32 off, uptr pcAtOff, uptr newTarget, bool imm19)
+	{
+		const s64 disp = ((s64)newTarget - (s64)pcAtOff) >> 2;
+		const s64 lim = imm19 ? (1LL << 18) : (1LL << 13);
+		if (disp < -lim || disp >= lim)
+			return false;
+		const u32 bits = imm19 ? 19u : 14u;
+		const u32 field = (u32)((1u << bits) - 1u);
+		u32 insn;
+		std::memcpy(&insn, code + off, 4);
+		insn = (insn & ~(field << 5)) | (((u32)disp & field) << 5);
+		std::memcpy(code + off, &insn, 4);
+		return true;
+	}
+
 	// Decode helpers to read a materialized value back for verification.
 	static u64 DecodeMovImm(const u8* code, u32 off)
 	{
@@ -1130,6 +1198,15 @@ namespace aVUPersist
 		if (imm26 & 0x02000000) imm26 |= ~0x03FFFFFFll;
 		return pcAtOff + (uptr)(imm26 << 2);
 	}
+	static uptr DecodeCondBranch(const u8* code, u32 off, uptr pcAtOff, bool imm19)
+	{
+		u32 insn;
+		std::memcpy(&insn, code + off, 4);
+		const u32 bits = imm19 ? 19u : 14u;
+		s64 imm = (insn >> 5) & ((1u << bits) - 1u);
+		if (imm & (1ll << (bits - 1))) imm |= ~((1ll << bits) - 1ll);
+		return pcAtOff + (uptr)(imm << 2);
+	}
 
 	// Copy a chunk's code into `dst` (placed at runtime address `dstBase`) and
 	// rewrite each fixup to the target `resolve` returns for it. `resolve`
@@ -1147,6 +1224,11 @@ namespace aVUPersist
 				case kFormMovzMovk: PatchMovImm(dst, f.codeOffset, newTarget); break;
 				case kFormAdrp: if (!PatchAdrp(dst, f.codeOffset, pcAtOff, newTarget)) return false; break;
 				case kFormBranch: if (!PatchBranch(dst, f.codeOffset, pcAtOff, newTarget)) return false; break;
+				case kFormCondBranch:
+				case kFormTestBranch:
+					if (!PatchCondBranch(dst, f.codeOffset, pcAtOff, newTarget, f.form == kFormCondBranch))
+						return false;
+					break;
 				default: return false;
 			}
 		}
@@ -1182,6 +1264,10 @@ namespace aVUPersist
 					case kFormMovzMovk: got = (uptr)DecodeMovImm(dst.data(), f.codeOffset); break;
 					case kFormAdrp: got = DecodeAdrpPage(dst.data(), f.codeOffset, pcAtOff); break;
 					case kFormBranch: got = DecodeBranch(dst.data(), f.codeOffset, pcAtOff); break;
+					case kFormCondBranch:
+					case kFormTestBranch:
+						got = DecodeCondBranch(dst.data(), f.codeOffset, pcAtOff, f.form == kFormCondBranch);
+						break;
 				}
 				const uptr want = (f.form == kFormAdrp) ? (f.target & ~(uptr)0xFFF) : (uptr)f.target;
 				if (got != want)
@@ -1303,6 +1389,10 @@ namespace aVUPersist
 					case kFormMovzMovk: got = (uptr)DecodeMovImm(dst.data(), f.codeOffset); break;
 					case kFormAdrp: got = DecodeAdrpPage(dst.data(), f.codeOffset, pcAtOff); break;
 					case kFormBranch: got = DecodeBranch(dst.data(), f.codeOffset, pcAtOff); break;
+					case kFormCondBranch:
+					case kFormTestBranch:
+						got = DecodeCondBranch(dst.data(), f.codeOffset, pcAtOff, f.form == kFormCondBranch);
+						break;
 				}
 				const uptr wantCmp = (f.form == kFormAdrp) ? (want & ~(uptr)0xFFF) : want;
 				if (got != wantCmp)
@@ -1504,11 +1594,11 @@ namespace aVUPersist
 			vuIndex, (unsigned long long)st.episodes, (unsigned long long)st.chunksRecorded,
 			(unsigned long long)st.chunksDropped, (unsigned long long)st.blocksRecorded,
 			(unsigned long long)st.orphanBlocks);
-		Console.WriteLn("aVUPersist[VU%u]: fixups img=%llu arena=%llu block=%llu vumem=%llu adrp=%llu bra=%llu bimg=%llu UNCLASS=%llu",
+		Console.WriteLn("aVUPersist[VU%u]: fixups img=%llu arena=%llu block=%llu vumem=%llu adrp=%llu bra=%llu bimg=%llu bcond=%llu UNCLASS=%llu",
 			vuIndex, (unsigned long long)st.fixImage, (unsigned long long)st.fixArena,
 			(unsigned long long)st.fixBlock, (unsigned long long)st.fixVuMem, (unsigned long long)st.fixAdrp,
 			(unsigned long long)st.fixBranchArena, (unsigned long long)st.fixBranchImage,
-			(unsigned long long)st.fixUnclassifiable);
+			(unsigned long long)st.fixCondBranch, (unsigned long long)st.fixUnclassifiable);
 		if (s_diskSaved[vuIndex] || s_diskLoaded[vuIndex] || s_diskRejected[vuIndex] || s_hydrated[vuIndex])
 			Console.WriteLn("aVUPersist[VU%u]: disk saved=%llu loaded=%llu rejected=%llu hydrated=%llu",
 				vuIndex, (unsigned long long)s_diskSaved[vuIndex],
