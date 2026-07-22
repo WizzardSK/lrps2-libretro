@@ -185,18 +185,24 @@ void armEmitJmp(const void* ptr, bool force_inline)
 	}
 	else
 	{
+		armNoteReloc(armGetCurrentCodePointer(), kArmRelocBranch, reinterpret_cast<uintptr_t>(ptr));
 		a64::SingleEmissionCheckScope guard(armAsm);
 		armAsm->b(displacement);
 	}
 }
 
 thread_local bool g_armCanonicalAddrForms = false;
+thread_local void (*g_armRelocSink)(const void* site, unsigned form, uint64_t target) = nullptr;
 
 // Emit exactly movz + movk*3 (four instructions) materializing `imm` into `reg`,
 // regardless of value. Fixed length so the persisted VU cache can rewrite the
 // baked value in place at hydration.
 void armMovImmCanonical(const vixl::aarch64::Register& reg, uint64_t imm)
 {
+	// Every canonical materialization is a baked absolute by construction -- this
+	// is the one form the VU recorder forces, so hooking here catches the far
+	// call/jump targets and armMoveAddressToReg in one place.
+	armNoteReloc(armGetCurrentCodePointer(), kArmRelocMovzMovk, imm);
 	a64::SingleEmissionCheckScope guard0(armAsm);
 	armAsm->movz(reg, imm & 0xFFFF, 0);
 	{ a64::SingleEmissionCheckScope g(armAsm); armAsm->movk(reg, (imm >> 16) & 0xFFFF, 16); }
@@ -230,6 +236,7 @@ void armEmitCall(const void* ptr, bool force_inline)
 	}
 	else
 	{
+		armNoteReloc(armGetCurrentCodePointer(), kArmRelocBranch, reinterpret_cast<uintptr_t>(ptr));
 		a64::SingleEmissionCheckScope guard(armAsm);
 		armAsm->bl(displacement);
 	}
@@ -258,6 +265,7 @@ void armEmitCbnz(const vixl::aarch64::Register& reg, const void* ptr)
 	//pxAssert(Common::IsAligned(jump_distance, 4));
 	if (a64::Instruction::IsValidImmPCOffset(a64::CompareBranchType, jump_distance >> 2))
 	{
+		armNoteReloc(armGetCurrentCodePointer(), kArmRelocCondBranch, reinterpret_cast<uintptr_t>(ptr));
 		a64::SingleEmissionCheckScope guard(armAsm);
 		armAsm->cbnz(reg, jump_distance >> 2);
 	}
@@ -269,6 +277,7 @@ void armEmitCbnz(const vixl::aarch64::Register& reg, const void* ptr)
 
 		const s64 new_jump_distance =
 			static_cast<s64>(reinterpret_cast<intptr_t>(ptr) - reinterpret_cast<intptr_t>(armGetCurrentCodePointer()));
+		armNoteReloc(armGetCurrentCodePointer(), kArmRelocBranch, reinterpret_cast<uintptr_t>(ptr));
 		armAsm->b(new_jump_distance >> 2);
 		armAsm->bind(&branch_not_taken);
 	}
@@ -282,6 +291,7 @@ void armEmitCondBranch(a64::Condition cond, const void* ptr)
 
 	if (a64::Instruction::IsValidImmPCOffset(a64::CondBranchType, jump_distance >> 2))
 	{
+		armNoteReloc(armGetCurrentCodePointer(), kArmRelocCondBranch, reinterpret_cast<uintptr_t>(ptr));
 		a64::SingleEmissionCheckScope guard(armAsm);
 		armAsm->b(jump_distance >> 2, cond);
 	}
@@ -293,6 +303,7 @@ void armEmitCondBranch(a64::Condition cond, const void* ptr)
 
 		const s64 new_jump_distance =
 			static_cast<s64>(reinterpret_cast<intptr_t>(ptr) - reinterpret_cast<intptr_t>(armGetCurrentCodePointer()));
+		armNoteReloc(armGetCurrentCodePointer(), kArmRelocBranch, reinterpret_cast<uintptr_t>(ptr));
 		armAsm->b(new_jump_distance >> 2);
 		armAsm->bind(&branch_not_taken);
 	}
@@ -359,6 +370,7 @@ a64::MemOperand armAbsMemOperand(const a64::Register& scratch, const void* addr,
 	if (vixl::IsInt21(page_displacement) && size && (page_offset % size) == 0)
 	{
 		{
+			armNoteReloc(armGetCurrentCodePointer(), kArmRelocAdrp, reinterpret_cast<uintptr_t>(addr));
 			a64::SingleEmissionCheckScope guard(armAsm);
 			armAsm->adrp(scratch, page_displacement);
 		}

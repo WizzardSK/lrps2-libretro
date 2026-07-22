@@ -124,6 +124,10 @@ namespace aVUPersist
 		u64 fixBranchArena = 0;
 		u64 fixBranchImage = 0;
 		u64 fixCondBranch = 0; // cross-chunk B.cond/CBZ/CBNZ/TBZ/TBNZ
+		// Emitter-reported vs byte-scanned fixup sets (see CheckEmitFixups): any
+		// nonzero value means one of the two is missing a baked address.
+		u64 fixEmitOnly = 0;
+		u64 fixScanOnly = 0;
 		u64 fixVuMem = 0;
 		u64 fixUnclassifiable = 0; // mapped pointers we could not place -> drops
 	};
@@ -243,14 +247,34 @@ namespace aVUPersist
 	// Per-VU in-flight episode state. Episodes never nest: the cold path in
 	// mVUblockFetch opens exactly one MacroAssembler session and the
 	// recursive mVUcompile calls append into it.
+	// One address the emitter baked, reported as it was emitted (see
+	// g_armRelocSink). `site` is the absolute address of the instruction slot.
+	struct EmitSite
+	{
+		uptr site;
+		u8 form;
+		u64 target;
+	};
+
 	struct Episode
 	{
 		bool open = false;
 		bool dropped = false;
 		u8* base = nullptr;
 		microProgram* prog = nullptr;
+		std::vector<EmitSite> emit; // reported by the emitter during this episode
 	};
 	static Episode s_episode[2];
+	static Episode* s_activeEpisode = nullptr;
+
+	// Installed as g_armRelocSink for the duration of an episode.
+	static void RelocSink(const void* site, unsigned form, u64 target)
+	{
+		Episode* ep = s_activeEpisode;
+		if (!ep || !ep->open)
+			return;
+		ep->emit.push_back({reinterpret_cast<uptr>(site), (u8)form, target});
+	}
 
 	// True when the user turned the cache on from the core options rather than
 	// through the env vars. The menu switch is one knob for the whole feature:
@@ -360,6 +384,9 @@ namespace aVUPersist
 		ep.dropped = false;
 		ep.base = base;
 		ep.prog = nullptr;
+		ep.emit.clear();
+		s_activeEpisode = &ep;
+		g_armRelocSink = &RelocSink;
 		// Force canonical fixed-length address materializations so every baked
 		// absolute occupies a re-encodable slot for hydration. Identical values,
 		// so guest output is unchanged.
@@ -586,6 +613,53 @@ namespace aVUPersist
 		return ok;
 	}
 
+	// Cross-check (transitional): the emitter reported every address it baked as
+	// it emitted it; the byte scanner rediscovered them afterwards. They must
+	// describe the same set. Any difference is counted, and is the signal for
+	// whether the scanner can be retired in favour of the emitter feed -- an
+	// emitter-only entry means the scanner cannot see that form, a scan-only entry
+	// means a baking site is not reporting itself.
+	static void CheckEmitFixups(microVU& mVU, const Episode& ep, const PersistChunk& chunk,
+		uptr chunkBase, uptr chunkEnd)
+	{
+		Stats& st = s_stats[mVU.index];
+		std::vector<std::pair<u32, u64>> mine;
+		for (const EmitSite& es : ep.emit)
+		{
+			if (es.site < chunkBase || es.site >= chunkEnd)
+				continue; // emitted outside the captured range (alignment//pool tail)
+			const uptr t = static_cast<uptr>(es.target);
+			// Branch forms whose target rides along inside this chunk keep their
+			// displacement when the chunk moves as a unit, exactly as the scanner
+			// decides; only escaping ones are fixups.
+			if (es.form != kFormMovzMovk && es.form != kFormAdrp && t >= chunkBase && t < chunkEnd)
+				continue;
+			// An ADRP fixup is stored page-aligned (the low 12 bits ride in the
+			// paired add/ldr); the emitter reports the full address it was asked
+			// for, which is strictly more information but has to be normalized to
+			// compare against what the scanner could recover.
+			const u64 cmp = (es.form == kFormAdrp) ? (t & ~static_cast<uptr>(0xFFF)) : t;
+			mine.emplace_back(static_cast<u32>(es.site - chunkBase),
+				(static_cast<u64>(es.form) << 56) ^ cmp);
+		}
+		std::vector<std::pair<u32, u64>> theirs;
+		for (const PersistFixup& f : chunk.fixups)
+			theirs.emplace_back(f.codeOffset, (static_cast<u64>(f.form) << 56) ^ static_cast<u64>(f.target));
+		std::sort(mine.begin(), mine.end());
+		std::sort(theirs.begin(), theirs.end());
+		// Count each side's entries the other does not have.
+		size_t i = 0, j = 0;
+		while (i < mine.size() || j < theirs.size())
+		{
+			if (j >= theirs.size() || (i < mine.size() && mine[i] < theirs[j]))
+			{ st.fixEmitOnly++; i++; }
+			else if (i >= mine.size() || theirs[j] < mine[i])
+			{ st.fixScanOnly++; j++; }
+			else
+			{ i++; j++; }
+		}
+	}
+
 	// armEndBlock finalized at `end`: capture the chunk onto the owning
 	// program's log, or account a drop. Empty episodes (search hit, nothing
 	// emitted) are ignored.
@@ -598,6 +672,8 @@ namespace aVUPersist
 			return;
 		ep.open = false;
 		g_armCanonicalAddrForms = false;
+		g_armRelocSink = nullptr;
+		s_activeEpisode = nullptr;
 		if (end == ep.base)
 			return; // nothing emitted
 		if (ep.dropped || !ep.prog || !ep.prog->persist)
@@ -621,6 +697,7 @@ namespace aVUPersist
 			s_stats[mVU.index].chunksDropped++;
 			return;
 		}
+		CheckEmitFixups(mVU, ep, chunk, reinterpret_cast<uptr>(ep.base), reinterpret_cast<uptr>(end));
 		s_stats[mVU.index].chunksRecorded++;
 	}
 
@@ -1729,6 +1806,9 @@ namespace aVUPersist
 			(unsigned long long)st.fixBlock, (unsigned long long)st.fixVuMem, (unsigned long long)st.fixAdrp,
 			(unsigned long long)st.fixBranchArena, (unsigned long long)st.fixBranchImage,
 			(unsigned long long)st.fixCondBranch, (unsigned long long)st.fixUnclassifiable);
+		if (st.fixEmitOnly || st.fixScanOnly)
+			Console.WriteLn("aVUPersist[VU%u]: fixup cross-check MISMATCH emit-only=%llu scan-only=%llu",
+				vuIndex, (unsigned long long)st.fixEmitOnly, (unsigned long long)st.fixScanOnly);
 		if (s_diskSaved[vuIndex] || s_diskLoaded[vuIndex] || s_diskRejected[vuIndex] || s_hydrated[vuIndex])
 			Console.WriteLn("aVUPersist[VU%u]: disk saved=%llu loaded=%llu rejected=%llu hydrated=%llu pruned=%llu",
 				vuIndex, (unsigned long long)s_diskSaved[vuIndex],

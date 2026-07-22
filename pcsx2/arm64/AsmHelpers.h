@@ -98,6 +98,26 @@ u8* armEndBlock();
 extern thread_local bool g_armCanonicalAddrForms;
 void armMovImmCanonical(const vixl::aarch64::Register& reg, uint64_t imm);
 
+// Relocation sink: while non-null, every helper below that bakes a runtime
+// address into the instruction stream reports the site before emitting it, so a
+// recorder does not have to decode the finished bytes to find them again. The
+// form codes match aVUPersist::RelocForm (0 = movz/movk quartet, 1 = ADRP,
+// 2 = B/BL imm26, 3 = conditional imm19). Thread-local and normally null, so
+// non-recording emission pays one predictable branch per site.
+enum ArmRelocForm : unsigned
+{
+	kArmRelocMovzMovk = 0,
+	kArmRelocAdrp = 1,
+	kArmRelocBranch = 2,
+	kArmRelocCondBranch = 3,
+};
+extern thread_local void (*g_armRelocSink)(const void* site, unsigned form, uint64_t target);
+static inline void armNoteReloc(const void* site, unsigned form, uint64_t target)
+{
+	if (g_armRelocSink)
+		g_armRelocSink(site, form, target);
+}
+
 void armDisassembleAndDumpCode(const void* ptr, size_t size);
 void armEmitJmp(const void* ptr, bool force_inline = false);
 void armEmitCall(const void* ptr, bool force_inline = false);
