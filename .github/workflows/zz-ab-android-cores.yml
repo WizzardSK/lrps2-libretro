@@ -16,14 +16,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { sha: 574740d23, label: "1-before-MMI" }
-          - { sha: 3cef53108, label: "1-after-MMI" }
-          - { sha: e8fbd1e45, label: "2-before-timer" }
-          - { sha: 2718a4624, label: "2-after-timer" }
-          - { sha: 7c71b8956, label: "3-before-CFC1" }
-          - { sha: 2796c002f, label: "3-after-CFC1" }
-          - { sha: d54d839a6, label: "4-before-MFC0" }
-          - { sha: e453a103b, label: "4-after-MFC0" }
+          - { sha: 574740d23aff20650eb749440ad2a7af9f2feb76, short: 574740d23, label: "1-before-MMI" }
+          - { sha: 3cef53108d452c3388ad66982572bdd9b87191c5, short: 3cef53108, label: "1-after-MMI" }
+          - { sha: e8fbd1e4528345b4d58e1de9869e6778b2b503eb, short: e8fbd1e45, label: "2-before-timer" }
+          - { sha: 2718a4624d5907e9b6757a2b5ee94f026ab54a49, short: 2718a4624, label: "2-after-timer" }
+          - { sha: 7c71b89566040d9d195f91d536dc67d8befecc59, short: 7c71b8956, label: "3-before-CFC1" }
+          - { sha: 2796c002f46fbca690c0af4caaf1b26692142cb8, short: 2796c002f, label: "3-after-CFC1" }
+          - { sha: d54d839a6b2bdfff4b7f49f41b6d0c9ca3524a7d, short: d54d839a6, label: "4-before-MFC0" }
+          - { sha: e453a103be60d80ef279739f2ab515acbb11e140, short: e453a103b, label: "4-after-MFC0" }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,8 +44,8 @@ jobs:
           mkdir -p out
           cp build/android-arm64-v8a/bin/pcsx2_libretro.so \
              out/pcsx2_libretro_android.so
-          echo "${{ matrix.label }} ${{ matrix.sha }} $(git log -1 --format=%s)" > out/COMMIT.txt
+          echo "${{ matrix.label }} ${{ matrix.short }} $(git log -1 --format=%s)" > out/COMMIT.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.label }}-${{ matrix.sha }}
+          name: ${{ matrix.label }}-${{ matrix.short }}
           path: out/
