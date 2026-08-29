@@ -4,6 +4,8 @@ name: A/B android cores
 # a change and the commit right before it, so whichever pair changes behaviour
 # on the device names the culprit. Mirrors the buildbot's android-cmake job.
 on:
+  push:
+    branches: [ ab-android-cores ]
   workflow_dispatch:
 
 jobs:
