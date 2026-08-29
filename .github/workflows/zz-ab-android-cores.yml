@@ -1,0 +1,49 @@
+name: A/B android cores
+
+# Builds one arm64-v8a core per commit for the pairwise A/B test: each pair is
+# a change and the commit right before it, so whichever pair changes behaviour
+# on the device names the culprit. Mirrors the buildbot's android-cmake job.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { sha: 574740d23, label: "1-before-MMI" }
+          - { sha: 3cef53108, label: "1-after-MMI" }
+          - { sha: e8fbd1e45, label: "2-before-timer" }
+          - { sha: 2718a4624, label: "2-after-timer" }
+          - { sha: 7c71b8956, label: "3-before-CFC1" }
+          - { sha: 2796c002f, label: "3-after-CFC1" }
+          - { sha: d54d839a6, label: "4-before-MFC0" }
+          - { sha: e453a103b, label: "4-after-MFC0" }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sha }}
+          submodules: recursive
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq cmake ninja-build
+      - name: build
+        run: |
+          set -e
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.18 \
+            -DANDROID_PLATFORM=android-21 \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_STL=c++_static -DANDROID_ABI=arm64-v8a \
+            . -Bbuild/android-arm64-v8a
+          cmake --build build/android-arm64-v8a --target pcsx2_libretro --config Release -- -j $(nproc)
+          "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" \
+            build/android-arm64-v8a/bin/pcsx2_libretro.so
+          mkdir -p out
+          cp build/android-arm64-v8a/bin/pcsx2_libretro.so \
+             out/pcsx2_libretro_android.so
+          echo "${{ matrix.label }} ${{ matrix.sha }} $(git log -1 --format=%s)" > out/COMMIT.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}-${{ matrix.sha }}
+          path: out/
