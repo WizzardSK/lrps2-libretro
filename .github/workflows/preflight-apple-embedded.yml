@@ -1,0 +1,56 @@
+# Preflight for iOS and tvOS, run on GitHub's macOS runners because the
+# buildbot's Apple runners cannot be reached from a fork. The cmake lines are
+# ci-templates' ios-cmake.yml and tvos-cmake.yml with their variables expanded,
+# plus this core's own CORE_ARGS.
+#
+# Fork-only.
+name: Preflight Apple embedded
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  apple-embedded:
+    if: github.repository != 'libretro/ps2'
+    name: ${{ matrix.name }}
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ios
+            system: iOS
+            minver: "12.0"
+          - name: tvos
+            system: tvOS
+            minver: "12.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: |
+          cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_C_FLAGS="-DIOS" \
+            -DCMAKE_CXX_FLAGS="-DIOS" \
+            -DIOS=ON \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ matrix.minver }} \
+            -DCMAKE_SYSTEM_NAME=${{ matrix.system }} \
+            -DCMAKE_SYSTEM_PROCESSOR=arm64 \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.18 \
+            . -Bbuild/${{ matrix.name }}-arm64 2>&1 | tail -40
+
+      - name: Build
+        run: |
+          cmake --build build/${{ matrix.name }}-arm64 \
+            --config RelWithDebInfo -- -j $(sysctl -n hw.ncpu)
+
+      - name: What came out
+        run: |
+          lib=$(find build/${{ matrix.name }}-arm64 -name 'pcsx2_libretro.dylib' | head -1)
+          lipo -info "$lib"
+          vtool -show "$lib" | head -20
