@@ -1,0 +1,41 @@
+name: bisect core
+
+on:
+  push:
+    branches: [ 'bisect-*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build the core
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install needed packages
+      run: sudo apt-get update && sudo apt-get install -y wget git build-essential liblzma-dev libgl-dev zlib1g-dev
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - name: Build libretro core
+      run: |
+        mkdir build && cd build && cmake .. && make -j8
+    - name: Package the core
+      run: |
+        core=$(find build -name pcsx2_libretro.so | head -1)
+        ls -la "$core"
+        short=$(echo "${{ github.ref_name }}" | sed 's/^bisect-//' | cut -c1-7)
+        zip -9 -j "pcsx2_libretro_${short}.zip" "$core"
+        ls -la "pcsx2_libretro_${short}.zip"
+        echo "ASSET=pcsx2_libretro_${short}.zip" >> $GITHUB_ENV
+    - name: Attach it to the bisect release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release view lrps2-bisect --repo ${{ github.repository }} >/dev/null 2>&1 || \
+          gh release create lrps2-bisect --repo ${{ github.repository }} \
+            --title "LRPS2 bisect cores (Linux x86_64)" \
+            --notes "Test builds from picked commits, for narrowing down a regression. Not releases of anything."
+        gh release upload lrps2-bisect "$ASSET" --repo ${{ github.repository }} --clobber
