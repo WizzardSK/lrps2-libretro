@@ -1,0 +1,29 @@
+name: bisect core
+
+on:
+  push:
+    branches: [ 'bisect-*' ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build the core
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install needed packages
+      run: sudo apt-get update && sudo apt-get install -y wget git build-essential liblzma-dev libgl-dev zlib1g-dev
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - name: Build libretro core
+      run: |
+        mkdir build && cd build && cmake .. && make -j8
+    - name: Find the core
+      run: find build -name 'pcsx2_libretro.so' -exec ls -la {} +
+    - name: Upload the core
+      uses: actions/upload-artifact@v4
+      with:
+        name: pcsx2_libretro-${{ github.ref_name }}
+        path: build/**/pcsx2_libretro.so
+        if-no-files-found: error
